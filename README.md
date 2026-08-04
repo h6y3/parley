@@ -3,7 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/h6y3/parley/actions/workflows/ci.yml/badge.svg)](https://github.com/h6y3/parley/actions/workflows/ci.yml)
 
-**Brief an AI, have it make a phone call — done right.**
+**Brief an AI, have it make a phone call — without it leaking its instructions.**
+
+Not a managed platform, not a generic AI wrapper, and not for spam or robocalls — fail-closed by design (allowlist, signature-verified webhooks, no recording); the calls you place are your responsibility to make lawful.
 
 Parley is a standalone, MIT-licensed TypeScript library and daemon for briefed outbound phone
 calls with Gemini Live over Twilio. It exists because the failure modes of this class of system —
