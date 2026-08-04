@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "brief": {
+    "to": "+15555550123",
+    "persona": "You are Ada, Alex Rivera's calm, capable assistant.",
+    "objective": "Read Alex their Thursday calendar and note anything that needs a decision.",
+    "facts": ["Thursday has three meetings.", "The 2pm overlaps a dentist appointment."]
+  },
+  "policy": {
+    "principalName": "Alex Rivera",
+    "identity": { "style": "self" },
+    "disclosure": { "honestIfAsked": false, "volunteer": false },
+    "scope": { "lock": false },
+    "grounding": { "antiInvention": true },
+    "deferral": { "enabled": false },
+    "authority": {}
+  }
+}

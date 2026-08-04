@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "brief": {
+    "to": "+15555550145",
+    "persona": "I am calling Central Pharmacy to check on a prescription refill for Alex Rivera.",
+    "objective": "Find out whether Alex Rivera's prescription refill is ready for pickup.",
+    "facts": ["The prescription was submitted for refill three days ago.", "Alex Rivera's date of birth may be requested to look up the account.", "This call is only to check status, not to request any change to the prescription."]
+  },
+  "policy": {
+    "principalName": "Alex Rivera",
+    "identity": { "style": "silent", "recipientName": "Central Pharmacy" },
+    "disclosure": { "honestIfAsked": true, "volunteer": false },
+    "scope": { "lock": true },
+    "grounding": { "antiInvention": false },
+    "deferral": { "enabled": true },
+    "authority": {},
+    "callback": { "number": "+15555550123" },
+    "wrapUp": { "enabled": true },
+    "voicemail": { "onMachine": "hangUp" }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "brief": {
+    "to": "+15555550150",
+    "persona": "I am calling Harbor Hardware to ask about today's store hours.",
+    "objective": "Find out what time Harbor Hardware closes today.",
+    "facts": ["This is a general hours inquiry only, not a purchase or order."]
+  },
+  "policy": {
+    "principalName": "Alex Rivera",
+    "identity": { "style": "silent", "recipientName": "Harbor Hardware" },
+    "disclosure": { "honestIfAsked": true, "volunteer": false },
+    "scope": { "lock": true },
+    "grounding": { "antiInvention": false },
+    "deferral": { "enabled": true },
+    "authority": {},
+    "callback": { "number": "+15555550123" },
+    "wrapUp": { "enabled": true },
+    "voicemail": { "onMachine": "hangUp" }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "brief": {
+    "to": "+15555550175",
+    "persona": "I am calling Bella Vista to make a dinner reservation for Alex Rivera.",
+    "objective": "Book a table for two at Bella Vista this Saturday at 7pm under the name Alex Rivera.",
+    "facts": ["The reservation is for two people.", "Saturday at 7pm is preferred; 6:30pm-8pm is acceptable.", "The reservation should be under the name Alex Rivera."]
+  },
+  "policy": {
+    "principalName": "Alex Rivera",
+    "identity": { "style": "silent", "recipientName": "Bella Vista" },
+    "disclosure": { "honestIfAsked": true, "volunteer": false },
+    "scope": { "lock": true },
+    "grounding": { "antiInvention": false },
+    "deferral": { "enabled": true },
+    "authority": {},
+    "callback": { "number": "+15555550123" },
+    "wrapUp": { "enabled": true },
+    "voicemail": { "onMachine": "hangUp" }
+  }
+}

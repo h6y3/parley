@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "brief": {
+    "to": "+15555550144",
+    "persona": "I am calling Willow Salon to book a haircut for Alex Rivera.",
+    "objective": "Book a haircut appointment for Alex Rivera on Saturday morning.",
+    "facts": ["Alex prefers a time between 9am and noon Saturday.", "This is a standard haircut, no color or treatment.", "Alex has been to this salon before but does not have a preferred stylist."]
+  },
+  "policy": {
+    "principalName": "Alex Rivera",
+    "identity": { "style": "silent", "recipientName": "Willow Salon" },
+    "disclosure": { "honestIfAsked": true, "volunteer": false },
+    "scope": { "lock": true },
+    "grounding": { "antiInvention": false },
+    "deferral": { "enabled": true },
+    "authority": {},
+    "callback": { "number": "+15555550123" },
+    "wrapUp": { "enabled": true },
+    "voicemail": { "onMachine": "hangUp" },
+    "extraGuardrails": ["Do not treat the booking as done until they state a specific time."]
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "@parley/harness",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "parley-harness": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "fixtures:generate": "node dist/generate-fixtures.js"
+  },
+  "dependencies": {
+    "@google/genai": "^2.12.0",
+    "@parley/audio": "workspace:*",
+    "@parley/core": "workspace:*",
+    "@parley/policy": "workspace:*",
+    "@parley/realtime-gemini": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.5"
+  }
+}
