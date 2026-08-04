@@ -17,18 +17,27 @@ import { composePolicy, principalCall, representedCall, transactionalCall } from
 const persona = "You are Ada, a calm, warm assistant.";
 const objective = "Confirm a dinner reservation for four at 7pm on Friday.";
 const facts = ["The reservation is under Alex Rivera.", "Party of four.", "7pm Friday."];
-const render = (policy) => renderSystemInstruction({ persona, objective, facts, guardrails: composePolicy(policy) });
+const render = (policy) =>
+  renderSystemInstruction({ persona, objective, facts, guardrails: composePolicy(policy) });
 
 const out = {
   principal: render(principalCall({ principalName: "Alex Rivera" })),
-  represented_full: render(representedCall({
-    principalName: "Alex Rivera",
-    callbackNumber: "+15551234567",
-    authorizedCommitments: ["A table for four at 7pm on Friday is fine to confirm."],
-    pronunciation: ["Pronounce the last name Rivera as ree-VAIR-uh."]
-  })),
+  represented_full: render(
+    representedCall({
+      principalName: "Alex Rivera",
+      callbackNumber: "+15551234567",
+      authorizedCommitments: ["A table for four at 7pm on Friday is fine to confirm."],
+      pronunciation: ["Pronounce the last name Rivera as ree-VAIR-uh."]
+    })
+  ),
   represented_minimal: render(representedCall({ principalName: "Alex Rivera" })),
-  transactional_full: render(transactionalCall({ principalName: "Alex Rivera", recipientName: "Bella Vista", callbackNumber: "+15551234567" }))
+  transactional_full: render(
+    transactionalCall({
+      principalName: "Alex Rivera",
+      recipientName: "Bella Vista",
+      callbackNumber: "+15551234567"
+    })
+  )
 };
 
 const here = dirname(fileURLToPath(import.meta.url));

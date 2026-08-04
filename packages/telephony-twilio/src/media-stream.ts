@@ -63,7 +63,9 @@ export function attachTwilioMediaStream(params: AttachMediaStreamParams): MediaS
 
   const sendMedia = (payload: Buffer): void => {
     if (!streamSid) return;
-    socket.send(JSON.stringify({ event: "media", streamSid, media: { payload: payload.toString("base64") } }));
+    socket.send(
+      JSON.stringify({ event: "media", streamSid, media: { payload: payload.toString("base64") } })
+    );
   };
 
   // Emit one 160-byte μ-law frame: queued model audio first, a padded short
@@ -73,7 +75,10 @@ export function attachTwilioMediaStream(params: AttachMediaStreamParams): MediaS
       sendMedia(outboundQueue.subarray(0, OUTBOUND_FRAME_BYTES));
       outboundQueue = outboundQueue.subarray(OUTBOUND_FRAME_BYTES);
     } else if (outboundQueue.length > 0) {
-      const tail = Buffer.concat([outboundQueue, silenceFrame.subarray(0, OUTBOUND_FRAME_BYTES - outboundQueue.length)]);
+      const tail = Buffer.concat([
+        outboundQueue,
+        silenceFrame.subarray(0, OUTBOUND_FRAME_BYTES - outboundQueue.length)
+      ]);
       outboundQueue = Buffer.alloc(0);
       sendMedia(tail);
     } else {
@@ -107,7 +112,8 @@ export function attachTwilioMediaStream(params: AttachMediaStreamParams): MediaS
   if (typeof pacer.unref === "function") pacer.unref();
 
   socket.on("message", (raw: unknown) => {
-    const text = typeof raw === "string" ? raw : Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
+    const text =
+      typeof raw === "string" ? raw : Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
     let msg: TwilioInbound;
     try {
       msg = JSON.parse(text) as TwilioInbound;
@@ -139,7 +145,9 @@ export function attachTwilioMediaStream(params: AttachMediaStreamParams): MediaS
   return {
     sendOutboundAudio(frame: AudioFrame): void {
       if (frame.encoding !== "mulaw8k") {
-        throw new Error(`Twilio media stream expects mulaw8k outbound frames, got ${frame.encoding}`);
+        throw new Error(
+          `Twilio media stream expects mulaw8k outbound frames, got ${frame.encoding}`
+        );
       }
       // Enqueue only — the pacer drains it at the real-time telephony rate.
       // Drop the frame if it would blow the runaway-backlog cap (rather than

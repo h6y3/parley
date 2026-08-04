@@ -6,7 +6,10 @@ import { renderSystemInstruction } from "@parley/core";
 import { composePolicy, principalCall, representedCall, transactionalCall } from "../src/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const golden = JSON.parse(readFileSync(join(here, "fixtures", "golden.json"), "utf8")) as Record<string, string>;
+const golden = JSON.parse(readFileSync(join(here, "fixtures", "golden.json"), "utf8")) as Record<
+  string,
+  string
+>;
 
 const persona = "You are Ada, a calm, warm assistant.";
 const objective = "Confirm a dinner reservation for four at 7pm on Friday.";
@@ -30,9 +33,19 @@ describe("golden equivalence — new path reproduces old systemInstruction byte-
     expect(render(policy)).toBe(golden.represented_full);
   });
   it("represented (minimal)", () => {
-    expect(render(representedCall({ principalName: "Alex Rivera" }))).toBe(golden.represented_minimal);
+    expect(render(representedCall({ principalName: "Alex Rivera" }))).toBe(
+      golden.represented_minimal
+    );
   });
   it("transactional (full: callback)", () => {
-    expect(render(transactionalCall({ principalName: "Alex Rivera", recipientName: "Bella Vista", callbackNumber: "+15551234567" }))).toBe(golden.transactional_full);
+    expect(
+      render(
+        transactionalCall({
+          principalName: "Alex Rivera",
+          recipientName: "Bella Vista",
+          callbackNumber: "+15551234567"
+        })
+      )
+    ).toBe(golden.transactional_full);
   });
 });

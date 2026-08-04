@@ -9,7 +9,9 @@ export function wrapWsSocket(ws: WsSocket): WebSocketLike {
     send: (data) => ws.send(data),
     on: (event, listener) => {
       if (event === "message") {
-        ws.on("message", (data: Buffer, isBinary: boolean) => listener(isBinary ? data : data.toString("utf8")));
+        ws.on("message", (data: Buffer, isBinary: boolean) =>
+          listener(isBinary ? data : data.toString("utf8"))
+        );
       } else {
         ws.on(event, listener as (...args: unknown[]) => void);
       }

@@ -51,11 +51,18 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
   }
 
   async originate(params: OriginateParams): Promise<OriginateResult> {
-    const body = new URLSearchParams({ To: params.to, From: params.from, Url: params.answerWebhookUrl });
+    const body = new URLSearchParams({
+      To: params.to,
+      From: params.from,
+      Url: params.answerWebhookUrl
+    });
     if (params.statusCallbackUrl) body.set("StatusCallback", params.statusCallbackUrl);
     const res = await this.fetchImpl(this.callsUrl(".json"), {
       method: "POST",
-      headers: { Authorization: this.authHeader(), "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        Authorization: this.authHeader(),
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
       body: body.toString()
     });
     if (!res.ok) return { providerCallId: "", status: "failed" };
@@ -87,7 +94,10 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
     const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Play digits="${digits}"/></Response>`;
     await this.fetchImpl(this.callsUrl(`/${callId}.json`), {
       method: "POST",
-      headers: { Authorization: this.authHeader(), "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        Authorization: this.authHeader(),
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
       body: new URLSearchParams({ Twiml: twiml }).toString()
     });
   }
@@ -95,7 +105,10 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
   async hangup(callId: string): Promise<void> {
     await this.fetchImpl(this.callsUrl(`/${callId}.json`), {
       method: "POST",
-      headers: { Authorization: this.authHeader(), "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        Authorization: this.authHeader(),
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
       body: new URLSearchParams({ Status: "completed" }).toString()
     });
   }

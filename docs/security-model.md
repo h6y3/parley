@@ -23,7 +23,7 @@ that URL is trust-bearing. `@parley/server`'s answer-webhook handler
 (`packages/server/src/request-handler.ts`) reconstructs that URL from a **configured host
 allowlist** (`HostAllowlist`, populated from `PARLEY_PUBLIC_HOST` in the CLI's `serve` command) —
 **never** from the request's `Host` header or `X-Forwarded-Host` alone. The allowlist check runs
-*before* signature verification: an unrecognized host is rejected with `403` immediately, and the
+_before_ signature verification: an unrecognized host is rejected with `403` immediately, and the
 signature is never computed against an attacker-controlled URL. This closes the SSRF-adjacent
 class of bug where a forwarded header is trusted as if it had been independently verified.
 
@@ -139,8 +139,8 @@ self-identification, plus one guardrail that applies to all three:
 - **`self`** (the `principalCall` preset — calling the principal themself) — no disclosure. The
   assistant presents as itself, first person, to the person it was configured by.
 - **`onBehalf`** (the `representedCall` preset — the principal's professional network) — opens as
-  *"Hi, this is [assistant], [principal]'s personal assistant, calling on their behalf about
-  [purpose]."* This discloses that the caller is a personal assistant; it does **not** volunteer
+  _"Hi, this is [assistant], [principal]'s personal assistant, calling on their behalf about
+  [purpose]."_ This discloses that the caller is a personal assistant; it does **not** volunteer
   that it is AI unless `disclosure.volunteer` is also set.
 - **`silent`** (the `transactionalCall` preset — businesses, restaurants, customer support) — no
   self-identification and no introduction at all; goes straight to the task on the principal's
@@ -159,8 +159,8 @@ B.O.T. Act) and the state's all-party-consent recording law. This was deliberate
 honest-if-asked floor above, on the following reasoning — the operator's call to make for his own
 assistant:
 
-- The B.O.T. Act narrowly targets bots used to *incentivize a commercial transaction with, or
-  influence the vote of,* the person being called. A scheduling, reservation, or logistics call
+- The B.O.T. Act narrowly targets bots used to _incentivize a commercial transaction with, or
+  influence the vote of,_ the person being called. A scheduling, reservation, or logistics call
   placed on the operator's behalf is generally not that use case.
 - California's all-party-consent law governs **recording** a call, not merely disclosing that a
   participant is an AI. Parley records no audio anywhere in `@parley/telephony-twilio` or

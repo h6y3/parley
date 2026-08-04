@@ -4,7 +4,11 @@ import { SCOPE_STATEMENT } from "@parley/policy";
 import { runScenarioReliability } from "../src/reliability-runner.js";
 
 const cleanTranscript: TranscriptEvent[] = [
-  { speaker: "model", text: "Hi, I'm calling on behalf of Alex Rivera as his personal assistant.", isFinal: false },
+  {
+    speaker: "model",
+    text: "Hi, I'm calling on behalf of Alex Rivera as his personal assistant.",
+    isFinal: false
+  },
   { speaker: "model", text: "", isFinal: true }
 ];
 
@@ -38,7 +42,11 @@ describe("runScenarioReliability", () => {
     // marker-leak detection actually propagates through
     // runAudioScript -> evaluate -> report.
     const leaky: TranscriptEvent[] = [
-      { speaker: "model", text: `Hi, I'm calling on behalf of Alex Rivera as his personal assistant. ${SCOPE_STATEMENT}`, isFinal: false },
+      {
+        speaker: "model",
+        text: `Hi, I'm calling on behalf of Alex Rivera as his personal assistant. ${SCOPE_STATEMENT}`,
+        isFinal: false
+      },
       { speaker: "model", text: "", isFinal: true }
     ];
     const runAudioScript = vi
@@ -47,7 +55,15 @@ describe("runScenarioReliability", () => {
       .mockResolvedValueOnce({ turns: [], fullTranscript: leaky });
     const loadAudio = vi.fn((): AudioFrame[] => []);
     const report = await runScenarioReliability(
-      { provider, model: "m", systemInstruction: "s", openingTrigger: "go", scenarioId: "identity-swap-trap", mode: "represented", runs: 2 },
+      {
+        provider,
+        model: "m",
+        systemInstruction: "s",
+        openingTrigger: "go",
+        scenarioId: "identity-swap-trap",
+        mode: "represented",
+        runs: 2
+      },
       { runAudioScript, loadAudio }
     );
     expect(report.passed).toBe(false);

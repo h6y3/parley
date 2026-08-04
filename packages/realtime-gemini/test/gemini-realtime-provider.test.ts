@@ -39,13 +39,21 @@ async function connectWithFakeGenAI(onTranscriptSink?: (event: unknown) => void)
     sendRealtimeInput,
     close: vi.fn()
   };
-  let capturedCallbacks: { onmessage: (m: unknown) => void; onerror: (e: unknown) => void; onclose: (e: unknown) => void } | undefined;
+  let capturedCallbacks:
+    | {
+        onmessage: (m: unknown) => void;
+        onerror: (e: unknown) => void;
+        onclose: (e: unknown) => void;
+      }
+    | undefined;
   const fakeGenAI = {
     live: {
-      connect: vi.fn(async (params: { model: string; config: unknown; callbacks: typeof capturedCallbacks }) => {
-        capturedCallbacks = params.callbacks;
-        return fakeSession;
-      })
+      connect: vi.fn(
+        async (params: { model: string; config: unknown; callbacks: typeof capturedCallbacks }) => {
+          capturedCallbacks = params.callbacks;
+          return fakeSession;
+        }
+      )
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
@@ -72,14 +80,26 @@ describe("GeminiRealtimeProvider", () => {
       close: vi.fn()
     };
     let capturedConfig: unknown;
-    let capturedCallbacks: { onmessage: (m: unknown) => void; onerror: (e: unknown) => void; onclose: (e: unknown) => void } | undefined;
+    let capturedCallbacks:
+      | {
+          onmessage: (m: unknown) => void;
+          onerror: (e: unknown) => void;
+          onclose: (e: unknown) => void;
+        }
+      | undefined;
     const fakeGenAI = {
       live: {
-        connect: vi.fn(async (params: { model: string; config: unknown; callbacks: typeof capturedCallbacks }) => {
-          capturedConfig = params.config;
-          capturedCallbacks = params.callbacks;
-          return fakeSession;
-        })
+        connect: vi.fn(
+          async (params: {
+            model: string;
+            config: unknown;
+            callbacks: typeof capturedCallbacks;
+          }) => {
+            capturedConfig = params.config;
+            capturedCallbacks = params.callbacks;
+            return fakeSession;
+          }
+        )
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any;
@@ -89,9 +109,10 @@ describe("GeminiRealtimeProvider", () => {
     const session = await provider.connect(makeConnectParams(callbacks));
 
     expect(fakeGenAI.live.connect).toHaveBeenCalledOnce();
-    expect((capturedConfig as { realtimeInputConfig: { turnCoverage: string } }).realtimeInputConfig.turnCoverage).toBe(
-      "TURN_INCLUDES_ONLY_ACTIVITY"
-    );
+    expect(
+      (capturedConfig as { realtimeInputConfig: { turnCoverage: string } }).realtimeInputConfig
+        .turnCoverage
+    ).toBe("TURN_INCLUDES_ONLY_ACTIVITY");
     expect(capturedConfig).toMatchObject({
       systemInstruction: "You are a test persona with exactly one purpose.",
       inputAudioTranscription: {},
@@ -103,7 +124,9 @@ describe("GeminiRealtimeProvider", () => {
     });
 
     session.sendOpeningTrigger("Begin the call naturally now.");
-    expect(fakeSession.sendRealtimeInput).toHaveBeenCalledWith({ text: "Begin the call naturally now." });
+    expect(fakeSession.sendRealtimeInput).toHaveBeenCalledWith({
+      text: "Begin the call naturally now."
+    });
 
     const audioFrame = { encoding: "pcm16k" as const, data: Buffer.from([1, 2, 3]) };
     session.sendAudio(audioFrame);
@@ -119,20 +142,41 @@ describe("GeminiRealtimeProvider", () => {
       serverContent: {
         inputTranscription: { text: "Caller here", finished: true },
         outputTranscription: { text: "Hello there", finished: false },
-        modelTurn: { parts: [{ inlineData: { data: Buffer.from("audio-bytes").toString("base64") } }] },
+        modelTurn: {
+          parts: [{ inlineData: { data: Buffer.from("audio-bytes").toString("base64") } }]
+        },
         interrupted: true
       }
     });
-    expect(callbacks.onTranscript).toHaveBeenCalledWith({ speaker: "model", text: "Hello there", isFinal: false });
-    expect(callbacks.onTranscript).toHaveBeenCalledWith({ speaker: "caller", text: "Caller here", isFinal: true });
-    expect(callbacks.onAudio).toHaveBeenCalledWith({ encoding: "pcm24k", data: Buffer.from("audio-bytes") });
+    expect(callbacks.onTranscript).toHaveBeenCalledWith({
+      speaker: "model",
+      text: "Hello there",
+      isFinal: false
+    });
+    expect(callbacks.onTranscript).toHaveBeenCalledWith({
+      speaker: "caller",
+      text: "Caller here",
+      isFinal: true
+    });
+    expect(callbacks.onAudio).toHaveBeenCalledWith({
+      encoding: "pcm24k",
+      data: Buffer.from("audio-bytes")
+    });
     expect(callbacks.onInterrupted).toHaveBeenCalledOnce();
 
     capturedCallbacks?.onmessage({ serverContent: { turnComplete: true } });
-    expect(callbacks.onTranscript).toHaveBeenCalledWith({ speaker: "model", text: "", isFinal: true });
+    expect(callbacks.onTranscript).toHaveBeenCalledWith({
+      speaker: "model",
+      text: "",
+      isFinal: true
+    });
 
     capturedCallbacks?.onerror({ error: new Error("boom") });
-    expect(callbacks.onError).toHaveBeenCalledWith({ code: "gemini_live_error", message: "boom", fatal: true });
+    expect(callbacks.onError).toHaveBeenCalledWith({
+      code: "gemini_live_error",
+      message: "boom",
+      fatal: true
+    });
 
     capturedCallbacks?.onclose({ code: 1000, reason: "done" });
     expect(callbacks.onClose).toHaveBeenCalledWith("code=1000 reason=done");
@@ -142,7 +186,9 @@ describe("GeminiRealtimeProvider", () => {
 describe("sendAudio input-encoding guard", () => {
   it("throws on a non-pcm16k frame", async () => {
     const { session } = await connectWithFakeGenAI();
-    expect(() => session.sendAudio({ encoding: "mulaw8k", data: Buffer.from([0]) })).toThrow(/pcm16k/);
+    expect(() => session.sendAudio({ encoding: "mulaw8k", data: Buffer.from([0]) })).toThrow(
+      /pcm16k/
+    );
   });
 
   it("accepts a pcm16k frame", async () => {
@@ -157,7 +203,9 @@ describe("sendAudio input-encoding guard", () => {
 describe("transcript final dedup", () => {
   it("emits one isFinal when a payload has both finished transcription and turnComplete", async () => {
     const events: Array<{ isFinal: boolean }> = [];
-    const { emitMessage } = await connectWithFakeGenAI((event) => events.push(event as { isFinal: boolean }));
+    const { emitMessage } = await connectWithFakeGenAI((event) =>
+      events.push(event as { isFinal: boolean })
+    );
 
     emitMessage({
       serverContent: { outputTranscription: { text: "done", finished: true }, turnComplete: true }
@@ -168,9 +216,13 @@ describe("transcript final dedup", () => {
 
   it("still emits the turnComplete sentinel when no finished transcription precedes it", async () => {
     const events: Array<{ isFinal: boolean }> = [];
-    const { emitMessage } = await connectWithFakeGenAI((event) => events.push(event as { isFinal: boolean }));
+    const { emitMessage } = await connectWithFakeGenAI((event) =>
+      events.push(event as { isFinal: boolean })
+    );
 
-    emitMessage({ serverContent: { outputTranscription: { text: "still speaking", finished: false } } });
+    emitMessage({
+      serverContent: { outputTranscription: { text: "still speaking", finished: false } }
+    });
     emitMessage({ serverContent: { turnComplete: true } });
 
     expect(events.filter((event) => event.isFinal)).toHaveLength(1);

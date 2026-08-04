@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { CallSession, type AudioCodec, type RealtimeProvider, type TelephonyProvider } from "@parley/core";
+import {
+  CallSession,
+  type AudioCodec,
+  type RealtimeProvider,
+  type TelephonyProvider
+} from "@parley/core";
 import { createHostAllowlist, createNumberAllowlist } from "../src/allowlist.js";
 import { PendingSessions } from "../src/pending-sessions.js";
 import { handleHttpRequest, type HttpRequest, type ServerDeps } from "../src/request-handler.js";
@@ -11,9 +16,16 @@ function telephony(verify: boolean): TelephonyProvider {
   return {
     name: "fake",
     originate: async () => ({ providerCallId: "CA1", status: "queued" }),
-    buildAnswerResponse: (p) => ({ contentType: "text/xml", body: `<Stream url="${p.mediaStreamUrl}"/>` }),
+    buildAnswerResponse: (p) => ({
+      contentType: "text/xml",
+      body: `<Stream url="${p.mediaStreamUrl}"/>`
+    }),
     verifyWebhookSignature: () => verify,
-    attachMediaStream: () => ({ sendOutboundAudio: () => {}, clearOutboundBuffer: () => {}, close: () => {} }),
+    attachMediaStream: () => ({
+      sendOutboundAudio: () => {},
+      clearOutboundBuffer: () => {},
+      close: () => {}
+    }),
     sendDtmf: async () => {},
     hangup: async () => {}
   };
@@ -24,23 +36,38 @@ function deps(verify: boolean): ServerDeps {
   const t = telephony(verify);
   const session = new CallSession({
     brief: { to: "+14155550002", persona: "p", objective: "o", facts: [] },
-    guardrails: [], telephony: t, realtime, codec,
-    from: "+14155550001", answerWebhookUrl: "https://voice.example.com/twilio/answer",
+    guardrails: [],
+    telephony: t,
+    realtime,
+    codec,
+    from: "+14155550001",
+    answerWebhookUrl: "https://voice.example.com/twilio/answer",
     model: "gemini-3.1-flash-live-preview"
   });
   pending.set("CA1", session);
   return {
-    telephony: t, realtime, codec,
-    from: "+14155550001", publicHost: "voice.example.com", model: "m",
+    telephony: t,
+    realtime,
+    codec,
+    from: "+14155550001",
+    publicHost: "voice.example.com",
+    model: "m",
     numberAllowlist: createNumberAllowlist(["+14155550002"]),
-    hostAllowlist: createHostAllowlist(["voice.example.com"]), pending
+    hostAllowlist: createHostAllowlist(["voice.example.com"]),
+    pending
   };
 }
 
 function answerReq(host: string, sig: string): HttpRequest {
   return {
-    method: "POST", path: "/twilio/answer", query: "",
-    headers: { host, "x-twilio-signature": sig, "content-type": "application/x-www-form-urlencoded" },
+    method: "POST",
+    path: "/twilio/answer",
+    query: "",
+    headers: {
+      host,
+      "x-twilio-signature": sig,
+      "content-type": "application/x-www-form-urlencoded"
+    },
     rawBody: new URLSearchParams({ CallSid: "CA1" }).toString()
   };
 }

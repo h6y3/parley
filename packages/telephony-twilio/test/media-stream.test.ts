@@ -5,11 +5,19 @@ import { attachTwilioMediaStream, outboundFramesDue } from "../src/media-stream.
 /** A fake WebSocketLike that lets a test push inbound messages and capture
  * what the handle sends back. */
 function makeFakeSocket() {
-  const listeners: Record<string, ((...args: unknown[]) => void)[]> = { message: [], close: [], error: [] };
+  const listeners: Record<string, ((...args: unknown[]) => void)[]> = {
+    message: [],
+    close: [],
+    error: []
+  };
   const sent: string[] = [];
   const socket: WebSocketLike = {
-    send: (d) => { sent.push(typeof d === "string" ? d : d.toString("utf8")); },
-    on: (event, listener) => { listeners[event].push(listener); },
+    send: (d) => {
+      sent.push(typeof d === "string" ? d : d.toString("utf8"));
+    },
+    on: (event, listener) => {
+      listeners[event].push(listener);
+    },
     close: vi.fn()
   };
   const emit = (event: "message" | "close" | "error", data: unknown) =>
@@ -19,7 +27,11 @@ function makeFakeSocket() {
 
 const START = JSON.stringify({
   event: "start",
-  start: { streamSid: "MZ123", callSid: "CA123", mediaFormat: { encoding: "audio/x-mulaw", sampleRate: 8000, channels: 1 } },
+  start: {
+    streamSid: "MZ123",
+    callSid: "CA123",
+    mediaFormat: { encoding: "audio/x-mulaw", sampleRate: 8000, channels: 1 }
+  },
   streamSid: "MZ123"
 });
 
@@ -36,10 +48,18 @@ describe("attachTwilioMediaStream", () => {
   it("decodes inbound media into a mulaw8k AudioFrame", () => {
     const { socket, emit } = makeFakeSocket();
     const frames: AudioFrame[] = [];
-    attachTwilioMediaStream({ callId: "CA123", socket, onInboundAudio: (f) => frames.push(f), onCallEvent: () => {} });
+    attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: (f) => frames.push(f),
+      onCallEvent: () => {}
+    });
     emit("message", START);
     const payload = Buffer.from([0xff, 0x7f, 0x00]).toString("base64");
-    emit("message", JSON.stringify({ event: "media", media: { track: "inbound", payload }, streamSid: "MZ123" }));
+    emit(
+      "message",
+      JSON.stringify({ event: "media", media: { track: "inbound", payload }, streamSid: "MZ123" })
+    );
     expect(frames).toHaveLength(1);
     expect(frames[0].encoding).toBe("mulaw8k");
     expect([...frames[0].data]).toEqual([0xff, 0x7f, 0x00]);
@@ -47,7 +67,12 @@ describe("attachTwilioMediaStream", () => {
 
   it("paces a short outbound buffer into one 160-byte μ-law frame with the captured streamSid", () => {
     const { socket, sent, emit } = makeFakeSocket();
-    const handle = attachTwilioMediaStream({ callId: "CA123", socket, onInboundAudio: () => {}, onCallEvent: () => {} });
+    const handle = attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: () => {}
+    });
     emit("message", START);
     handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.from([0x01, 0x02]) });
     vi.advanceTimersByTime(20); // one pacer tick
@@ -62,7 +87,12 @@ describe("attachTwilioMediaStream", () => {
 
   it("drains a large outbound buffer across successive pacer ticks in 160-byte frames", () => {
     const { socket, sent, emit } = makeFakeSocket();
-    const handle = attachTwilioMediaStream({ callId: "CA123", socket, onInboundAudio: () => {}, onCallEvent: () => {} });
+    const handle = attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: () => {}
+    });
     emit("message", START);
     handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.alloc(400, 0x10) }); // 2 full frames + an 80-byte tail
     vi.advanceTimersByTime(20);
@@ -78,7 +108,12 @@ describe("attachTwilioMediaStream", () => {
 
   it("sends μ-law silence as keep-alive while idle", () => {
     const { socket, sent, emit } = makeFakeSocket();
-    attachTwilioMediaStream({ callId: "CA123", socket, onInboundAudio: () => {}, onCallEvent: () => {} });
+    attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: () => {}
+    });
     emit("message", START);
     vi.advanceTimersByTime(20);
     const payload = decodePayload(sent[0]);
@@ -88,7 +123,12 @@ describe("attachTwilioMediaStream", () => {
 
   it("clearOutboundBuffer flushes the queue and emits a Twilio clear (barge-in)", () => {
     const { socket, sent, emit } = makeFakeSocket();
-    const handle = attachTwilioMediaStream({ callId: "CA123", socket, onInboundAudio: () => {}, onCallEvent: () => {} });
+    const handle = attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: () => {}
+    });
     emit("message", START);
     handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.alloc(320, 0x10) });
     handle.clearOutboundBuffer();
@@ -100,7 +140,12 @@ describe("attachTwilioMediaStream", () => {
 
   it("does not send outbound audio before the stream starts (no streamSid yet)", () => {
     const { socket, sent } = makeFakeSocket();
-    const handle = attachTwilioMediaStream({ callId: "CA123", socket, onInboundAudio: () => {}, onCallEvent: () => {} });
+    const handle = attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: () => {}
+    });
     handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.from([0x01]) });
     vi.advanceTimersByTime(60); // several ticks — pacer stays quiet until streamSid is known
     expect(sent).toHaveLength(0);
@@ -108,9 +153,17 @@ describe("attachTwilioMediaStream", () => {
 
   it("captures streamSid from a media frame when the start frame was missed (fallback)", () => {
     const { socket, sent, emit } = makeFakeSocket();
-    const handle = attachTwilioMediaStream({ callId: "CA123", socket, onInboundAudio: () => {}, onCallEvent: () => {} });
+    const handle = attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: () => {}
+    });
     // No START — only a media frame arrives; its streamSid must still enable outbound.
-    emit("message", JSON.stringify({ event: "media", media: { payload: "AA==" }, streamSid: "MZ999" }));
+    emit(
+      "message",
+      JSON.stringify({ event: "media", media: { payload: "AA==" }, streamSid: "MZ999" })
+    );
     handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.from([0x01, 0x02]) });
     vi.advanceTimersByTime(20);
     expect(JSON.parse(sent[0]).streamSid).toBe("MZ999");
@@ -118,7 +171,12 @@ describe("attachTwilioMediaStream", () => {
 
   it("drops outbound audio that would exceed the runaway-backlog cap", () => {
     const { socket, sent, emit } = makeFakeSocket();
-    const handle = attachTwilioMediaStream({ callId: "CA123", socket, onInboundAudio: () => {}, onCallEvent: () => {} });
+    const handle = attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: () => {}
+    });
     emit("message", START);
     // A single frame larger than the ~60s cap is dropped, not buffered.
     handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.alloc(60 * 8000 + 1, 0x10) });
@@ -128,17 +186,36 @@ describe("attachTwilioMediaStream", () => {
 
   it("rejects a non-mulaw8k outbound frame (encoding contract)", () => {
     const { socket, emit } = makeFakeSocket();
-    const handle = attachTwilioMediaStream({ callId: "CA123", socket, onInboundAudio: () => {}, onCallEvent: () => {} });
+    const handle = attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: () => {}
+    });
     emit("message", START);
-    expect(() => handle.sendOutboundAudio({ encoding: "pcm16k", data: Buffer.from([0x01]) })).toThrow(/mulaw8k/);
+    expect(() =>
+      handle.sendOutboundAudio({ encoding: "pcm16k", data: Buffer.from([0x01]) })
+    ).toThrow(/mulaw8k/);
   });
 
   it("maps start→answered and stop→completed lifecycle events", () => {
     const { socket, emit } = makeFakeSocket();
     const events: CallLifecycleEvent[] = [];
-    attachTwilioMediaStream({ callId: "CA123", socket, onInboundAudio: () => {}, onCallEvent: (e) => events.push(e) });
+    attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: (e) => events.push(e)
+    });
     emit("message", START);
-    emit("message", JSON.stringify({ event: "media", media: { payload: "AA==", timestamp: "2000" }, streamSid: "MZ123" }));
+    emit(
+      "message",
+      JSON.stringify({
+        event: "media",
+        media: { payload: "AA==", timestamp: "2000" },
+        streamSid: "MZ123"
+      })
+    );
     emit("message", JSON.stringify({ event: "stop", streamSid: "MZ123" }));
     expect(events[0]).toEqual({ type: "answered" });
     expect(events[1]).toEqual({ type: "completed", durationSeconds: 2 });
@@ -147,7 +224,12 @@ describe("attachTwilioMediaStream", () => {
   it("ignores malformed JSON frames without throwing", () => {
     const { socket, emit } = makeFakeSocket();
     const frames: AudioFrame[] = [];
-    attachTwilioMediaStream({ callId: "CA123", socket, onInboundAudio: (f) => frames.push(f), onCallEvent: () => {} });
+    attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: (f) => frames.push(f),
+      onCallEvent: () => {}
+    });
     expect(() => emit("message", "{not json")).not.toThrow();
     expect(frames).toHaveLength(0);
   });
@@ -160,7 +242,12 @@ describe("attachTwilioMediaStream", () => {
     const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => clock);
     try {
       const { socket, sent, emit } = makeFakeSocket();
-      const handle = attachTwilioMediaStream({ callId: "CA123", socket, onInboundAudio: () => {}, onCallEvent: () => {} });
+      const handle = attachTwilioMediaStream({
+        callId: "CA123",
+        socket,
+        onInboundAudio: () => {},
+        onCallEvent: () => {}
+      });
       emit("message", START);
       handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.alloc(800, 0x10) }); // 5 frames' worth
       // First tick establishes the epoch (elapsed 0) and sends frame #1.
@@ -179,7 +266,12 @@ describe("attachTwilioMediaStream", () => {
 
   it("stops the pacer on close", () => {
     const { socket, sent, emit, closeSpy } = makeFakeSocket();
-    const handle = attachTwilioMediaStream({ callId: "CA123", socket, onInboundAudio: () => {}, onCallEvent: () => {} });
+    const handle = attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: () => {}
+    });
     emit("message", START);
     handle.close();
     expect(closeSpy).toHaveBeenCalledTimes(1);

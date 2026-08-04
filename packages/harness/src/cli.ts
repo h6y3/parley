@@ -47,7 +47,12 @@ export function parseCliArgs(argv: readonly string[]): ParsedCliArgs {
   if (command === "reliability") {
     const briefPath = rest[rest.indexOf("--brief") + 1];
     const scenarioId = rest[rest.indexOf("--scenario") + 1];
-    if (rest.indexOf("--brief") === -1 || rest.indexOf("--scenario") === -1 || !briefPath || !scenarioId) {
+    if (
+      rest.indexOf("--brief") === -1 ||
+      rest.indexOf("--scenario") === -1 ||
+      !briefPath ||
+      !scenarioId
+    ) {
       throw new Error("reliability requires --brief <path> and --scenario <id>");
     }
     const runsIdx = rest.indexOf("--runs");
@@ -66,7 +71,12 @@ const defaultReadFile: ReadFile = (path) => readFileSync(path, "utf8");
 export function loadBrief(path: string, readFile: ReadFile = defaultReadFile): Brief {
   const parsed = JSON.parse(readFile(path)) as unknown;
   // Accept either a bare Brief or a full call envelope ({version, brief, policy}).
-  if (parsed && typeof parsed === "object" && "brief" in parsed && typeof (parsed as { brief: unknown }).brief === "object") {
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "brief" in parsed &&
+    typeof (parsed as { brief: unknown }).brief === "object"
+  ) {
     return (parsed as { brief: Brief }).brief;
   }
   return parsed as Brief;
@@ -98,11 +108,16 @@ export async function runTextPreviewCommand(
     apiKey: args.apiKey,
     systemInstruction: preview.systemInstruction,
     openingTrigger: preview.openingTrigger,
-    userTurns: DERAIL_SCENARIOS.filter((scenario) => scenario.calleeLine).map((scenario) => scenario.calleeLine)
+    userTurns: DERAIL_SCENARIOS.filter((scenario) => scenario.calleeLine).map(
+      (scenario) => scenario.calleeLine
+    )
   });
 
   return result.turns
-    .map((turn) => `[${turn.label}]${turn.userText ? ` USER: ${turn.userText}\n` : " "}BOT: ${turn.responseText}`)
+    .map(
+      (turn) =>
+        `[${turn.label}]${turn.userText ? ` USER: ${turn.userText}\n` : " "}BOT: ${turn.responseText}`
+    )
     .join("\n\n");
 }
 

@@ -49,17 +49,17 @@ cp .env.example .env
 `.env` is gitignored — Parley reads secrets and daemon settings only from the process
 environment, never from a CLI flag or a committed file. Fill in each variable:
 
-| Variable | What it is | Required? |
-|---|---|---|
-| `GEMINI_API_KEY` | Gemini Live API key, used for the realtime voice session. | Yes, for `serve`. |
-| `TWILIO_ACCOUNT_SID` | Your Twilio account SID. | Yes, for `serve`. |
-| `TWILIO_AUTH_TOKEN` | Your Twilio auth token. Also used to verify inbound Twilio webhook signatures. | Yes, for `serve`. |
-| `TWILIO_FROM_NUMBER` | The E.164 number Twilio originates outbound calls from, e.g. `+14155550001`. | Yes, for `serve`. |
-| `PARLEY_PUBLIC_HOST` | The daemon's public hostname (no scheme), e.g. `voice.example.com`. Given to Twilio as the callback host; also seeds the SSRF-safe host allowlist for inbound webhook and media-stream requests. | Yes, for `serve`. |
-| `PARLEY_PORT` | TCP port `parley serve` binds to. | No — defaults to `3334`. |
-| `PARLEY_CALLABLE_NUMBERS` | Comma-separated E.164 numbers Parley is allowed to dial, e.g. `+15555550187,+15555550188`. | No — but if unset, the allowlist is empty and **every** call is denied (fails closed). |
-| `PARLEY_DAEMON_URL` | Base URL the `parley call` CLI command `POST`s the envelope to. | No — defaults to `http://127.0.0.1:3334`. Only read by `call`, not `serve`. |
-| `PARLEY_POST_CALL_COMMAND` | Optional shell command `serve` spawns (detached) after each call completes. | No — and it only fires when `PARLEY_CALL_RECORDS_PATH` is also set; see [`docs/configuration.md`](configuration.md) for that variable and the full reference. |
+| Variable                   | What it is                                                                                                                                                                                       | Required?                                                                                                                                                     |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GEMINI_API_KEY`           | Gemini Live API key, used for the realtime voice session.                                                                                                                                        | Yes, for `serve`.                                                                                                                                             |
+| `TWILIO_ACCOUNT_SID`       | Your Twilio account SID.                                                                                                                                                                         | Yes, for `serve`.                                                                                                                                             |
+| `TWILIO_AUTH_TOKEN`        | Your Twilio auth token. Also used to verify inbound Twilio webhook signatures.                                                                                                                   | Yes, for `serve`.                                                                                                                                             |
+| `TWILIO_FROM_NUMBER`       | The E.164 number Twilio originates outbound calls from, e.g. `+14155550001`.                                                                                                                     | Yes, for `serve`.                                                                                                                                             |
+| `PARLEY_PUBLIC_HOST`       | The daemon's public hostname (no scheme), e.g. `voice.example.com`. Given to Twilio as the callback host; also seeds the SSRF-safe host allowlist for inbound webhook and media-stream requests. | Yes, for `serve`.                                                                                                                                             |
+| `PARLEY_PORT`              | TCP port `parley serve` binds to.                                                                                                                                                                | No — defaults to `3334`.                                                                                                                                      |
+| `PARLEY_CALLABLE_NUMBERS`  | Comma-separated E.164 numbers Parley is allowed to dial, e.g. `+15555550187,+15555550188`.                                                                                                       | No — but if unset, the allowlist is empty and **every** call is denied (fails closed).                                                                        |
+| `PARLEY_DAEMON_URL`        | Base URL the `parley call` CLI command `POST`s the envelope to.                                                                                                                                  | No — defaults to `http://127.0.0.1:3334`. Only read by `call`, not `serve`.                                                                                   |
+| `PARLEY_POST_CALL_COMMAND` | Optional shell command `serve` spawns (detached) after each call completes.                                                                                                                      | No — and it only fires when `PARLEY_CALL_RECORDS_PATH` is also set; see [`docs/configuration.md`](configuration.md) for that variable and the full reference. |
 
 `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, and `GEMINI_API_KEY` are secrets
 — never commit real values.
@@ -146,10 +146,10 @@ signals instead, in order:
 
 ## 8. Troubleshooting
 
-| Symptom | Likely cause |
-|---|---|
-| Twilio returns 403 / "bad signature" on the answer webhook | `TWILIO_AUTH_TOKEN` is wrong, or Twilio's request isn't reaching the hostname in `PARLEY_PUBLIC_HOST` unmodified (a proxy rewriting the URL will break signature verification). |
-| Webhook or media stream never arrives at the daemon | Your public ingress isn't forwarding to `PARLEY_PORT` on `127.0.0.1` — recheck the tunnel/reverse-proxy setup in [`docs/runbooks/deployment.md`](runbooks/deployment.md). |
-| `parley call` fails with a "call refused" / allowlist-style error | The `--to` number isn't in `PARLEY_CALLABLE_NUMBERS`. Add it and restart `serve` (env vars are read at process start). |
-| Immediate auth error from `serve` or the call fails right after connecting | Recheck `GEMINI_API_KEY` and the three `TWILIO_*` secrets — rerun `node packages/cli/dist/cli.js doctor` to confirm which are missing. |
-| Call connects but there's no audio either direction | Confirm the media-stream WebSocket path is publicly reachable over the same HTTPS endpoint as the webhook — a proxy that forwards HTTP but not WebSocket upgrades will look "connected" while carrying no audio. |
+| Symptom                                                                    | Likely cause                                                                                                                                                                                                     |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Twilio returns 403 / "bad signature" on the answer webhook                 | `TWILIO_AUTH_TOKEN` is wrong, or Twilio's request isn't reaching the hostname in `PARLEY_PUBLIC_HOST` unmodified (a proxy rewriting the URL will break signature verification).                                  |
+| Webhook or media stream never arrives at the daemon                        | Your public ingress isn't forwarding to `PARLEY_PORT` on `127.0.0.1` — recheck the tunnel/reverse-proxy setup in [`docs/runbooks/deployment.md`](runbooks/deployment.md).                                        |
+| `parley call` fails with a "call refused" / allowlist-style error          | The `--to` number isn't in `PARLEY_CALLABLE_NUMBERS`. Add it and restart `serve` (env vars are read at process start).                                                                                           |
+| Immediate auth error from `serve` or the call fails right after connecting | Recheck `GEMINI_API_KEY` and the three `TWILIO_*` secrets — rerun `node packages/cli/dist/cli.js doctor` to confirm which are missing.                                                                           |
+| Call connects but there's no audio either direction                        | Confirm the media-stream WebSocket path is publicly reachable over the same HTTPS endpoint as the webhook — a proxy that forwards HTTP but not WebSocket upgrades will look "connected" while carrying no audio. |

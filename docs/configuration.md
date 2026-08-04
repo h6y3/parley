@@ -12,18 +12,18 @@ Parley doesn't read it.
 `process.env` — never from a CLI flag or a committed file. Copy `.env.example` to `.env` and fill
 in real values; `.env` is gitignored.
 
-| Variable | Required | Default | Purpose |
-|---|---|---|---|
-| `GEMINI_API_KEY` | Yes, for `serve` | none — `serve` throws `GEMINI_API_KEY must be set` if missing | Gemini Live API key, passed to `GeminiRealtimeProvider` for the realtime voice session. |
-| `TWILIO_ACCOUNT_SID` | Yes, for `serve` | none — `serve` throws if missing | Twilio account SID, passed to `TwilioTelephonyProvider`. |
-| `TWILIO_AUTH_TOKEN` | Yes, for `serve` | none — `serve` throws if missing | Twilio auth token. Also used to verify inbound Twilio webhook signatures. |
-| `TWILIO_FROM_NUMBER` | Yes, for `serve` | none — `serve` throws if missing | The E.164 number Twilio originates outbound calls from, e.g. `+14155550001`. |
-| `PARLEY_PUBLIC_HOST` | Yes, for `serve` | none — `serve` throws if missing | The daemon's public hostname (no scheme), e.g. `voice.example.com`. Given to Twilio as the callback host and also seeds the SSRF-safe host allowlist for inbound webhook/media-stream requests. |
-| `PARLEY_PORT` | No | `3334` | TCP port `parley serve` binds to. |
-| `PARLEY_CALLABLE_NUMBERS` | No | unset → empty allowlist (all calls denied — fails closed) | Comma-separated E.164 numbers Parley is allowed to dial, e.g. `+14155550002,+14155550003`. |
-| `PARLEY_DAEMON_URL` | No | `http://127.0.0.1:3334` | Base URL the `parley call` CLI command `POST`s the envelope to. Only read by the `call` subcommand, not by `serve`. |
-| `PARLEY_CALL_RECORDS_PATH` | No | unset → no call records are written | Filesystem path `serve` appends one JSON line to per completed call. Parent directories are created automatically. |
-| `PARLEY_POST_CALL_COMMAND` | No | unset → no post-call hook runs | Shell command `serve` spawns (detached, fire-and-forget) after each call completes, invoked as `<command> --records-path <path> --call-id <id>`. Only takes effect when `PARLEY_CALL_RECORDS_PATH` is also set — the hook fires from inside the same callback that writes the record. |
+| Variable                   | Required         | Default                                                       | Purpose                                                                                                                                                                                                                                                                               |
+| -------------------------- | ---------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GEMINI_API_KEY`           | Yes, for `serve` | none — `serve` throws `GEMINI_API_KEY must be set` if missing | Gemini Live API key, passed to `GeminiRealtimeProvider` for the realtime voice session.                                                                                                                                                                                               |
+| `TWILIO_ACCOUNT_SID`       | Yes, for `serve` | none — `serve` throws if missing                              | Twilio account SID, passed to `TwilioTelephonyProvider`.                                                                                                                                                                                                                              |
+| `TWILIO_AUTH_TOKEN`        | Yes, for `serve` | none — `serve` throws if missing                              | Twilio auth token. Also used to verify inbound Twilio webhook signatures.                                                                                                                                                                                                             |
+| `TWILIO_FROM_NUMBER`       | Yes, for `serve` | none — `serve` throws if missing                              | The E.164 number Twilio originates outbound calls from, e.g. `+14155550001`.                                                                                                                                                                                                          |
+| `PARLEY_PUBLIC_HOST`       | Yes, for `serve` | none — `serve` throws if missing                              | The daemon's public hostname (no scheme), e.g. `voice.example.com`. Given to Twilio as the callback host and also seeds the SSRF-safe host allowlist for inbound webhook/media-stream requests.                                                                                       |
+| `PARLEY_PORT`              | No               | `3334`                                                        | TCP port `parley serve` binds to.                                                                                                                                                                                                                                                     |
+| `PARLEY_CALLABLE_NUMBERS`  | No               | unset → empty allowlist (all calls denied — fails closed)     | Comma-separated E.164 numbers Parley is allowed to dial, e.g. `+14155550002,+14155550003`.                                                                                                                                                                                            |
+| `PARLEY_DAEMON_URL`        | No               | `http://127.0.0.1:3334`                                       | Base URL the `parley call` CLI command `POST`s the envelope to. Only read by the `call` subcommand, not by `serve`.                                                                                                                                                                   |
+| `PARLEY_CALL_RECORDS_PATH` | No               | unset → no call records are written                           | Filesystem path `serve` appends one JSON line to per completed call. Parent directories are created automatically.                                                                                                                                                                    |
+| `PARLEY_POST_CALL_COMMAND` | No               | unset → no post-call hook runs                                | Shell command `serve` spawns (detached, fire-and-forget) after each call completes, invoked as `<command> --records-path <path> --call-id <id>`. Only takes effect when `PARLEY_CALL_RECORDS_PATH` is also set — the hook fires from inside the same callback that writes the record. |
 
 Notes:
 
@@ -78,12 +78,12 @@ Literal `1` (`WIRE_VERSION` in `packages/policy/src/schema.ts`). Any other value
 Only what this specific call is about — no policy, no guardrails. Rendered first-person, one
 persona, by `@parley/core`'s prompt assembly (see `docs/prompt-guide.md`).
 
-| Field | Type | Required | Meaning |
-|---|---|---|---|
-| `to` | `string` | Yes | The recipient's phone number. Must be non-empty. |
-| `persona` | `string` | Yes | Who is calling, written in first person, e.g. `"I am Ada, calling on behalf of Alex Rivera."` Exactly one persona — never layer a standing "agent" identity underneath it. |
-| `objective` | `string` | Yes | The single objective for this call, stated as prose. |
-| `facts` | `string[]` | Yes (array required, may be empty) | Supporting facts as flat declarative statements — names, dates, numbers, prior context — not a separate reference block or JSON. |
+| Field       | Type       | Required                           | Meaning                                                                                                                                                                    |
+| ----------- | ---------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `to`        | `string`   | Yes                                | The recipient's phone number. Must be non-empty.                                                                                                                           |
+| `persona`   | `string`   | Yes                                | Who is calling, written in first person, e.g. `"I am Ada, calling on behalf of Alex Rivera."` Exactly one persona — never layer a standing "agent" identity underneath it. |
+| `objective` | `string`   | Yes                                | The single objective for this call, stated as prose.                                                                                                                       |
+| `facts`     | `string[]` | Yes (array required, may be empty) | Supporting facts as flat declarative statements — names, dates, numbers, prior context — not a separate reference block or JSON.                                           |
 
 ### `policy` — typed guardrails (`CallPolicy`)
 
@@ -91,22 +91,22 @@ A `policy` object is optional at the envelope level (see the raw `guardrails[]` 
 below), but when present it must match `callPolicySchema` in `packages/policy/src/schema.ts`
 exactly — unknown fields are rejected (`.strict()` on every object in the schema).
 
-| Field | Type | Required | Meaning |
-|---|---|---|---|
-| `principalName` | `string` | Yes | The person the call is being made for/as, e.g. `"Alex Rivera"`. |
-| `identity` | discriminated union, see below | Yes | How the assistant identifies itself on the call. |
-| `disclosure.honestIfAsked` | `boolean` | Yes | If asked directly, admit to being an AI. |
-| `disclosure.volunteer` | `boolean` | Yes | Proactively state being an AI without being asked. |
-| `scope.lock` | `boolean` | Yes | Forbid improvising a different purpose for the call and redirect off-topic detours back to the objective. |
-| `grounding.antiInvention` | `boolean` | Yes | Forbid guessing or inventing an answer not covered by the brief. |
-| `deferral.enabled` | `boolean` | Yes | If asked something the brief doesn't cover, say so and defer to the principal rather than guessing. |
-| `authority.authorizedCommitments` | `string[]` | No | Specific commitments the assistant is authorized to make on the call. |
-| `authority.alwaysDefer` | `string[]` | No | Categories (e.g. money, legal terms) that always require deferring to the principal, overriding the built-in default list. |
-| `callback` | `{ number: string }` | No | A callback number to offer the other party. |
-| `wrapUp` | `{ enabled: boolean }` | No | Whether to run a closing wrap-up step at the end of the call. |
-| `voicemail` | `{ onMachine: "leaveMessage" \| "hangUp" }` | No | What to do if an answering machine picks up. |
-| `pronunciation` | `string[]` | No | Pronunciation guidance strings appended to the guardrail layer. |
-| `extraGuardrails` | `string[]` | No | Additional free-form guardrail sentences, appended last. |
+| Field                             | Type                                        | Required | Meaning                                                                                                                    |
+| --------------------------------- | ------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `principalName`                   | `string`                                    | Yes      | The person the call is being made for/as, e.g. `"Alex Rivera"`.                                                            |
+| `identity`                        | discriminated union, see below              | Yes      | How the assistant identifies itself on the call.                                                                           |
+| `disclosure.honestIfAsked`        | `boolean`                                   | Yes      | If asked directly, admit to being an AI.                                                                                   |
+| `disclosure.volunteer`            | `boolean`                                   | Yes      | Proactively state being an AI without being asked.                                                                         |
+| `scope.lock`                      | `boolean`                                   | Yes      | Forbid improvising a different purpose for the call and redirect off-topic detours back to the objective.                  |
+| `grounding.antiInvention`         | `boolean`                                   | Yes      | Forbid guessing or inventing an answer not covered by the brief.                                                           |
+| `deferral.enabled`                | `boolean`                                   | Yes      | If asked something the brief doesn't cover, say so and defer to the principal rather than guessing.                        |
+| `authority.authorizedCommitments` | `string[]`                                  | No       | Specific commitments the assistant is authorized to make on the call.                                                      |
+| `authority.alwaysDefer`           | `string[]`                                  | No       | Categories (e.g. money, legal terms) that always require deferring to the principal, overriding the built-in default list. |
+| `callback`                        | `{ number: string }`                        | No       | A callback number to offer the other party.                                                                                |
+| `wrapUp`                          | `{ enabled: boolean }`                      | No       | Whether to run a closing wrap-up step at the end of the call.                                                              |
+| `voicemail`                       | `{ onMachine: "leaveMessage" \| "hangUp" }` | No       | What to do if an answering machine picks up.                                                                               |
+| `pronunciation`                   | `string[]`                                  | No       | Pronunciation guidance strings appended to the guardrail layer.                                                            |
+| `extraGuardrails`                 | `string[]`                                  | No       | Additional free-form guardrail sentences, appended last.                                                                   |
 
 `authority` itself is required (`{}` is valid), but both of its sub-fields are optional.
 
@@ -115,11 +115,11 @@ exactly — unknown fields are rejected (`.strict()` on every object in the sche
 Exactly one of three shapes, discriminated by `style`. Each variant is `.strict()` — no field from
 another variant may be present.
 
-| `style` | Additional fields | Meaning |
-|---|---|---|
-| `"self"` | none | Calling the principal themself. No introduction, no disclosure, topic-switching allowed. |
-| `"onBehalf"` | `role: string` (required) | Calling on the principal's behalf, e.g. `role: "personal assistant"`. Opens with an introduction naming the principal and the role. |
-| `"silent"` | `recipientName?: string` (optional) | No self-identification or introduction — goes straight to the task. `recipientName`, if given, names who's being called (e.g. a business name), for the assistant's own reference. |
+| `style`      | Additional fields                   | Meaning                                                                                                                                                                            |
+| ------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"self"`     | none                                | Calling the principal themself. No introduction, no disclosure, topic-switching allowed.                                                                                           |
+| `"onBehalf"` | `role: string` (required)           | Calling on the principal's behalf, e.g. `role: "personal assistant"`. Opens with an introduction naming the principal and the role.                                                |
+| `"silent"`   | `recipientName?: string` (optional) | No self-identification or introduction — goes straight to the task. `recipientName`, if given, names who's being called (e.g. a business name), for the assistant's own reference. |
 
 ### The alternative raw form: `guardrails[]`
 
@@ -133,10 +133,7 @@ ordinary validation):
 {
   "version": 1,
   "brief": { "to": "+15555550123", "persona": "...", "objective": "...", "facts": [] },
-  "guardrails": [
-    "IMPORTANT: this call has exactly one purpose. ...",
-    "..."
-  ]
+  "guardrails": ["IMPORTANT: this call has exactly one purpose. ...", "..."]
 }
 ```
 

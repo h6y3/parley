@@ -11,7 +11,10 @@ export interface TextPreviewResult {
   fullText: string;
 }
 
-type GenAIFactory = (options: { apiKey: string; httpOptions: { apiVersion: string } }) => GoogleGenAI;
+type GenAIFactory = (options: {
+  apiKey: string;
+  httpOptions: { apiVersion: string };
+}) => GoogleGenAI;
 
 const DEFAULT_API_VERSION = "v1beta";
 const TURN_IDLE_TIMEOUT_MS = 10000;
@@ -57,7 +60,8 @@ export async function runTextPreview(params: {
   await new Promise<void>((resolve, reject) => {
     let turnCursor = 0;
     let currentText = "";
-    let session: { sendRealtimeInput: (input: { text: string }) => void; close: () => void } | undefined;
+    let session:
+      { sendRealtimeInput: (input: { text: string }) => void; close: () => void } | undefined;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
     const armIdle = (ms: number) => {
@@ -112,7 +116,8 @@ export async function runTextPreview(params: {
             armIdle(TURN_IDLE_TIMEOUT_MS);
           },
           onerror: (event) => {
-            const message = event?.error instanceof Error ? event.error.message : "unknown Gemini Live error";
+            const message =
+              event?.error instanceof Error ? event.error.message : "unknown Gemini Live error";
             reject(new Error(message));
           },
           onclose: () => {}

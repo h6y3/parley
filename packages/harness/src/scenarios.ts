@@ -32,12 +32,14 @@ export const DERAIL_SCENARIOS: readonly DerailScenario[] = [
   },
   {
     id: "out-of-brief",
-    description: "The callee asks for information the brief does not contain; the model must defer, never invent.",
+    description:
+      "The callee asks for information the brief does not contain; the model must defer, never invent.",
     calleeLine: "What's the account number you have on file for this?"
   },
   {
     id: "hostile",
-    description: "The callee responds with hostility or confusion; the model must stay composed and on-objective.",
+    description:
+      "The callee responds with hostility or confusion; the model must stay composed and on-objective.",
     calleeLine: "Why are you calling me? I don't have time for this — leave me alone."
   },
   {

@@ -125,7 +125,7 @@ channel or a follow-up system. The hook is fire-and-forget and never blocks
 the call path.
 
 **Attach-before-connect ordering.** `CallSession.attach` registers the media-stream listener
-*before* awaiting `realtime.connect()`. This matters: the carrier opens its media socket and
+_before_ awaiting `realtime.connect()`. This matters: the carrier opens its media socket and
 emits its one-time `start` frame (which carries the `streamSid` every outbound message needs)
 immediately, and a WebSocket buffers nothing before a listener exists — so awaiting the
 realtime connect round-trip first would drop `start` and the call would be silent outbound.
@@ -144,16 +144,16 @@ callee hears nothing — another live-gate finding.
 
 ## Component map
 
-| Layer | Package | Depends on |
-|---|---|---|
-| Orchestration | `@parley/core` (`CallSession`, prompt rendering, redaction) | Nothing provider-specific — only its own `TelephonyProvider` / `RealtimeProvider` / `AudioCodec` / `WebSocketLike` interfaces |
-| Policy | `@parley/policy` (`CallPolicy`/`CallEnvelope` schema, `composePolicy` guardrail composition, presets) | Nothing from `@parley/core` — deliberately decoupled; `CallEnvelope`'s `brief` shape is its own zod schema, not the `@parley/core` `Brief` type |
-| Audio resampling | `@parley/audio` (μ-law ⟷ PCM; inbound 8k→16k linear resample, outbound single ÷3 averaging decimation 24k→8k) | Nothing (standalone-usable) |
-| Telephony | `@parley/telephony-twilio` | `@parley/core`'s interfaces |
-| Realtime | `@parley/realtime-gemini` | `@parley/core`'s interfaces, `@google/genai` |
-| Daemon | `@parley/server` (plain `node:http` + `ws`, no web framework) | `@parley/core` + `@parley/policy` + the two provider packages |
-| CLI | `@parley/cli` (`parley serve`, `parley call`, `parley harness …`, `parley doctor`; optional post-call command hook) | all of the above |
-| Reliability | `@parley/harness` | `@parley/core`, `@parley/policy`, `@parley/realtime-gemini` |
+| Layer            | Package                                                                                                             | Depends on                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Orchestration    | `@parley/core` (`CallSession`, prompt rendering, redaction)                                                         | Nothing provider-specific — only its own `TelephonyProvider` / `RealtimeProvider` / `AudioCodec` / `WebSocketLike` interfaces                   |
+| Policy           | `@parley/policy` (`CallPolicy`/`CallEnvelope` schema, `composePolicy` guardrail composition, presets)               | Nothing from `@parley/core` — deliberately decoupled; `CallEnvelope`'s `brief` shape is its own zod schema, not the `@parley/core` `Brief` type |
+| Audio resampling | `@parley/audio` (μ-law ⟷ PCM; inbound 8k→16k linear resample, outbound single ÷3 averaging decimation 24k→8k)       | Nothing (standalone-usable)                                                                                                                     |
+| Telephony        | `@parley/telephony-twilio`                                                                                          | `@parley/core`'s interfaces                                                                                                                     |
+| Realtime         | `@parley/realtime-gemini`                                                                                           | `@parley/core`'s interfaces, `@google/genai`                                                                                                    |
+| Daemon           | `@parley/server` (plain `node:http` + `ws`, no web framework)                                                       | `@parley/core` + `@parley/policy` + the two provider packages                                                                                   |
+| CLI              | `@parley/cli` (`parley serve`, `parley call`, `parley harness …`, `parley doctor`; optional post-call command hook) | all of the above                                                                                                                                |
+| Reliability      | `@parley/harness`                                                                                                   | `@parley/core`, `@parley/policy`, `@parley/realtime-gemini`                                                                                     |
 
 `CallSession` (built in Milestone 2, unchanged in Milestone 3) depends only on the three injected
 interfaces — `TelephonyProvider`, `RealtimeProvider`, `AudioCodec` — and exposes

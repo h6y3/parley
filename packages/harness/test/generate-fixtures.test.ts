@@ -6,7 +6,10 @@ describe("generateFixtures", () => {
   it("writes one 16kHz fixture per non-silence scenario and skips silence", async () => {
     const writes: Record<string, Buffer> = {};
     // Fake TTS returns a 24kHz tone; the writer must resample to 16kHz.
-    const synth = vi.fn(async () => ({ sampleRate: 24000, pcm: samplesToPcm16Buffer(new Int16Array(2400).fill(4000)) }));
+    const synth = vi.fn(async () => ({
+      sampleRate: 24000,
+      pcm: samplesToPcm16Buffer(new Int16Array(2400).fill(4000))
+    }));
     const writeFile = vi.fn((path: string, data: Buffer) => {
       writes[path] = data;
     });

@@ -13,21 +13,21 @@ validation harnesses that look clean on a single text turn and then fail on a re
 phone call — are non-obvious, well-documented in production telephony deployments, and structural
 in cause. Parley's answer is to make the correct pattern — a fresh, per-call `systemInstruction`
 sent once at connect, and a single short generic opening line, and nothing else that can carry
-privileged content — the *only* path the library's interfaces expose. See
+privileged content — the _only_ path the library's interfaces expose. See
 [`docs/prompt-guide.md`](docs/prompt-guide.md) for the full guarantee and why it holds.
 
 ## Packages
 
-| Package | Responsibility |
-|---|---|
-| [`@parley/core`](packages/core) | `TelephonyProvider`/`RealtimeProvider` interfaces, the `CallSession` orchestrator, the pure-caller-content `Brief` type, generic `systemInstruction` rendering, redaction. Policy-agnostic — knows nothing about modes or disclosure. |
-| [`@parley/policy`](packages/policy) | The `CallPolicy`/`CallEnvelope` schema (zod-validated), guardrail composition (`composePolicy`), and the `principalCall`/`representedCall`/`transactionalCall` presets. |
-| [`@parley/audio`](packages/audio) | μ-law ⟷ PCM resampling, frame handling, barge-in buffer management. Usable standalone. |
-| [`@parley/telephony-twilio`](packages/telephony-twilio) | `TelephonyProvider` implementation for Twilio: origination, TwiML, fail-closed signature verification, Media Streams, DTMF, hangup. |
-| [`@parley/realtime-gemini`](packages/realtime-gemini) | `RealtimeProvider` implementation for Gemini Live via the official `@google/genai` SDK. |
-| [`@parley/server`](packages/server) | The daemon: `POST /call`, the Twilio answer webhook, and the media-stream WebSocket endpoint — wires `@parley/core` and `@parley/policy` to the two provider packages over plain `node:http` + `ws`. |
-| [`@parley/cli`](packages/cli) | The unified `parley` binary: `serve`, `call`, `harness …`, `doctor`. |
-| [`@parley/harness`](packages/harness) | Offline prompt/reliability tester: text and audio turns, multi-turn derail scripts, N-run reliability reporting, payload preview. |
+| Package                                                 | Responsibility                                                                                                                                                                                                                        |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`@parley/core`](packages/core)                         | `TelephonyProvider`/`RealtimeProvider` interfaces, the `CallSession` orchestrator, the pure-caller-content `Brief` type, generic `systemInstruction` rendering, redaction. Policy-agnostic — knows nothing about modes or disclosure. |
+| [`@parley/policy`](packages/policy)                     | The `CallPolicy`/`CallEnvelope` schema (zod-validated), guardrail composition (`composePolicy`), and the `principalCall`/`representedCall`/`transactionalCall` presets.                                                               |
+| [`@parley/audio`](packages/audio)                       | μ-law ⟷ PCM resampling, frame handling, barge-in buffer management. Usable standalone.                                                                                                                                                |
+| [`@parley/telephony-twilio`](packages/telephony-twilio) | `TelephonyProvider` implementation for Twilio: origination, TwiML, fail-closed signature verification, Media Streams, DTMF, hangup.                                                                                                   |
+| [`@parley/realtime-gemini`](packages/realtime-gemini)   | `RealtimeProvider` implementation for Gemini Live via the official `@google/genai` SDK.                                                                                                                                               |
+| [`@parley/server`](packages/server)                     | The daemon: `POST /call`, the Twilio answer webhook, and the media-stream WebSocket endpoint — wires `@parley/core` and `@parley/policy` to the two provider packages over plain `node:http` + `ws`.                                  |
+| [`@parley/cli`](packages/cli)                           | The unified `parley` binary: `serve`, `call`, `harness …`, `doctor`.                                                                                                                                                                  |
+| [`@parley/harness`](packages/harness)                   | Offline prompt/reliability tester: text and audio turns, multi-turn derail scripts, N-run reliability reporting, payload preview.                                                                                                     |
 
 `examples/agent-integration`, `examples/express-minimal`, and `examples/briefs` (below) round out the
 repo; they are reference material, not packages in the pnpm workspace.
@@ -66,17 +66,17 @@ produce before it goes anywhere near a live call.
 
 ## Documentation
 
-| Doc | For |
-|---|---|
-| [Getting Started](docs/getting-started.md) | First-time human setup → first call |
-| [Configuration](docs/configuration.md) | Every env var and call-envelope field |
-| [Agent Setup](docs/agent-setup.md) | Copy-paste prompts to drive setup from an AI agent |
-| [Deployment](docs/runbooks/deployment.md) | Running the daemon as a service (launchd/systemd) |
-| [Prompt Guide](docs/prompt-guide.md) | Why the systemInstruction design holds |
-| [Architecture](docs/architecture.md) | How the packages fit together |
-| [Security Model](docs/security-model.md) | Fail-closed guarantees |
-| [Provider Authoring](docs/provider-authoring-guide.md) | Adding a telephony/realtime provider |
-| [Examples](examples/scenarios/README.md) | 12 ready-to-run call scenarios |
+| Doc                                                    | For                                                |
+| ------------------------------------------------------ | -------------------------------------------------- |
+| [Getting Started](docs/getting-started.md)             | First-time human setup → first call                |
+| [Configuration](docs/configuration.md)                 | Every env var and call-envelope field              |
+| [Agent Setup](docs/agent-setup.md)                     | Copy-paste prompts to drive setup from an AI agent |
+| [Deployment](docs/runbooks/deployment.md)              | Running the daemon as a service (launchd/systemd)  |
+| [Prompt Guide](docs/prompt-guide.md)                   | Why the systemInstruction design holds             |
+| [Architecture](docs/architecture.md)                   | How the packages fit together                      |
+| [Security Model](docs/security-model.md)               | Fail-closed guarantees                             |
+| [Provider Authoring](docs/provider-authoring-guide.md) | Adding a telephony/realtime provider               |
+| [Examples](examples/scenarios/README.md)               | 12 ready-to-run call scenarios                     |
 
 ## Examples
 

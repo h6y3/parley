@@ -49,7 +49,8 @@ export async function runCall(args: CallArgs, deps: CallDeps): Promise<string> {
     body: JSON.stringify(envelope)
   });
   const json = (await res.json()) as { callId?: string; error?: string };
-  if (!res.ok || !json.callId) throw new Error(`call failed (${res.status}): ${json.error ?? "unknown"}`);
+  if (!res.ok || !json.callId)
+    throw new Error(`call failed (${res.status}): ${json.error ?? "unknown"}`);
   return `call queued: ${json.callId}`;
 }
 
@@ -57,7 +58,10 @@ export async function runCall(args: CallArgs, deps: CallDeps): Promise<string> {
  * into a clean list. Unset/empty → [] (the server's allowlist then fails
  * closed, denying all calls). */
 export function parseCallableNumbers(raw: string | undefined): string[] {
-  return (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return (raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /** Fire-and-forget post-call processing hook. The command receives only a
@@ -66,15 +70,24 @@ export function parseCallableNumbers(raw: string | undefined): string[] {
 export function runPostCallCommand(args: PostCallCommandArgs, deps: PostCallCommandDeps): boolean {
   if (!args.command || !args.recordsPath) return false;
   const spawnImpl = deps.spawnImpl ?? nodeSpawn;
-  const child = spawnImpl(args.command, ["--records-path", args.recordsPath, "--call-id", args.callId], {
-    detached: true,
-    stdio: "ignore"
-  }) as ChildProcess;
+  const child = spawnImpl(
+    args.command,
+    ["--records-path", args.recordsPath, "--call-id", args.callId],
+    {
+      detached: true,
+      stdio: "ignore"
+    }
+  ) as ChildProcess;
   child.unref();
   return true;
 }
 
-const SECRET_KEYS = ["GEMINI_API_KEY", "TWILIO_AUTH_TOKEN", "TWILIO_ACCOUNT_SID", "TWILIO_FROM_NUMBER"] as const;
+const SECRET_KEYS = [
+  "GEMINI_API_KEY",
+  "TWILIO_AUTH_TOKEN",
+  "TWILIO_ACCOUNT_SID",
+  "TWILIO_FROM_NUMBER"
+] as const;
 
 /** Presence-only diagnostics — never prints a secret value (Global Constraint:
  * secrets never a log line). */

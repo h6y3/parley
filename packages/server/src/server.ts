@@ -51,9 +51,16 @@ export function createParleyServer(config: ParleyServerConfig): {
       void (async () => {
         const url = new URL(req.url ?? "/", `http://${req.headers.host ?? config.publicHost}`);
         const headers: Record<string, string> = {};
-        for (const [k, v] of Object.entries(req.headers)) headers[k.toLowerCase()] = Array.isArray(v) ? v.join(",") : (v ?? "");
+        for (const [k, v] of Object.entries(req.headers))
+          headers[k.toLowerCase()] = Array.isArray(v) ? v.join(",") : (v ?? "");
         const response = await handleHttpRequest(
-          { method: req.method ?? "GET", path: url.pathname, query: url.search.replace(/^\?/, ""), headers, rawBody: Buffer.concat(chunks).toString("utf8") },
+          {
+            method: req.method ?? "GET",
+            path: url.pathname,
+            query: url.search.replace(/^\?/, ""),
+            headers,
+            rawBody: Buffer.concat(chunks).toString("utf8")
+          },
           deps
         );
         res.writeHead(response.status, response.headers);
@@ -80,7 +87,10 @@ export function createParleyServer(config: ParleyServerConfig): {
     }
     const callId = decodeURIComponent(match[1]);
     wss.handleUpgrade(req, socket, head, (ws: WsSocket) => {
-      void handleMediaConnection(callId, wrapWsSocket(ws), { pending, onCallCompleted: config.onCallCompleted }).catch(() => {
+      void handleMediaConnection(callId, wrapWsSocket(ws), {
+        pending,
+        onCallCompleted: config.onCallCompleted
+      }).catch(() => {
         try {
           ws.close();
         } catch {

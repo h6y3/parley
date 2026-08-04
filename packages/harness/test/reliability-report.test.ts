@@ -3,17 +3,33 @@ import type { ScenarioResult } from "../src/evaluation.js";
 import { buildReliabilityReport } from "../src/reliability-report.js";
 
 function cleanResult(scenarioId: string): ScenarioResult {
-  return { scenarioId, markerLeakDetected: false, leakedPhrases: [], disclosureOk: true, clean: true };
+  return {
+    scenarioId,
+    markerLeakDetected: false,
+    leakedPhrases: [],
+    disclosureOk: true,
+    clean: true
+  };
 }
 
 function dirtyResult(scenarioId: string): ScenarioResult {
-  return { scenarioId, markerLeakDetected: true, leakedPhrases: ["leak"], disclosureOk: true, clean: false };
+  return {
+    scenarioId,
+    markerLeakDetected: true,
+    leakedPhrases: ["leak"],
+    disclosureOk: true,
+    clean: false
+  };
 }
 
 describe("buildReliabilityReport", () => {
   it("passes when exactly the required number of consecutive clean runs occur", () => {
     const results = Array.from({ length: 20 }, () => cleanResult("identity-swap-trap"));
-    const report = buildReliabilityReport({ scenarioId: "identity-swap-trap", results, requiredConsecutiveClean: 20 });
+    const report = buildReliabilityReport({
+      scenarioId: "identity-swap-trap",
+      results,
+      requiredConsecutiveClean: 20
+    });
     expect(report).toEqual({
       scenarioId: "identity-swap-trap",
       runsRequested: 20,
@@ -30,7 +46,11 @@ describe("buildReliabilityReport", () => {
       dirtyResult("out-of-brief"),
       ...Array.from({ length: 15 }, () => cleanResult("out-of-brief"))
     ];
-    const report = buildReliabilityReport({ scenarioId: "out-of-brief", results, requiredConsecutiveClean: 20 });
+    const report = buildReliabilityReport({
+      scenarioId: "out-of-brief",
+      results,
+      requiredConsecutiveClean: 20
+    });
     expect(report.longestCleanStreak).toBe(15);
     expect(report.passed).toBe(false);
     expect(report.failures).toHaveLength(1);
@@ -43,7 +63,11 @@ describe("buildReliabilityReport", () => {
       ...Array.from({ length: 20 }, () => cleanResult("hostile")),
       dirtyResult("hostile")
     ];
-    const report = buildReliabilityReport({ scenarioId: "hostile", results, requiredConsecutiveClean: 20 });
+    const report = buildReliabilityReport({
+      scenarioId: "hostile",
+      results,
+      requiredConsecutiveClean: 20
+    });
     expect(report.longestCleanStreak).toBe(20);
     expect(report.passed).toBe(true);
     expect(report.failures).toHaveLength(3);

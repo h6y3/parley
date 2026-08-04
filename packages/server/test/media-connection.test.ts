@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { type AudioCodec, type RealtimeProvider, type TelephonyProvider, type WebSocketLike } from "@parley/core";
+import {
+  type AudioCodec,
+  type RealtimeProvider,
+  type TelephonyProvider,
+  type WebSocketLike
+} from "@parley/core";
 import { CallSession } from "@parley/core";
 import { PendingSessions } from "../src/pending-sessions.js";
 import { handleMediaConnection } from "../src/media-connection.js";
@@ -27,15 +32,27 @@ function sessionWithAttachSpy(stop = vi.fn(async () => {})) {
   const attach = vi.fn(async () => ({ transcript: [], stop }));
   const realtime: RealtimeProvider = { name: "fake", connect: vi.fn() };
   const telephony: TelephonyProvider = {
-    name: "fake", originate: async () => ({ providerCallId: "CA1", status: "queued" }),
-    buildAnswerResponse: () => ({ contentType: "text/xml", body: "" }), verifyWebhookSignature: () => true,
-    attachMediaStream: () => ({ sendOutboundAudio: () => {}, clearOutboundBuffer: () => {}, close: () => {} }),
-    sendDtmf: async () => {}, hangup: async () => {}
+    name: "fake",
+    originate: async () => ({ providerCallId: "CA1", status: "queued" }),
+    buildAnswerResponse: () => ({ contentType: "text/xml", body: "" }),
+    verifyWebhookSignature: () => true,
+    attachMediaStream: () => ({
+      sendOutboundAudio: () => {},
+      clearOutboundBuffer: () => {},
+      close: () => {}
+    }),
+    sendDtmf: async () => {},
+    hangup: async () => {}
   };
   const session = new CallSession({
     brief: { to: "+1", persona: "p", objective: "o", facts: [] },
-    guardrails: [], telephony, realtime, codec,
-    from: "+1", answerWebhookUrl: "https://h/a", model: "m"
+    guardrails: [],
+    telephony,
+    realtime,
+    codec,
+    from: "+1",
+    answerWebhookUrl: "https://h/a",
+    model: "m"
   });
   (session as unknown as { attach: typeof attach }).attach = attach;
   return { session, attach, stop };
@@ -80,8 +97,11 @@ describe("handleMediaConnection", () => {
     const pending = new PendingSessions();
     const transcript = [{ speaker: "caller" as const, text: "next week is packed", isFinal: true }];
     const { session } = sessionWithAttachSpy();
-    (session as unknown as { attach: () => Promise<{ transcript: typeof transcript; stop: () => Promise<void> }> }).attach =
-      async () => ({ transcript, stop: async () => {} });
+    (
+      session as unknown as {
+        attach: () => Promise<{ transcript: typeof transcript; stop: () => Promise<void> }>;
+      }
+    ).attach = async () => ({ transcript, stop: async () => {} });
     pending.set("CA1", session);
     const socket = fakeSocket();
     const onCallCompleted = vi.fn();
@@ -92,7 +112,9 @@ describe("handleMediaConnection", () => {
     socket.triggerClose();
 
     expect(onCallCompleted).toHaveBeenCalledTimes(1);
-    expect(onCallCompleted).toHaveBeenCalledWith(expect.objectContaining({ callId: "CA1", transcript }));
+    expect(onCallCompleted).toHaveBeenCalledWith(
+      expect.objectContaining({ callId: "CA1", transcript })
+    );
   });
 
   it("evicts exactly once when the socket closes before attach resolves (lifecycle race)", async () => {
@@ -104,8 +126,9 @@ describe("handleMediaConnection", () => {
     const deferredAttach = new Promise<{ transcript: never[]; stop: typeof stop }>((resolve) => {
       resolveAttach = resolve;
     });
-    (session as unknown as { attach: () => Promise<{ transcript: never[]; stop: typeof stop }> }).attach =
-      () => deferredAttach;
+    (
+      session as unknown as { attach: () => Promise<{ transcript: never[]; stop: typeof stop }> }
+    ).attach = () => deferredAttach;
 
     pending.set("CA1", session);
     const socket = fakeSocket();

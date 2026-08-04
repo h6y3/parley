@@ -9,7 +9,12 @@ const URL = "https://voice.example.com/twilio/answer";
  * signature the code under test must accept: base64(HMAC-SHA1(token, url +
  * each POST param concatenated key+value in alphabetical key order)). */
 function sign(token: string, url: string, params: Record<string, string>): string {
-  const data = url + Object.keys(params).sort().map((k) => k + params[k]).join("");
+  const data =
+    url +
+    Object.keys(params)
+      .sort()
+      .map((k) => k + params[k])
+      .join("");
   return createHmac("sha1", token).update(Buffer.from(data, "utf8")).digest("base64");
 }
 

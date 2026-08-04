@@ -57,7 +57,14 @@ import type { CallPolicy } from "../src/schema.js";
  * (scalar) — none of those have a `.shape` to derive keys from, and each is
  * covered by its own dedicated participation test in this file. */
 const NESTED_OBJECT_FIELDS = [
-  "disclosure", "scope", "grounding", "deferral", "authority", "callback", "wrapUp", "voicemail"
+  "disclosure",
+  "scope",
+  "grounding",
+  "deferral",
+  "authority",
+  "callback",
+  "wrapUp",
+  "voicemail"
 ] as const satisfies readonly (keyof CallPolicy)[];
 
 /** Unwrap a `.optional()` wrapper (if present) and return the inner
@@ -68,7 +75,9 @@ const NESTED_OBJECT_FIELDS = [
 function nestedSchemaLeafKeys(zodType: z.ZodTypeAny): string[] {
   const unwrapped = zodType instanceof z.ZodOptional ? zodType.unwrap() : zodType;
   if (!(unwrapped instanceof z.ZodObject)) {
-    throw new Error("nestedSchemaLeafKeys: expected a ZodObject, optionally wrapped in .optional()");
+    throw new Error(
+      "nestedSchemaLeafKeys: expected a ZodObject, optionally wrapped in .optional()"
+    );
   }
   return Object.keys(unwrapped.shape).sort();
 }
@@ -126,7 +135,9 @@ describe("schema/composer rail coverage (drift guard)", () => {
       const schemaKeys = nestedSchemaLeafKeys(callPolicySchema.shape[field]);
       const fixtureValue = full[field] as Record<string, unknown> | undefined;
       if (!fixtureValue) {
-        throw new Error(`full.${field} must be populated in this fixture to exercise nested-key coverage`);
+        throw new Error(
+          `full.${field} must be populated in this fixture to exercise nested-key coverage`
+        );
       }
       const fixtureKeys = Object.keys(fixtureValue).sort();
       expect(fixtureKeys).toEqual(schemaKeys);
@@ -144,7 +155,10 @@ describe("schema/composer rail coverage (drift guard)", () => {
   });
 
   it("disclosure.honestIfAsked participates", () => {
-    const mutated: CallPolicy = { ...full, disclosure: { ...full.disclosure, honestIfAsked: false } };
+    const mutated: CallPolicy = {
+      ...full,
+      disclosure: { ...full.disclosure, honestIfAsked: false }
+    };
     expect(composed(mutated)).not.toBe(baseline);
   });
 
@@ -174,7 +188,10 @@ describe("schema/composer rail coverage (drift guard)", () => {
   });
 
   it("authority.alwaysDefer participates", () => {
-    const mutated: CallPolicy = { ...full, authority: { authorizedCommitments: full.authority.authorizedCommitments } };
+    const mutated: CallPolicy = {
+      ...full,
+      authority: { authorizedCommitments: full.authority.authorizedCommitments }
+    };
     expect(composed(mutated)).not.toBe(baseline);
   });
 

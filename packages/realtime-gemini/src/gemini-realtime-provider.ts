@@ -1,5 +1,10 @@
 import { GoogleGenAI, Modality, TurnCoverage } from "@google/genai";
-import type { AudioFrame, RealtimeConnectParams, RealtimeProvider, RealtimeSession } from "@parley/core";
+import type {
+  AudioFrame,
+  RealtimeConnectParams,
+  RealtimeProvider,
+  RealtimeSession
+} from "@parley/core";
 
 /** Parley's V1 fixed model (design spec §4.5). Exported so callers building a
  * RealtimeConnectParams know what to pass — model selection is a per-connect
@@ -16,7 +21,10 @@ export interface GeminiRealtimeProviderOptions {
   apiVersion?: string;
 }
 
-type GenAIFactory = (options: { apiKey: string; httpOptions: { apiVersion: string } }) => GoogleGenAI;
+type GenAIFactory = (options: {
+  apiKey: string;
+  httpOptions: { apiVersion: string };
+}) => GoogleGenAI;
 
 /** The V1 RealtimeProvider implementation over Gemini Live's official SDK.
  * Ported from scripts/voicecall-realtime-textprobe.mjs's proven connection
@@ -40,21 +48,28 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
   }
 
   async connect(params: RealtimeConnectParams): Promise<RealtimeSession> {
-    const ai = this.genAIFactory({ apiKey: this.apiKey, httpOptions: { apiVersion: this.apiVersion } });
+    const ai = this.genAIFactory({
+      apiKey: this.apiKey,
+      httpOptions: { apiVersion: this.apiVersion }
+    });
 
     const config = {
       responseModalities: [Modality.AUDIO],
       systemInstruction: params.systemInstruction,
       ...(params.inputTranscription !== false ? { inputAudioTranscription: {} } : {}),
       ...(params.outputTranscription !== false ? { outputAudioTranscription: {} } : {}),
-      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: params.voice ?? DEFAULT_GEMINI_VOICE } } },
+      speechConfig: {
+        voiceConfig: { prebuiltVoiceConfig: { voiceName: params.voice ?? DEFAULT_GEMINI_VOICE } }
+      },
       realtimeInputConfig: {
         turnCoverage: TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
         automaticActivityDetection: {
           silenceDurationMs: params.turnDetection?.silenceDurationMs ?? 700
         }
       },
-      ...(params.contextWindowCompression !== false ? { contextWindowCompression: { slidingWindow: {} } } : {})
+      ...(params.contextWindowCompression !== false
+        ? { contextWindowCompression: { slidingWindow: {} } }
+        : {})
     };
 
     let sawModelFinalThisTurn = false;
@@ -107,11 +122,14 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
           }
         },
         onerror: (event) => {
-          const message = event?.error instanceof Error ? event.error.message : "unknown Gemini Live error";
+          const message =
+            event?.error instanceof Error ? event.error.message : "unknown Gemini Live error";
           params.callbacks.onError({ code: "gemini_live_error", message, fatal: true });
         },
         onclose: (event) => {
-          params.callbacks.onClose(`code=${event?.code ?? "unknown"} reason=${event?.reason?.trim() || "none"}`);
+          params.callbacks.onClose(
+            `code=${event?.code ?? "unknown"} reason=${event?.reason?.trim() || "none"}`
+          );
         }
       }
     });
@@ -122,7 +140,9 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
       },
       sendAudio(frame: AudioFrame) {
         if (frame.encoding !== "pcm16k") {
-          throw new Error(`GeminiRealtimeProvider.sendAudio requires pcm16k frames; received ${frame.encoding}`);
+          throw new Error(
+            `GeminiRealtimeProvider.sendAudio requires pcm16k frames; received ${frame.encoding}`
+          );
         }
         genAISession.sendRealtimeInput({
           audio: { data: frame.data.toString("base64"), mimeType: "audio/pcm;rate=16000" }

@@ -133,7 +133,7 @@ prints the exact `systemInstruction` string and the exact opening-trigger text t
 produce — no live API call, pure local assembly (`buildPayloadPreview`,
 `packages/harness/src/payload-preview.ts`). The harness always previews against one fixed
 represented-mode policy (`representedCall`, `packages/harness/src/cli.ts`) — it exercises call
-*behavior*, not the policy envelope itself; that is `@parley/policy`'s and `@parley/server`'s own
+_behavior_, not the policy envelope itself; that is `@parley/policy`'s and `@parley/server`'s own
 concern. `--brief` here takes a plain `{ to, persona, objective, facts }` Brief file, not a full
 `{ version, brief, policy }` call envelope — see `examples/briefs/represented.json`'s nested
 `.brief` object for the shape. (`parley call --brief <path>`, by contrast, takes a full envelope

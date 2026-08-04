@@ -6,7 +6,7 @@ import {
   muLawEncode,
   muLawEncodeSample,
   pcm16BufferToSamples,
-  samplesToPcm16Buffer,
+  samplesToPcm16Buffer
 } from "../src/index.js";
 
 describe("@parley/audio scaffold", () => {

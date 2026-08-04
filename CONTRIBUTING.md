@@ -46,16 +46,16 @@ check fails, fix it locally and re-run rather than pushing and waiting on CI.
 
 Parley is a pnpm workspace with eight packages under `packages/`:
 
-| Package | Responsibility |
-|---|---|
-| [`@parley/core`](packages/core) | `TelephonyProvider`/`RealtimeProvider` interfaces, the `CallSession` orchestrator, the pure-caller-content `Brief` type, generic `systemInstruction` rendering, redaction. Policy-agnostic. |
-| [`@parley/policy`](packages/policy) | The `CallPolicy`/`CallEnvelope` schema (zod-validated), guardrail composition (`composePolicy`), and the `principalCall`/`representedCall`/`transactionalCall` presets. |
-| [`@parley/audio`](packages/audio) | μ-law ⟷ PCM resampling, frame handling, barge-in buffer management. Usable standalone. |
-| [`@parley/telephony-twilio`](packages/telephony-twilio) | `TelephonyProvider` implementation for Twilio: origination, TwiML, fail-closed signature verification, Media Streams, DTMF, hangup. |
-| [`@parley/realtime-gemini`](packages/realtime-gemini) | `RealtimeProvider` implementation for Gemini Live via the official `@google/genai` SDK. |
-| [`@parley/server`](packages/server) | The daemon: `POST /call`, the Twilio answer webhook, and the media-stream WebSocket endpoint. |
-| [`@parley/cli`](packages/cli) | The unified `parley` binary: `serve`, `call`, `harness …`, `doctor`. |
-| [`@parley/harness`](packages/harness) | Offline prompt/reliability tester: text and audio turns, multi-turn derail scripts, N-run reliability reporting, payload preview. |
+| Package                                                 | Responsibility                                                                                                                                                                              |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`@parley/core`](packages/core)                         | `TelephonyProvider`/`RealtimeProvider` interfaces, the `CallSession` orchestrator, the pure-caller-content `Brief` type, generic `systemInstruction` rendering, redaction. Policy-agnostic. |
+| [`@parley/policy`](packages/policy)                     | The `CallPolicy`/`CallEnvelope` schema (zod-validated), guardrail composition (`composePolicy`), and the `principalCall`/`representedCall`/`transactionalCall` presets.                     |
+| [`@parley/audio`](packages/audio)                       | μ-law ⟷ PCM resampling, frame handling, barge-in buffer management. Usable standalone.                                                                                                      |
+| [`@parley/telephony-twilio`](packages/telephony-twilio) | `TelephonyProvider` implementation for Twilio: origination, TwiML, fail-closed signature verification, Media Streams, DTMF, hangup.                                                         |
+| [`@parley/realtime-gemini`](packages/realtime-gemini)   | `RealtimeProvider` implementation for Gemini Live via the official `@google/genai` SDK.                                                                                                     |
+| [`@parley/server`](packages/server)                     | The daemon: `POST /call`, the Twilio answer webhook, and the media-stream WebSocket endpoint.                                                                                               |
+| [`@parley/cli`](packages/cli)                           | The unified `parley` binary: `serve`, `call`, `harness …`, `doctor`.                                                                                                                        |
+| [`@parley/harness`](packages/harness)                   | Offline prompt/reliability tester: text and audio turns, multi-turn derail scripts, N-run reliability reporting, payload preview.                                                           |
 
 `examples/` holds reference material (an agent-integration script, an illustrative Express
 embedding, and sample call envelopes) — not packages in the pnpm workspace.

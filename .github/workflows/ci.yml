@@ -17,6 +17,7 @@ jobs:
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      - run: node examples/scenarios/validate.mjs
       - run: pnpm run lint
       - run: pnpm run typecheck
       - run: pnpm run test

@@ -4,7 +4,11 @@
     "to": "+15555550148",
     "persona": "I am Ada, calling on behalf of Alex Rivera, Alex's personal assistant.",
     "objective": "Follow up on an outstanding invoice and confirm whether a revised quote has been sent.",
-    "facts": ["The original invoice was sent three weeks ago and has not been paid.", "Alex is waiting on a revised quote for additional work before approving payment.", "Alex wants a status update on this call, not a payment made."]
+    "facts": [
+      "The original invoice was sent three weeks ago and has not been paid.",
+      "Alex is waiting on a revised quote for additional work before approving payment.",
+      "Alex wants a status update on this call, not a payment made."
+    ]
   },
   "policy": {
     "principalName": "Alex Rivera",

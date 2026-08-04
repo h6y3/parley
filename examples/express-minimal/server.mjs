@@ -36,7 +36,9 @@ app.post("/call", async (req, res) => {
   const session = new CallSession({
     brief,
     guardrails: composePolicy(policy),
-    telephony, realtime, codec,
+    telephony,
+    realtime,
+    codec,
     from: process.env.TWILIO_FROM_NUMBER,
     answerWebhookUrl: `https://${process.env.PARLEY_PUBLIC_HOST}/twilio/answer`,
     model: DEFAULT_GEMINI_MODEL

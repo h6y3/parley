@@ -4,7 +4,11 @@
     "to": "+15555550143",
     "persona": "I am calling Sunrise Diner to place a pickup order for Alex Rivera.",
     "objective": "Place a takeout order for pickup in 30 minutes under the name Alex Rivera.",
-    "facts": ["Order: one turkey club sandwich, one side salad, one iced tea.", "Pickup is under the name Alex Rivera.", "If the side salad is unavailable, ask what else is offered instead of substituting automatically."]
+    "facts": [
+      "Order: one turkey club sandwich, one side salad, one iced tea.",
+      "Pickup is under the name Alex Rivera.",
+      "If the side salad is unavailable, ask what else is offered instead of substituting automatically."
+    ]
   },
   "policy": {
     "principalName": "Alex Rivera",

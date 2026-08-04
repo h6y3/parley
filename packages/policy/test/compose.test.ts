@@ -15,12 +15,12 @@ const base: CallPolicy = {
 describe("composePolicy", () => {
   it("emits scope, redirect, intro, honest, deferral, always-defer in order", () => {
     const g = composePolicy(base);
-    expect(g[0]).toContain("this call has exactly one purpose");             // scope-lock
-    expect(g[1]).toContain("gently return the conversation");                // redirect
-    expect(g[2]).toContain("you are Alex Rivera's personal assistant");              // identity onBehalf
+    expect(g[0]).toContain("this call has exactly one purpose"); // scope-lock
+    expect(g[1]).toContain("gently return the conversation"); // redirect
+    expect(g[2]).toContain("you are Alex Rivera's personal assistant"); // identity onBehalf
     expect(g[3]).toContain("answer honestly that you are Alex Rivera's AI assistant"); // honest-if-asked
-    expect(g[4]).toContain("follow up with Alex Rivera");                            // deferral
-    expect(g[5]).toContain("money, fees, deposits");                         // always-defer (baked default)
+    expect(g[4]).toContain("follow up with Alex Rivera"); // deferral
+    expect(g[5]).toContain("money, fees, deposits"); // always-defer (baked default)
   });
 
   it("omits scope+redirect when scope is unlocked and emits self identity + grounding", () => {
@@ -57,7 +57,10 @@ describe("composePolicy", () => {
   });
 
   it("authority.alwaysDefer, when present, REPLACES the default category list rather than appending to it", () => {
-    const g = composePolicy({ ...base, authority: { alwaysDefer: ["legal waivers", "medical claims"] } });
+    const g = composePolicy({
+      ...base,
+      authority: { alwaysDefer: ["legal waivers", "medical claims"] }
+    });
     const defer = g.find((s) => s.startsWith("For anything involving"));
     expect(defer).toContain("For anything involving legal waivers, medical claims, do not commit");
     expect(defer).not.toContain("money, fees, deposits");
@@ -66,7 +69,9 @@ describe("composePolicy", () => {
   it("falls back to the default category list when authority.alwaysDefer is absent", () => {
     const g = composePolicy(base);
     const defer = g.find((s) => s.startsWith("For anything involving"));
-    expect(defer).toContain("money, fees, deposits, cancellation charges, contracts, or sensitive personal information");
+    expect(defer).toContain(
+      "money, fees, deposits, cancellation charges, contracts, or sensitive personal information"
+    );
   });
 
   it("CANARY_PHRASES contains the fixed structural sentences", () => {

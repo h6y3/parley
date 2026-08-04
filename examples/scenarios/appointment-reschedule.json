@@ -4,7 +4,11 @@
     "to": "+15555550151",
     "persona": "I am Ada, calling on behalf of Alex Rivera, Alex's personal assistant.",
     "objective": "Reschedule Alex Rivera's dentist appointment currently set for Friday at 3pm to Monday or Tuesday next week.",
-    "facts": ["The existing appointment is Friday at 3pm with Dr. Nguyen.", "Alex prefers any time Monday or Tuesday next week.", "Alex can be reached at the callback number if the office needs to confirm directly."]
+    "facts": [
+      "The existing appointment is Friday at 3pm with Dr. Nguyen.",
+      "Alex prefers any time Monday or Tuesday next week.",
+      "Alex can be reached at the callback number if the office needs to confirm directly."
+    ]
   },
   "policy": {
     "principalName": "Alex Rivera",
@@ -13,7 +17,9 @@
     "scope": { "lock": true },
     "grounding": { "antiInvention": false },
     "deferral": { "enabled": true },
-    "authority": { "authorizedCommitments": ["Move the appointment to any slot Monday or Tuesday next week."] },
+    "authority": {
+      "authorizedCommitments": ["Move the appointment to any slot Monday or Tuesday next week."]
+    },
     "callback": { "number": "+15555550123" },
     "wrapUp": { "enabled": true },
     "voicemail": { "onMachine": "leaveMessage" }

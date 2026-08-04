@@ -1,4 +1,9 @@
-import { CallSession, type AudioCodec, type RealtimeProvider, type TelephonyProvider } from "@parley/core";
+import {
+  CallSession,
+  type AudioCodec,
+  type RealtimeProvider,
+  type TelephonyProvider
+} from "@parley/core";
 import { parseCallEnvelope, composePolicy } from "@parley/policy";
 import type { NumberAllowlist, HostAllowlist } from "./allowlist.js";
 import type { PendingSessions } from "./pending-sessions.js";
@@ -86,7 +91,9 @@ function handleAnswer(req: HttpRequest, deps: ServerDeps): HttpResponse {
     return { status: 403, headers: { "content-type": "text/plain" }, body: "forbidden host" };
   }
   const fullUrl = `https://${host}${req.path}${req.query ? `?${req.query}` : ""}`;
-  if (!deps.telephony.verifyWebhookSignature({ headers: req.headers, rawBody: req.rawBody, fullUrl })) {
+  if (
+    !deps.telephony.verifyWebhookSignature({ headers: req.headers, rawBody: req.rawBody, fullUrl })
+  ) {
     return { status: 403, headers: { "content-type": "text/plain" }, body: "bad signature" };
   }
   const callSid = new URLSearchParams(req.rawBody).get("CallSid") ?? "";

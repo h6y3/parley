@@ -19,7 +19,9 @@ export interface RenderInput {
  * structural markers of its own. */
 export function renderSystemInstruction(input: RenderInput): string {
   const sections: string[] = [input.persona.trim()];
-  const objectiveAndFacts = [input.objective.trim(), input.facts.join(" ")].filter(Boolean).join(" ");
+  const objectiveAndFacts = [input.objective.trim(), input.facts.join(" ")]
+    .filter(Boolean)
+    .join(" ");
   if (objectiveAndFacts) sections.push(objectiveAndFacts);
   const guardrails = input.guardrails.join(" ").trim();
   if (guardrails) sections.push(guardrails);

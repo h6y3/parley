@@ -27,7 +27,9 @@ export function representedCall(opts: {
     scope: { lock: true },
     grounding: { antiInvention: false },
     deferral: { enabled: true },
-    authority: opts.authorizedCommitments ? { authorizedCommitments: [...opts.authorizedCommitments] } : {},
+    authority: opts.authorizedCommitments
+      ? { authorizedCommitments: [...opts.authorizedCommitments] }
+      : {},
     ...(opts.callbackNumber ? { callback: { number: opts.callbackNumber } } : {}),
     wrapUp: { enabled: true },
     voicemail: { onMachine: "leaveMessage" },
@@ -46,12 +48,16 @@ export function transactionalCall(opts: {
 }): CallPolicy {
   return {
     principalName: opts.principalName,
-    identity: opts.recipientName ? { style: "silent", recipientName: opts.recipientName } : { style: "silent" },
+    identity: opts.recipientName
+      ? { style: "silent", recipientName: opts.recipientName }
+      : { style: "silent" },
     disclosure: { honestIfAsked: true, volunteer: false },
     scope: { lock: true },
     grounding: { antiInvention: false },
     deferral: { enabled: true },
-    authority: opts.authorizedCommitments ? { authorizedCommitments: [...opts.authorizedCommitments] } : {},
+    authority: opts.authorizedCommitments
+      ? { authorizedCommitments: [...opts.authorizedCommitments] }
+      : {},
     ...(opts.callbackNumber ? { callback: { number: opts.callbackNumber } } : {}),
     wrapUp: { enabled: true },
     voicemail: { onMachine: "hangUp" },

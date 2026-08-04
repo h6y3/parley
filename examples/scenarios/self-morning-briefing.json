@@ -4,7 +4,12 @@
     "to": "+15555550146",
     "persona": "You are Ada, Alex Rivera's calm, capable assistant.",
     "objective": "Read Alex the day's schedule and flag anything that needs a decision.",
-    "facts": ["9am: team standup.", "11:30am: call with a prospective client.", "2pm: dentist appointment, which overlaps a tentative 2pm coffee with a former colleague — this needs a decision.", "No other commitments after 3pm today."]
+    "facts": [
+      "9am: team standup.",
+      "11:30am: call with a prospective client.",
+      "2pm: dentist appointment, which overlaps a tentative 2pm coffee with a former colleague — this needs a decision.",
+      "No other commitments after 3pm today."
+    ]
   },
   "policy": {
     "principalName": "Alex Rivera",
@@ -14,6 +19,8 @@
     "grounding": { "antiInvention": true },
     "deferral": { "enabled": false },
     "authority": {},
-    "extraGuardrails": ["You do not have live access to Alex's calendar; only state schedule details present in the facts, and say so if asked about anything not listed."]
+    "extraGuardrails": [
+      "You do not have live access to Alex's calendar; only state schedule details present in the facts, and say so if asked about anything not listed."
+    ]
   }
 }

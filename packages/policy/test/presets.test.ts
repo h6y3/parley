@@ -32,7 +32,11 @@ describe("presets", () => {
   });
 
   it("passes through authorized commitments and pronunciation", () => {
-    const p = representedCall({ principalName: "Alex Rivera", authorizedCommitments: ["OK to 7pm."], pronunciation: ["Pronounce the last name Rivera as ree-VAIR-uh."] });
+    const p = representedCall({
+      principalName: "Alex Rivera",
+      authorizedCommitments: ["OK to 7pm."],
+      pronunciation: ["Pronounce the last name Rivera as ree-VAIR-uh."]
+    });
     expect(p.authority.authorizedCommitments).toEqual(["OK to 7pm."]);
     expect(p.pronunciation).toEqual(["Pronounce the last name Rivera as ree-VAIR-uh."]);
   });

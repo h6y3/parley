@@ -4,7 +4,11 @@
     "to": "+15555550144",
     "persona": "I am calling Willow Salon to book a haircut for Alex Rivera.",
     "objective": "Book a haircut appointment for Alex Rivera on Saturday morning.",
-    "facts": ["Alex prefers a time between 9am and noon Saturday.", "This is a standard haircut, no color or treatment.", "Alex has been to this salon before but does not have a preferred stylist."]
+    "facts": [
+      "Alex prefers a time between 9am and noon Saturday.",
+      "This is a standard haircut, no color or treatment.",
+      "Alex has been to this salon before but does not have a preferred stylist."
+    ]
   },
   "policy": {
     "principalName": "Alex Rivera",

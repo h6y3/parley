@@ -55,7 +55,11 @@ export async function runScenarioReliability(
       turns: [{ label: params.scenarioId, frames }]
     });
     results.push(
-      evaluateScenarioRun({ scenarioId: params.scenarioId, mode: params.mode, transcript: run.fullTranscript })
+      evaluateScenarioRun({
+        scenarioId: params.scenarioId,
+        mode: params.mode,
+        transcript: run.fullTranscript
+      })
     );
   }
 

@@ -6,7 +6,8 @@ describe("runTextPreview", () => {
     vi.useFakeTimers();
     const sendRealtimeInput = vi.fn();
     const close = vi.fn();
-    let capturedCallbacks: { onmessage: (m: unknown) => void; onerror: (e: unknown) => void } | undefined;
+    let capturedCallbacks:
+      { onmessage: (m: unknown) => void; onerror: (e: unknown) => void } | undefined;
 
     const fakeGenAIFactory = () =>
       ({
@@ -31,12 +32,19 @@ describe("runTextPreview", () => {
     expect(sendRealtimeInput).toHaveBeenCalledWith({ text: "Begin the call naturally now." });
 
     capturedCallbacks?.onmessage({ serverContent: { outputTranscription: { text: "Hi, " } } });
-    capturedCallbacks?.onmessage({ serverContent: { outputTranscription: { text: "how can I help?" }, turnComplete: true } });
+    capturedCallbacks?.onmessage({
+      serverContent: { outputTranscription: { text: "how can I help?" }, turnComplete: true }
+    });
     await vi.advanceTimersByTimeAsync(1200);
 
-    expect(sendRealtimeInput).toHaveBeenCalledWith({ text: "Aren't you calling about the garage door for Alex?" });
+    expect(sendRealtimeInput).toHaveBeenCalledWith({
+      text: "Aren't you calling about the garage door for Alex?"
+    });
     capturedCallbacks?.onmessage({
-      serverContent: { outputTranscription: { text: "No, this call is about your plumbing appointment." }, turnComplete: true }
+      serverContent: {
+        outputTranscription: { text: "No, this call is about your plumbing appointment." },
+        turnComplete: true
+      }
     });
     await vi.advanceTimersByTimeAsync(1200);
 
@@ -51,7 +59,9 @@ describe("runTextPreview", () => {
         responseText: "No, this call is about your plumbing appointment."
       }
     ]);
-    expect(result.fullText).toBe("Hi, how can I help?No, this call is about your plumbing appointment.");
+    expect(result.fullText).toBe(
+      "Hi, how can I help?No, this call is about your plumbing appointment."
+    );
     expect(close).toHaveBeenCalledOnce();
   });
 });

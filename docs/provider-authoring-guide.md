@@ -48,7 +48,7 @@ against a `mediaStreamUrl` value breaking the document).
 This is the one method with a hard contract, not just a suggested shape: **any doubt returns
 `false`, never a best-effort accept.** `verifyTwilioSignature`
 (`packages/telephony-twilio/src/signature.ts`) returns `false` outright on a missing auth token or
-missing provided signature, computes the carrier's HMAC over `fullUrl` (which the *caller* must
+missing provided signature, computes the carrier's HMAC over `fullUrl` (which the _caller_ must
 have already reconstructed from a host allowlist, never from a raw `Host` header — see
 `docs/security-model.md`) plus the sorted, concatenated form parameters, and compares with
 `crypto.timingSafeEqual` rather than `===` to avoid a timing side channel. A new provider
@@ -105,7 +105,7 @@ underlying vendor SDK offers one (see below).
 
 `GeminiRealtimeProvider` (`packages/realtime-gemini/src/gemini-realtime-provider.ts`) is a
 concrete illustration of holding this line under pressure: the underlying `@google/genai` SDK's
-live session *does* expose a `sendClientContent` method capable of sending an arbitrary turn, and
+live session _does_ expose a `sendClientContent` method capable of sending an arbitrary turn, and
 Gemini's own docs describe it as a way to seed initial history. `GeminiRealtimeProvider` never
 calls it and never exposes a path to it through `RealtimeSession` — the returned session object
 only implements `sendOpeningTrigger`/`sendAudio`/`notifyActivityEnd`/`close`. A team implementing

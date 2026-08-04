@@ -22,9 +22,15 @@ export const callPolicySchema = z
         alwaysDefer: z.array(z.string().min(1)).optional()
       })
       .strict(),
-    callback: z.object({ number: z.string().min(1) }).strict().optional(),
+    callback: z
+      .object({ number: z.string().min(1) })
+      .strict()
+      .optional(),
     wrapUp: z.object({ enabled: z.boolean() }).strict().optional(),
-    voicemail: z.object({ onMachine: z.enum(["leaveMessage", "hangUp"]) }).strict().optional(),
+    voicemail: z
+      .object({ onMachine: z.enum(["leaveMessage", "hangUp"]) })
+      .strict()
+      .optional(),
     pronunciation: z.array(z.string().min(1)).optional(),
     extraGuardrails: z.array(z.string().min(1)).optional()
   })
@@ -68,7 +74,10 @@ const callEnvelopeWithGuardrailsSchema = z
   })
   .strict();
 
-export const callEnvelopeSchema = z.union([callEnvelopeWithPolicySchema, callEnvelopeWithGuardrailsSchema]);
+export const callEnvelopeSchema = z.union([
+  callEnvelopeWithPolicySchema,
+  callEnvelopeWithGuardrailsSchema
+]);
 
 export type CallEnvelopeWithPolicy = z.infer<typeof callEnvelopeWithPolicySchema>;
 export type CallEnvelopeWithGuardrails = z.infer<typeof callEnvelopeWithGuardrailsSchema>;

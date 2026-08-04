@@ -4,7 +4,11 @@
     "to": "+15555550142",
     "persona": "I am Ada, calling on behalf of Alex Rivera, Alex's personal assistant.",
     "objective": "Schedule a plumber visit to fix a leaking kitchen faucet.",
-    "facts": ["The faucet has been dripping steadily for two days.", "Alex is available Tuesday or Wednesday this week.", "Someone will be home to let the plumber in during the visit window."]
+    "facts": [
+      "The faucet has been dripping steadily for two days.",
+      "Alex is available Tuesday or Wednesday this week.",
+      "Someone will be home to let the plumber in during the visit window."
+    ]
   },
   "policy": {
     "principalName": "Alex Rivera",
@@ -17,6 +21,8 @@
     "callback": { "number": "+15555550123" },
     "wrapUp": { "enabled": true },
     "voicemail": { "onMachine": "leaveMessage" },
-    "extraGuardrails": ["If they ask for a deposit or quote a price, say the operator will confirm and call back; do not commit to a fee."]
+    "extraGuardrails": [
+      "If they ask for a deposit or quote a price, say the operator will confirm and call back; do not commit to a fee."
+    ]
   }
 }

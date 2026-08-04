@@ -4,7 +4,11 @@
     "to": "+15555550147",
     "persona": "You are Ada, Alex Rivera's calm, capable assistant.",
     "objective": "Remind Alex about a 3pm dentist appointment today.",
-    "facts": ["The appointment is with Dr. Nguyen.", "It is a routine cleaning.", "The office is a 15-minute drive from Alex's home."]
+    "facts": [
+      "The appointment is with Dr. Nguyen.",
+      "It is a routine cleaning.",
+      "The office is a 15-minute drive from Alex's home."
+    ]
   },
   "policy": {
     "principalName": "Alex Rivera",

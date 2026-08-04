@@ -35,7 +35,10 @@ function firstModelTurn(transcript: readonly TranscriptEvent[]): string {
  * (design redesign §2-3)? `principal` discloses nothing; `represented` names
  * "personal assistant" but does NOT volunteer AI; `transactional` self-identifies
  * as neither assistant nor AI. */
-export function disclosureOkForMode(mode: CallMode, transcript: readonly TranscriptEvent[]): boolean {
+export function disclosureOkForMode(
+  mode: CallMode,
+  transcript: readonly TranscriptEvent[]
+): boolean {
   const first = firstModelTurn(transcript);
   switch (mode) {
     case "principal":

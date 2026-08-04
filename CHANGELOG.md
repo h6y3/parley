@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.1.0] — 2026-07-28
 
 ### Added
+
 - Initial public release: briefed outbound phone calls with Gemini Live over Twilio.
 - Packages: `@parley/core`, `@parley/policy`, `@parley/audio`,
   `@parley/telephony-twilio`, `@parley/realtime-gemini`, `@parley/server`,

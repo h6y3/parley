@@ -13,7 +13,9 @@
     "scope": { "lock": true },
     "grounding": { "antiInvention": false },
     "deferral": { "enabled": true },
-    "authority": { "authorizedCommitments": ["Confirm a table for four at a time between 6:30pm and 8pm Friday."] },
+    "authority": {
+      "authorizedCommitments": ["Confirm a table for four at a time between 6:30pm and 8pm Friday."]
+    },
     "callback": { "number": "+15555550123" },
     "wrapUp": { "enabled": true },
     "voicemail": { "onMachine": "leaveMessage" }

@@ -97,7 +97,10 @@ describe("runAudioScript", () => {
     expect(fake.close).toHaveBeenCalledOnce();
     expect(result.turns).toEqual([
       { label: "opening", transcript: [{ speaker: "model", text: "Hi there.", isFinal: true }] },
-      { label: "derail-1", transcript: [{ speaker: "model", text: "Sure, one moment.", isFinal: true }] }
+      {
+        label: "derail-1",
+        transcript: [{ speaker: "model", text: "Sure, one moment.", isFinal: true }]
+      }
     ]);
     expect(result.fullTranscript).toHaveLength(2);
   });

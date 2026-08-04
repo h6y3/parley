@@ -24,7 +24,13 @@ describe("TelephonyProvider interface shape", () => {
     };
 
     expect(fixture.name).toBe("fixture-telephony");
-    expect(await fixture.originate({ to: "+14155551234", from: "+14155559999", answerWebhookUrl: "https://example.com" })).toEqual({
+    expect(
+      await fixture.originate({
+        to: "+14155551234",
+        from: "+14155559999",
+        answerWebhookUrl: "https://example.com"
+      })
+    ).toEqual({
       providerCallId: "CA123",
       status: "queued"
     });

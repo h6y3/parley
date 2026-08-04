@@ -10,8 +10,15 @@ const ev = (speaker: "caller" | "model", text: string, isFinal = false): Transcr
 
 describe("aggregateTranscript", () => {
   it("concatenates same-speaker deltas (no separator) and closes a turn on isFinal", () => {
-    const events = [ev("model", "Hi, "), ev("model", "how can "), ev("model", "I help?"), ev("model", "", true)];
-    expect(aggregateTranscript(events)).toEqual([{ speaker: "model", text: "Hi, how can I help?" }]);
+    const events = [
+      ev("model", "Hi, "),
+      ev("model", "how can "),
+      ev("model", "I help?"),
+      ev("model", "", true)
+    ];
+    expect(aggregateTranscript(events)).toEqual([
+      { speaker: "model", text: "Hi, how can I help?" }
+    ]);
   });
 
   it("separates consecutive turns and preserves speaker", () => {
@@ -30,6 +37,8 @@ describe("aggregateTranscript", () => {
   });
 
   it("closes a dangling turn with no trailing isFinal", () => {
-    expect(aggregateTranscript([ev("model", "unterminated")])).toEqual([{ speaker: "model", text: "unterminated" }]);
+    expect(aggregateTranscript([ev("model", "unterminated")])).toEqual([
+      { speaker: "model", text: "unterminated" }
+    ]);
   });
 });

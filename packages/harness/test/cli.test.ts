@@ -52,7 +52,9 @@ describe("parseCliArgs", () => {
   });
 
   it("throws when run-text-preview is missing required flags", () => {
-    expect(() => parseCliArgs(["run-text-preview"])).toThrow("run-text-preview requires --brief <path>");
+    expect(() => parseCliArgs(["run-text-preview"])).toThrow(
+      "run-text-preview requires --brief <path>"
+    );
   });
 });
 
@@ -86,7 +88,13 @@ describe("runTextPreviewCommand", () => {
   it("builds the payload preview and drives runTextPreview with every non-empty scenario line", async () => {
     const readFile = fakeReadFile({ "brief.json": briefJson });
     const fakeRunTextPreview = vi.fn<typeof runTextPreview>(async () => ({
-      turns: [{ label: "opening", userText: undefined, responseText: "Hi there, I'm an AI assistant calling on behalf of Alex Rivera." }],
+      turns: [
+        {
+          label: "opening",
+          userText: undefined,
+          responseText: "Hi there, I'm an AI assistant calling on behalf of Alex Rivera."
+        }
+      ],
       fullText: "Hi there, I'm an AI assistant calling on behalf of Alex Rivera."
     }));
 
@@ -130,7 +138,8 @@ describe("runReliabilityCommand", () => {
           p === "b.json"
             ? JSON.stringify({ to: "+14155550123", persona: "p", objective: "o", facts: [] })
             : "",
-        makeProvider: () => ({ name: "fake" }) as unknown as import("@parley/core").RealtimeProvider,
+        makeProvider: () =>
+          ({ name: "fake" }) as unknown as import("@parley/core").RealtimeProvider,
         runScenarioReliability: async () => ({
           scenarioId: "hostile",
           runsRequested: 5,

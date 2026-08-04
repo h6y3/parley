@@ -39,7 +39,8 @@ export async function generateFixtures(
     if (!scenario.calleeLine) continue; // silence
     const { sampleRate, pcm } = await deps.synthesize(scenario.calleeLine);
     const samples = pcm16BufferToSamples(pcm);
-    const resampled = sampleRate === TARGET_RATE ? samples : resampleLinear(samples, sampleRate, TARGET_RATE);
+    const resampled =
+      sampleRate === TARGET_RATE ? samples : resampleLinear(samples, sampleRate, TARGET_RATE);
     const path = `${params.outDir}/${scenario.id}.pcm`;
     writeFile(path, samplesToPcm16Buffer(resampled));
     written.push(path);
@@ -79,7 +80,9 @@ function makeGeminiSynthesize(apiKey: string): GenerateFixturesDeps["synthesize"
       } catch (error) {
         const status = (error as { status?: number }).status;
         if (status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
-          console.error(`Rate limited (429); waiting ${RATE_LIMIT_WAIT_MS / 1000}s before retrying…`);
+          console.error(
+            `Rate limited (429); waiting ${RATE_LIMIT_WAIT_MS / 1000}s before retrying…`
+          );
           await new Promise<void>((resolve) => setTimeout(resolve, RATE_LIMIT_WAIT_MS));
           continue;
         }

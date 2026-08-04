@@ -14,10 +14,10 @@ describe("redactPhoneNumber", () => {
 describe("redactSecrets", () => {
   it("redacts a top-level apiKey field, case-insensitively", () => {
     expect(redactSecrets({ apiKey: "fake", model: "gemini-3.1" })).toEqual({
-      apiKey: "[redacted]",  // # noscan (test fixture, not a real secret)
+      apiKey: "[redacted]", // # noscan (test fixture, not a real secret)
       model: "gemini-3.1"
     });
-    expect(redactSecrets({ ApiKey: "fake" })).toEqual({ ApiKey: "[redacted]" });  // # noscan
+    expect(redactSecrets({ ApiKey: "fake" })).toEqual({ ApiKey: "[redacted]" }); // # noscan
   });
 
   it("redacts token/secret/password/authorization keys anywhere in a nested object", () => {
@@ -28,15 +28,15 @@ describe("redactSecrets", () => {
         note: "this token is not a key named token, so it stays"
       })
     ).toEqual({
-      providers: { google: { apiKey: "[redacted]", apiVersion: "v1beta" } },  // # noscan
-      auth: { authorization: "[redacted]", password: "[redacted]" },  // # noscan
+      providers: { google: { apiKey: "[redacted]", apiVersion: "v1beta" } }, // # noscan
+      auth: { authorization: "[redacted]", password: "[redacted]" }, // # noscan
       note: "this token is not a key named token, so it stays"
     });
   });
 
   it("redacts secrets inside arrays of objects", () => {
     expect(redactSecrets([{ secret: "shh" }, { fine: "ok" }])).toEqual([
-      { secret: "[redacted]" },  // # noscan
+      { secret: "[redacted]" }, // # noscan
       { fine: "ok" }
     ]);
   });
@@ -64,7 +64,10 @@ describe("redactSecrets diagnostics + prototype safety", () => {
   });
 
   it("does not prototype-pollute the returned object via a __proto__ key", () => {
-    const out = redactSecrets(JSON.parse('{ "__proto__": { "polluted": true } }')) as Record<string, unknown>;
+    const out = redactSecrets(JSON.parse('{ "__proto__": { "polluted": true } }')) as Record<
+      string,
+      unknown
+    >;
     // Old code set the returned object's [[Prototype]] to { polluted: true };
     // the fix (Object.create(null) + skipping __proto__) leaves it null.
     expect(Object.getPrototypeOf(out)).toBeNull();
