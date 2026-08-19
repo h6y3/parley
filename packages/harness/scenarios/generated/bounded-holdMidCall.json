@@ -1,0 +1,180 @@
+{
+  "id": "bounded-holdMidCall",
+  "description": "hvacMaintenance / bounded / holdMidCall",
+  "envelope": {
+    "version": 2,
+    "brief": {
+      "to": "+15555550142",
+      "persona": "I am booking a service visit for a home water softener.",
+      "objective": "Schedule a repair technician to inspect and fix a malfunctioning central air conditioning unit.",
+      "facts": [
+        "The central air conditioner started blowing warm air yesterday.",
+        "The service address is 742 Evergreen Terrace.",
+        "The primary contact phone number is 555-0144."
+      ],
+      "preferences": [
+        "Prefer a morning appointment slot if available.",
+        "Willing to accept a diagnostic fee up to 200 dollars."
+      ]
+    },
+    "policy": {
+      "principalName": "Jordan Rivera",
+      "identity": {
+        "style": "silent",
+        "recipientName": "the service department"
+      },
+      "disclosure": {
+        "honestIfAsked": true,
+        "volunteer": false
+      },
+      "scope": {
+        "lock": true,
+        "adjacent": [
+          "You may also arrange service for the drinking-water filtration unit on the same visit if they raise it."
+        ]
+      },
+      "grounding": {
+        "antiInvention": false
+      },
+      "deferral": {
+        "enabled": true
+      },
+      "authority": {
+        "authorizedCommitments": [
+          "Book one service visit on any weekday within the next three weeks."
+        ],
+        "spend": {
+          "limit": 250,
+          "currency": "USD",
+          "basis": "for this visit, up to the not-to-exceed figure they quote"
+        }
+      },
+      "patience": {
+        "expectLookupPauses": true
+      },
+      "ivr": {
+        "goal": "the service department",
+        "menuHints": ["The main menu offers service on 1, new installations on 2, billing on 3."]
+      },
+      "callback": {
+        "number": "+15555550142"
+      },
+      "wrapUp": {
+        "enabled": true
+      },
+      "voicemail": {
+        "onMachine": "hangUp"
+      }
+    },
+    "execution": {
+      "ivr": {
+        "maxPresses": 4,
+        "allowedDigits": "0123456789*#",
+        "onUnrecognized": "zeroOut"
+      },
+      "closure": {
+        "requireOutcomeBeforeEnd": true
+      },
+      "outcome": {
+        "fields": [
+          {
+            "name": "agreedAmount",
+            "description": "Total amount agreed in USD, or empty if nothing was agreed"
+          },
+          {
+            "name": "appointmentStart",
+            "description": "Start of the booked arrival window, e.g. 2026-08-25T08:00"
+          },
+          {
+            "name": "appointmentEnd",
+            "description": "End of the booked arrival window, e.g. 2026-08-25T12:00"
+          },
+          {
+            "name": "secondUnitIncluded",
+            "description": "yes or no \u2014 whether the drinking-water unit is included in the visit"
+          }
+        ]
+      },
+      "spendCeiling": {
+        "field": "agreedAmount",
+        "limit": 250
+      },
+      "limits": {
+        "maxDurationSeconds": 600,
+        "maxSilenceSeconds": 60
+      },
+      "turnDetection": {
+        "silenceMs": 1500
+      }
+    }
+  },
+  "params": {
+    "menu": [
+      {
+        "option": "service",
+        "digit": "1"
+      },
+      {
+        "option": "new installations",
+        "digit": "2"
+      },
+      {
+        "option": "billing",
+        "digit": "3"
+      }
+    ],
+    "correctDigit": "1",
+    "quotedAmount": 160,
+    "raisedTopic": null,
+    "adjacentIndex": null,
+    "offersAppointment": true,
+    "reachesSomeoneWhoCanAct": true
+  },
+  "script": [
+    {
+      "label": "Automated IVR Menu",
+      "text": "Thank you for calling Apex Heating and Cooling. For service, press 1. For new installations, press 2. For billing, press 3."
+    },
+    {
+      "label": "Agent Greeting",
+      "text": "Thank you for calling service scheduling, my name is Dave. How can I help you today?",
+      "afterPress": "1"
+    },
+    {
+      "label": "Request Address",
+      "text": "I can certainly help you with that. May I please have your service address?"
+    },
+    {
+      "label": "Initiate Schedule Lookup",
+      "text": "Thank you. Let me check technician availability in your neighborhood. Please hold on for just a moment while I pull up the calendar."
+    },
+    {
+      "label": "Agent Looking Up Schedule",
+      "text": "... Still pulling up the route map for your area, one moment please."
+    },
+    {
+      "label": "Offer Arrival Window",
+      "text": "Thanks for holding. I have an opening available this Thursday between 8 AM and 12 PM."
+    },
+    {
+      "label": "Quote Diagnostic Fee",
+      "text": "Our diagnostic service call fee is exactly 160 dollars, which covers the technician's travel and full system diagnosis."
+    },
+    {
+      "label": "Request Contact Details",
+      "text": "Could I please get your full name and a callback phone number to attach to this appointment?"
+    },
+    {
+      "label": "Booking Confirmation",
+      "text": "Great, I have you confirmed for Thursday between 8 AM and 12 PM at 742 Evergreen Terrace."
+    },
+    {
+      "label": "Call Wrap-up",
+      "text": "The technician will call roughly thirty minutes before arriving. Thank you for choosing Apex Heating and Cooling, and have a wonderful day."
+    },
+    {
+      "label": "Closing Confirmation",
+      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+    }
+  ]
+}

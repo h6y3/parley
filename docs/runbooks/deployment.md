@@ -23,9 +23,11 @@ own configuration-management/IaC tooling).
 
 - **A filled `.env`.** Copy `.env.example` to `.env` and fill in the required variables —
   `GEMINI_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`,
-  `PARLEY_PUBLIC_HOST`, `PARLEY_PORT` (defaults to `3334` if unset), `PARLEY_CALLABLE_NUMBERS`
-  (comma-separated E.164 allowlist), and optionally `PARLEY_CALL_RECORDS_PATH` and
-  `PARLEY_POST_CALL_COMMAND`. `parley doctor` checks which required secrets are present without
+  `PARLEY_PUBLIC_HOST`, `PARLEY_CALL_TOKEN` (the shared secret authorizing `POST /call` —
+  generate with `openssl rand -hex 32`; the daemon refuses to start without it),
+  `PARLEY_PORT` (defaults to `3334` if unset), `PARLEY_BIND_HOST` (defaults to `127.0.0.1`),
+  `PARLEY_CALLABLE_NUMBERS` (comma-separated E.164 allowlist), and optionally
+  `PARLEY_CALL_RECORDS_PATH` and `PARLEY_POST_CALL_COMMAND`. `parley doctor` checks which required secrets are present without
   ever printing their values — run it before going further.
 - **A purchased Twilio number** capable of voice, with its "from" number matching
   `TWILIO_FROM_NUMBER`.
@@ -110,7 +112,9 @@ TWILIO_ACCOUNT_SID=...
 TWILIO_AUTH_TOKEN=...
 TWILIO_FROM_NUMBER=+15555550100
 PARLEY_PUBLIC_HOST=voice.example.com
+PARLEY_CALL_TOKEN=...
 PARLEY_PORT=3334
+PARLEY_BIND_HOST=127.0.0.1
 PARLEY_CALLABLE_NUMBERS=+15555550101,+15555550102
 ```
 

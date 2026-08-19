@@ -64,7 +64,9 @@ const NESTED_OBJECT_FIELDS = [
   "authority",
   "callback",
   "wrapUp",
-  "voicemail"
+  "voicemail",
+  "patience",
+  "ivr"
 ] as const satisfies readonly (keyof CallPolicy)[];
 
 /** Unwrap a `.optional()` wrapper (if present) and return the inner
@@ -88,16 +90,19 @@ const full: CallPolicy = {
   principalName: "Alex Rivera",
   identity: { style: "onBehalf", role: "personal assistant" },
   disclosure: { honestIfAsked: true, volunteer: true },
-  scope: { lock: true },
+  scope: { lock: true, adjacent: ["Also service the second unit."] },
   grounding: { antiInvention: true },
   deferral: { enabled: true },
   authority: {
     authorizedCommitments: ["A table for four at 7pm is fine."],
-    alwaysDefer: ["Legal waivers."]
+    alwaysDefer: ["Legal waivers."],
+    spend: { limit: 250, currency: "USD", basis: "for this visit" }
   },
   callback: { number: "+15551234567" },
   wrapUp: { enabled: true },
   voicemail: { onMachine: "leaveMessage" },
+  patience: { expectLookupPauses: true },
+  ivr: { goal: "the service department", menuHints: ["Press one for service."] },
   pronunciation: ["Pronounce the last name Rivera as ree-VAIR-uh."],
   extraGuardrails: ["Custom note."]
 };
@@ -214,5 +219,42 @@ describe("schema/composer rail coverage (drift guard)", () => {
 
   it("extraGuardrails participates", () => {
     expect(composed(omit("extraGuardrails"))).not.toBe(baseline);
+  });
+
+  it("scope.adjacent participates", () => {
+    const mutated: CallPolicy = { ...full, scope: { lock: true } };
+    expect(composed(mutated)).not.toBe(baseline);
+  });
+
+  it("authority.spend participates", () => {
+    const authority: CallPolicy["authority"] = { ...full.authority };
+    delete authority.spend;
+    const mutated: CallPolicy = { ...full, authority };
+    expect(composed(mutated)).not.toBe(baseline);
+  });
+
+  it("patience participates", () => {
+    expect(composed(omit("patience"))).not.toBe(baseline);
+  });
+
+  it("ivr participates", () => {
+    expect(composed(omit("ivr"))).not.toBe(baseline);
+  });
+
+  it("ivr.menuHints participates", () => {
+    const mutated: CallPolicy = { ...full, ivr: { goal: full.ivr?.goal ?? "" } };
+    expect(composed(mutated)).not.toBe(baseline);
+  });
+
+  // The `full` fixture uses voicemail.onMachine "leaveMessage", so the ivr
+  // participation test above exercises the IVR rail rather than the voicemail
+  // NARROWING. That narrowing is the single line that ended every business call
+  // at second one, so it gets its own assertion rather than riding along.
+  it("ivr narrows the voicemail rail when onMachine is hangUp", () => {
+    const withHangup: CallPolicy = { ...full, voicemail: { onMachine: "hangUp" } };
+    const noIvr: CallPolicy = { ...withHangup };
+    delete noIvr.ivr;
+    expect(composed(noIvr)).toContain("automated system");
+    expect(composed(withHangup)).not.toContain("automated system");
   });
 });

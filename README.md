@@ -18,18 +18,40 @@ sent once at connect, and a single short generic opening line, and nothing else 
 privileged content — the _only_ path the library's interfaces expose. See
 [`docs/prompt-guide.md`](docs/prompt-guide.md) for the full guarantee and why it holds.
 
+## Completing a call, not just holding one
+
+A call that reaches a person still has to end somewhere: a phone tree navigated, a scope agreed,
+a price accepted or refused, an outcome written down, a line hung up. Parley gives the model a
+small, closed set of tools for that — press keys, record the outcome, end the call — and puts a
+server-side gate in front of every one of them. **The model proposes; the server disposes.**
+
+- **Capability is declared by presence, not by a boolean.** A call envelope that carries no
+  `execution.ivr` block cannot press a key, because the tool is never declared to the model.
+- **Tool results are a closed union of string constants.** Nothing a caller says can reach the
+  model through a tool result, because no tool result is ever built by interpolating text.
+- **The spend ceiling is enforced where it can be enforced.** `execution.spendCeiling` binds an
+  outcome field to a hard limit and the gate refuses an over-limit record _before writing
+  anything_ — a partial record with the appointment kept and the price dropped would read as
+  free. The prose rail asks the model to behave; the gate is what makes it binding.
+- **Keypresses are audio.** DTMF is synthesized by `@parley/audio` and sent in-band down the
+  media stream the call is already on, which is how a telephone keypad has always worked.
+
+See [`docs/configuration.md`](docs/configuration.md#execution--the-binding-plane) for the wire
+format and [`docs/security-model.md`](docs/security-model.md#the-tool-channel--bounded-capability-constant-only-results)
+for why the gate holds.
+
 ## Packages
 
-| Package                                                 | Responsibility                                                                                                                                                                                                                        |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`@parley/core`](packages/core)                         | `TelephonyProvider`/`RealtimeProvider` interfaces, the `CallSession` orchestrator, the pure-caller-content `Brief` type, generic `systemInstruction` rendering, redaction. Policy-agnostic — knows nothing about modes or disclosure. |
-| [`@parley/policy`](packages/policy)                     | The `CallPolicy`/`CallEnvelope` schema (zod-validated), guardrail composition (`composePolicy`), and the `principalCall`/`representedCall`/`transactionalCall` presets.                                                               |
-| [`@parley/audio`](packages/audio)                       | μ-law ⟷ PCM resampling, frame handling, barge-in buffer management. Usable standalone.                                                                                                                                                |
-| [`@parley/telephony-twilio`](packages/telephony-twilio) | `TelephonyProvider` implementation for Twilio: origination, TwiML, fail-closed signature verification, Media Streams, DTMF, hangup.                                                                                                   |
-| [`@parley/realtime-gemini`](packages/realtime-gemini)   | `RealtimeProvider` implementation for Gemini Live via the official `@google/genai` SDK.                                                                                                                                               |
-| [`@parley/server`](packages/server)                     | The daemon: `POST /call`, the Twilio answer webhook, and the media-stream WebSocket endpoint — wires `@parley/core` and `@parley/policy` to the two provider packages over plain `node:http` + `ws`.                                  |
-| [`@parley/cli`](packages/cli)                           | The unified `parley` binary: `serve`, `call`, `harness …`, `doctor`.                                                                                                                                                                  |
-| [`@parley/harness`](packages/harness)                   | Offline prompt/reliability tester: text and audio turns, multi-turn derail scripts, N-run reliability reporting, payload preview.                                                                                                     |
+| Package                                                 | Responsibility                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`@parley/core`](packages/core)                         | `TelephonyProvider`/`RealtimeProvider` interfaces, the `CallSession` orchestrator, the pure-caller-content `Brief` type, generic `systemInstruction` rendering, redaction, and the `ToolGate` that decides what a model's tool call is actually allowed to do. Policy-agnostic — knows nothing about modes or disclosure. |
+| [`@parley/policy`](packages/policy)                     | The `CallPolicy`/`CallEnvelope`/`CallExecution` schema (zod-validated), guardrail composition (`composePolicy`), and the `principalCall`/`representedCall`/`transactionalCall`/`navigableCall` presets.                                                                                                                   |
+| [`@parley/audio`](packages/audio)                       | μ-law ⟷ PCM resampling, frame handling, barge-in buffer management, and DTMF tone synthesis. Usable standalone.                                                                                                                                                                                                           |
+| [`@parley/telephony-twilio`](packages/telephony-twilio) | `TelephonyProvider` implementation for Twilio: origination, TwiML, fail-closed signature verification, Media Streams, carrier-confirmed outbound drain, hangup.                                                                                                                                                           |
+| [`@parley/realtime-gemini`](packages/realtime-gemini)   | `RealtimeProvider` implementation for Gemini Live via the official `@google/genai` SDK.                                                                                                                                                                                                                                   |
+| [`@parley/server`](packages/server)                     | The daemon: `POST /call`, the Twilio answer webhook, and the media-stream WebSocket endpoint — wires `@parley/core` and `@parley/policy` to the two provider packages over plain `node:http` + `ws`.                                                                                                                      |
+| [`@parley/cli`](packages/cli)                           | The unified `parley` binary: `serve`, `call`, `harness …`, `doctor`.                                                                                                                                                                                                                                                      |
+| [`@parley/harness`](packages/harness)                   | Offline prompt/reliability tester: text and audio turns, multi-turn derail scripts, generated multi-turn call scenarios with derived expectations, metamorphic pairs, failure-rate reporting, payload preview.                                                                                                            |
 
 `examples/agent-integration`, `examples/express-minimal`, and `examples/briefs` (below) round out the
 repo; they are reference material, not packages in the pnpm workspace.
@@ -42,7 +64,7 @@ pnpm build
 
 cp .env.example .env
 # edit .env: GEMINI_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER,
-# PARLEY_PUBLIC_HOST, PARLEY_CALLABLE_NUMBERS
+# PARLEY_PUBLIC_HOST, PARLEY_CALLABLE_NUMBERS, PARLEY_CALL_TOKEN (openssl rand -hex 32)
 
 parley serve
 # in another terminal:
@@ -52,6 +74,11 @@ parley call --to +15555550187 --brief examples/briefs/represented.json
 > **Allowlist reminder:** `parley call` fails closed unless `--to` is in `PARLEY_CALLABLE_NUMBERS`
 > — add `+15555550187` (or your real target) there first. See
 > [`docs/getting-started.md`](docs/getting-started.md#6-place-your-first-call) for the full explanation.
+
+> **Auth reminder:** `POST /call` requires `Authorization: Bearer $PARLEY_CALL_TOKEN`, and the
+> daemon refuses to start without the variable. The callable-number allowlist bounds who may be
+> _dialled_, never who may _dial_ — the token is the control on origination. See
+> [`docs/security-model.md`](docs/security-model.md#post-call-authentication--the-primary-control).
 
 > **Note:** `parley` above is the name of the binary `@parley/cli` installs (its `bin` entry). A
 > fresh clone doesn't link it onto `PATH` — run the same commands as
@@ -78,6 +105,7 @@ produce before it goes anywhere near a live call.
 | [Architecture](docs/architecture.md)                   | How the packages fit together                      |
 | [Security Model](docs/security-model.md)               | Fail-closed guarantees                             |
 | [Provider Authoring](docs/provider-authoring-guide.md) | Adding a telephony/realtime provider               |
+| [Scenario Authoring](docs/scenario-authoring.md)       | Seeding, generating and measuring call scenarios   |
 | [Examples](examples/scenarios/README.md)               | 12 ready-to-run call scenarios                     |
 
 ## Examples
@@ -95,15 +123,39 @@ produce before it goes anywhere near a live call.
 
 ## Before any real call
 
-**No live call happens against a real phone number without first passing the offline reliability
-harness.** `parley harness reliability` drives the real `RealtimeProvider` against synthesized
-multi-turn derail scenarios and requires ~20 consecutive clean runs per critical scenario before
-a brief is considered safe to place on a live call — see
-[`docs/prompt-guide.md`](docs/prompt-guide.md#auditing-the-exact-payload-before-a-call) for why an
-aggregate pass rate or a single-turn text check is not sufficient. Beyond the harness, the design
-spec's live human-in-the-loop gates (`self`-identity direct call, `onBehalf`-identity third-party
-call, and barge-in behavior in both) must pass against a real phone before any change to prompt
-assembly or call-policy behavior ships.
+**No live call happens against a real phone number without first passing the offline harness.**
+There are three layers, and each catches something the one below it cannot:
+
+1. **`parley harness reliability`** drives the real `RealtimeProvider` against synthesized
+   multi-turn derail scenarios and requires ~20 consecutive clean runs per critical scenario. See
+   [`docs/prompt-guide.md`](docs/prompt-guide.md#auditing-the-exact-payload-before-a-call) for why
+   an aggregate pass rate or a single-turn text check is not sufficient.
+2. **`parley harness scenario`** runs generated multi-turn call scenarios — a matrix over cost
+   shapes and complications — against a live tool channel, and reports **failure rates with typed
+   codes** rather than a pass count. A run that scores 14/20 twice has not repeated itself; two
+   different sets of five can fail. Expectations are _derived_ from each scenario's declared
+   parameters, never authored alongside its prose, so a generator that writes a flattering script
+   cannot also write itself a passing grade.
+3. **Metamorphic pairs** check a property _between two runs_ — raise a quoted price above the
+   ceiling and the recorded amount must disappear — which needs no correct absolute answer, and so
+   survives the fact that no oracle exists for "did this call go well".
+
+**And then you place a live call anyway.** On this codebase a green matrix and eight clean
+metamorphic pairs were followed immediately by eleven real defects on the first live calls, none
+of them reachable from 542 passing tests. Two structural reasons, both documented in
+[`docs/scenario-authoring.md`](docs/scenario-authoring.md#what-the-harness-cannot-see):
+
+- **A mock at the boundary tests the code above it and asserts nothing about the boundary.** The
+  single method that mattered most had no test at all, in a package with 38 of them.
+- **The harness supplies the world, so it cannot produce a state it does not imagine.** Silence at
+  call start, a callee asking something no script asks, audio still in flight at hangup — no
+  generated script contained any of them.
+
+So the live gate is part of the loop, not a formality after it: offline matrix → merge → live call
+against a number you control → fix → re-run the matrix. Note the last step. A _correct_ product
+change can drop the matrix score, because the fixtures still model the old conversational shape —
+that happened here, cost six points, and looked exactly like a regression in the class the change
+had just touched.
 
 ## Lawful use
 

@@ -2,6 +2,7 @@ import type { AudioCodec, AudioFrame } from "@parley/core";
 import { muLawDecode, muLawEncode } from "./mulaw.js";
 import { pcm16BufferToSamples, samplesToPcm16Buffer } from "./pcm.js";
 import { decimateBy3, resampleLinear } from "./resample.js";
+import { dtmfMuLaw } from "./dtmf.js";
 
 /** The default V1 audio bridge: G.711 μ-law ↔ PCM with the resampling paths
  * design spec §4.5 requires. Stateless; safe to share across calls. */
@@ -16,6 +17,9 @@ export function createAudioCodec(): AudioCodec {
       const pcm24k = pcm16BufferToSamples(frame.data);
       const pcm8k = decimateBy3(pcm24k);
       return { encoding: "mulaw8k", data: muLawEncode(pcm8k) };
+    },
+    dtmfTones(digits: string): AudioFrame {
+      return dtmfMuLaw(digits);
     }
   };
 }

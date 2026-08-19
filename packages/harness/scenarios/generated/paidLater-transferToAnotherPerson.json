@@ -1,0 +1,181 @@
+{
+  "id": "paidLater-transferToAnotherPerson",
+  "description": "hvacMaintenance / paidLater / transferToAnotherPerson",
+  "envelope": {
+    "version": 2,
+    "brief": {
+      "to": "+15555550142",
+      "persona": "I am booking a service visit for a home water softener.",
+      "objective": "Book a technician visit to inspect and repair a central heating unit that is blowing cold air.",
+      "facts": [
+        "The central heating unit stopped heating and is blowing room-temperature air.",
+        "The home address is 742 Evergreen Terrace.",
+        "The homeowner's name is Alex Mercer.",
+        "The callback number is 555-0198."
+      ],
+      "preferences": [
+        "Prefers a morning appointment slot if available.",
+        "Prefers paperless billing via email."
+      ]
+    },
+    "policy": {
+      "principalName": "Jordan Rivera",
+      "identity": {
+        "style": "silent",
+        "recipientName": "the service department"
+      },
+      "disclosure": {
+        "honestIfAsked": true,
+        "volunteer": false
+      },
+      "scope": {
+        "lock": true,
+        "adjacent": [
+          "You may also arrange service for the drinking-water filtration unit on the same visit if they raise it."
+        ]
+      },
+      "grounding": {
+        "antiInvention": false
+      },
+      "deferral": {
+        "enabled": true
+      },
+      "authority": {
+        "authorizedCommitments": [
+          "Book one service visit on any weekday within the next three weeks."
+        ],
+        "spend": {
+          "limit": 250,
+          "currency": "USD",
+          "basis": "for this visit, which will be invoiced afterwards rather than paid on the call"
+        }
+      },
+      "patience": {
+        "expectLookupPauses": true
+      },
+      "ivr": {
+        "goal": "the service department",
+        "menuHints": ["The main menu offers service on 1, new installations on 2, billing on 3."]
+      },
+      "callback": {
+        "number": "+15555550142"
+      },
+      "wrapUp": {
+        "enabled": true
+      },
+      "voicemail": {
+        "onMachine": "hangUp"
+      }
+    },
+    "execution": {
+      "ivr": {
+        "maxPresses": 4,
+        "allowedDigits": "0123456789*#",
+        "onUnrecognized": "zeroOut"
+      },
+      "closure": {
+        "requireOutcomeBeforeEnd": true
+      },
+      "outcome": {
+        "fields": [
+          {
+            "name": "agreedAmount",
+            "description": "Total amount agreed in USD, or empty if nothing was agreed"
+          },
+          {
+            "name": "appointmentStart",
+            "description": "Start of the booked arrival window, e.g. 2026-08-25T08:00"
+          },
+          {
+            "name": "appointmentEnd",
+            "description": "End of the booked arrival window, e.g. 2026-08-25T12:00"
+          },
+          {
+            "name": "secondUnitIncluded",
+            "description": "yes or no \u2014 whether the drinking-water unit is included in the visit"
+          }
+        ]
+      },
+      "spendCeiling": {
+        "field": "agreedAmount",
+        "limit": 250
+      },
+      "limits": {
+        "maxDurationSeconds": 600,
+        "maxSilenceSeconds": 60
+      },
+      "turnDetection": {
+        "silenceMs": 1500
+      }
+    }
+  },
+  "params": {
+    "menu": [
+      {
+        "option": "service",
+        "digit": "1"
+      },
+      {
+        "option": "new installations",
+        "digit": "2"
+      },
+      {
+        "option": "billing",
+        "digit": "3"
+      }
+    ],
+    "correctDigit": "1",
+    "quotedAmount": null,
+    "raisedTopic": null,
+    "adjacentIndex": null,
+    "offersAppointment": true,
+    "reachesSomeoneWhoCanAct": true
+  },
+  "script": [
+    {
+      "label": "Automated IVR",
+      "text": "Thank you for calling Precision Heating and Cooling. For service, press 1. For new installations, press 2. For billing, press 3."
+    },
+    {
+      "label": "Front Desk Rep (Greg)",
+      "text": "Thanks for calling Precision Heating and Cooling service scheduling, my name is Greg. How can I help you today?",
+      "afterPress": "1"
+    },
+    {
+      "label": "Front Desk Rep (Greg)",
+      "text": "I can certainly get someone scheduled for you. May I have your name and the service address?"
+    },
+    {
+      "label": "Front Desk Rep (Greg)",
+      "text": "Thank you. Let me transfer you directly to our lead dispatcher, Karen, to lock in your appointment time."
+    },
+    {
+      "label": "Dispatcher (Karen)",
+      "text": "Hello Alex, this is Karen in dispatch. Greg noted that your heating unit is blowing cold air."
+    },
+    {
+      "label": "Dispatcher (Karen)",
+      "text": "I have an opening with our technician Mark tomorrow between 8:00 AM and 11:00 AM."
+    },
+    {
+      "label": "Dispatcher (Karen)",
+      "text": "Just to let you know, we do not quote prices over the phone; all diagnostic and repair charges are invoiced after the service is completed."
+    },
+    {
+      "label": "Dispatcher (Karen)",
+      "text": "What is the best phone number for Mark to call when he is on his way?"
+    },
+    {
+      "label": "Dispatcher (Karen)",
+      "text": "You are all set for tomorrow, between 8:00 AM and 11:00 AM at 742 Evergreen Terrace. Is there anything else I can assist you with today?"
+    },
+    {
+      "label": "Dispatcher (Karen)",
+      "text": "Thank you for choosing Precision Heating and Cooling. Stay warm, and have a great day!"
+    },
+    {
+      "label": "Closing Confirmation",
+      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+    }
+  ]
+}

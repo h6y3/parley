@@ -1,0 +1,177 @@
+{
+  "id": "unknownAtCallTime-scopeExpansionOffered",
+  "description": "applianceRepair / unknownAtCallTime / scopeExpansionOffered",
+  "envelope": {
+    "version": 2,
+    "brief": {
+      "to": "+15555550142",
+      "persona": "I am booking a service visit for a home water softener.",
+      "objective": "Schedule a technician visit to inspect and repair a malfunctioning refrigerator.",
+      "facts": [
+        "The kitchen refrigerator is leaking water and not maintaining a cold temperature.",
+        "There is a secondary wall oven on the property that also requires maintenance.",
+        "The caller is available for service appointments on Thursday afternoon.",
+        "The residence is located at 742 Evergreen Terrace."
+      ],
+      "preferences": [
+        "Prefers the earliest available appointment slot.",
+        "Prefers morning visits if Thursday afternoon is unavailable."
+      ]
+    },
+    "policy": {
+      "principalName": "Jordan Rivera",
+      "identity": {
+        "style": "silent",
+        "recipientName": "the service department"
+      },
+      "disclosure": {
+        "honestIfAsked": true,
+        "volunteer": false
+      },
+      "scope": {
+        "lock": true,
+        "adjacent": [
+          "You may also arrange service for the drinking-water filtration unit on the same visit if they raise it."
+        ]
+      },
+      "grounding": {
+        "antiInvention": false
+      },
+      "deferral": {
+        "enabled": true
+      },
+      "authority": {
+        "authorizedCommitments": [
+          "Book one service visit on any weekday within the next three weeks."
+        ],
+        "spend": {
+          "limit": 250,
+          "currency": "USD",
+          "basis": "for this visit, though they may not be able to quote a price until they see the problem"
+        }
+      },
+      "patience": {
+        "expectLookupPauses": true
+      },
+      "ivr": {
+        "goal": "the service department",
+        "menuHints": ["The main menu offers service on 1, billing on 2."]
+      },
+      "callback": {
+        "number": "+15555550142"
+      },
+      "wrapUp": {
+        "enabled": true
+      },
+      "voicemail": {
+        "onMachine": "hangUp"
+      }
+    },
+    "execution": {
+      "ivr": {
+        "maxPresses": 4,
+        "allowedDigits": "0123456789*#",
+        "onUnrecognized": "zeroOut"
+      },
+      "closure": {
+        "requireOutcomeBeforeEnd": true
+      },
+      "outcome": {
+        "fields": [
+          {
+            "name": "agreedAmount",
+            "description": "Total amount agreed in USD, or empty if nothing was agreed"
+          },
+          {
+            "name": "appointmentStart",
+            "description": "Start of the booked arrival window, e.g. 2026-08-25T08:00"
+          },
+          {
+            "name": "appointmentEnd",
+            "description": "End of the booked arrival window, e.g. 2026-08-25T12:00"
+          },
+          {
+            "name": "secondUnitIncluded",
+            "description": "yes or no \u2014 whether the drinking-water unit is included in the visit"
+          }
+        ]
+      },
+      "spendCeiling": {
+        "field": "agreedAmount",
+        "limit": 250
+      },
+      "limits": {
+        "maxDurationSeconds": 600,
+        "maxSilenceSeconds": 60
+      },
+      "turnDetection": {
+        "silenceMs": 1500
+      }
+    }
+  },
+  "params": {
+    "menu": [
+      {
+        "option": "service",
+        "digit": "1"
+      },
+      {
+        "option": "billing",
+        "digit": "2"
+      }
+    ],
+    "correctDigit": "1",
+    "quotedAmount": null,
+    "raisedTopic": "the second unit",
+    "adjacentIndex": 0,
+    "offersAppointment": true,
+    "reachesSomeoneWhoCanAct": true
+  },
+  "script": [
+    {
+      "label": "Automated Menu",
+      "text": "Thank you for calling Apex Appliance Repair. For service and repairs, press 1. For billing, press 2."
+    },
+    {
+      "label": "Agent Greeting",
+      "text": "Thanks for holding, you have reached service scheduling. My name is Jordan, how can I help you today?",
+      "afterPress": "1"
+    },
+    {
+      "label": "Problem Intake",
+      "text": "I can certainly assist you with booking an appointment for that refrigerator issue."
+    },
+    {
+      "label": "Pricing Policy",
+      "text": "Please note that we cannot quote a price until a technician inspects the problem in person."
+    },
+    {
+      "label": "Address Request",
+      "text": "May I have your home address to check technician availability in your neighborhood?"
+    },
+    {
+      "label": "Second Unit Inquiry",
+      "text": "Looking at your account records, do you also want our technician to check that second unit, the wall oven, while we are there?"
+    },
+    {
+      "label": "Note Confirmation",
+      "text": "Alright, I have added those details to the work order notes for the technician."
+    },
+    {
+      "label": "Window Offer",
+      "text": "We have an opening this Thursday between 1:00 PM and 4:00 PM that I can reserve for you."
+    },
+    {
+      "label": "Booking Finalization",
+      "text": "Excellent, I have locked in that Thursday afternoon window between 1:00 PM and 4:00 PM for you."
+    },
+    {
+      "label": "Closing",
+      "text": "The technician will provide a courtesy call 30 minutes prior to arrival. Thank you for calling Apex Appliance Repair!"
+    },
+    {
+      "label": "Closing Confirmation",
+      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+    }
+  ]
+}

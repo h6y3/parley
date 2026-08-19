@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/cli.ts", "src/generate-fixtures.ts"],
+  entry: ["src/index.ts", "src/cli.ts", "src/bin.ts", "src/generate-fixtures.ts"],
   format: ["esm"],
   dts: true,
   sourcemap: true,

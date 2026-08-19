@@ -12,26 +12,31 @@ Parley doesn't read it.
 `process.env` — never from a CLI flag or a committed file. Copy `.env.example` to `.env` and fill
 in real values; `.env` is gitignored.
 
-| Variable                   | Required         | Default                                                       | Purpose                                                                                                                                                                                                                                                                               |
-| -------------------------- | ---------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GEMINI_API_KEY`           | Yes, for `serve` | none — `serve` throws `GEMINI_API_KEY must be set` if missing | Gemini Live API key, passed to `GeminiRealtimeProvider` for the realtime voice session.                                                                                                                                                                                               |
-| `TWILIO_ACCOUNT_SID`       | Yes, for `serve` | none — `serve` throws if missing                              | Twilio account SID, passed to `TwilioTelephonyProvider`.                                                                                                                                                                                                                              |
-| `TWILIO_AUTH_TOKEN`        | Yes, for `serve` | none — `serve` throws if missing                              | Twilio auth token. Also used to verify inbound Twilio webhook signatures.                                                                                                                                                                                                             |
-| `TWILIO_FROM_NUMBER`       | Yes, for `serve` | none — `serve` throws if missing                              | The E.164 number Twilio originates outbound calls from, e.g. `+14155550001`.                                                                                                                                                                                                          |
-| `PARLEY_PUBLIC_HOST`       | Yes, for `serve` | none — `serve` throws if missing                              | The daemon's public hostname (no scheme), e.g. `voice.example.com`. Given to Twilio as the callback host and also seeds the SSRF-safe host allowlist for inbound webhook/media-stream requests.                                                                                       |
-| `PARLEY_PORT`              | No               | `3334`                                                        | TCP port `parley serve` binds to.                                                                                                                                                                                                                                                     |
-| `PARLEY_CALLABLE_NUMBERS`  | No               | unset → empty allowlist (all calls denied — fails closed)     | Comma-separated E.164 numbers Parley is allowed to dial, e.g. `+14155550002,+14155550003`.                                                                                                                                                                                            |
-| `PARLEY_DAEMON_URL`        | No               | `http://127.0.0.1:3334`                                       | Base URL the `parley call` CLI command `POST`s the envelope to. Only read by the `call` subcommand, not by `serve`.                                                                                                                                                                   |
-| `PARLEY_CALL_RECORDS_PATH` | No               | unset → no call records are written                           | Filesystem path `serve` appends one JSON line to per completed call. Parent directories are created automatically.                                                                                                                                                                    |
-| `PARLEY_POST_CALL_COMMAND` | No               | unset → no post-call hook runs                                | Shell command `serve` spawns (detached, fire-and-forget) after each call completes, invoked as `<command> --records-path <path> --call-id <id>`. Only takes effect when `PARLEY_CALL_RECORDS_PATH` is also set — the hook fires from inside the same callback that writes the record. |
+| Variable                        | Required         | Default                                                       | Purpose                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------- | ---------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GEMINI_API_KEY`                | Yes, for `serve` | none — `serve` throws `GEMINI_API_KEY must be set` if missing | Gemini Live API key, passed to `GeminiRealtimeProvider` for the realtime voice session.                                                                                                                                                                                                                                                                                                 |
+| `TWILIO_ACCOUNT_SID`            | Yes, for `serve` | none — `serve` throws if missing                              | Twilio account SID, passed to `TwilioTelephonyProvider`.                                                                                                                                                                                                                                                                                                                                |
+| `TWILIO_AUTH_TOKEN`             | Yes, for `serve` | none — `serve` throws if missing                              | Twilio auth token. Also used to verify inbound Twilio webhook signatures.                                                                                                                                                                                                                                                                                                               |
+| `TWILIO_FROM_NUMBER`            | Yes, for `serve` | none — `serve` throws if missing                              | The E.164 number Twilio originates outbound calls from, e.g. `+14155550001`.                                                                                                                                                                                                                                                                                                            |
+| `PARLEY_PUBLIC_HOST`            | Yes, for `serve` | none — `serve` throws if missing                              | The daemon's public hostname (no scheme), e.g. `voice.example.com`. Given to Twilio as the callback host and also seeds the SSRF-safe host allowlist for inbound webhook/media-stream requests.                                                                                                                                                                                         |
+| `PARLEY_CALL_TOKEN`             | Yes, for `serve` | none — `serve` throws if missing                              | Shared secret that authorizes `POST /call`. Callers present it as `Authorization: Bearer <token>`; `parley call` reads the same variable and sends it for you. This is the **primary** access control on origination, not defence in depth — see [`docs/security-model.md`](security-model.md#post-call-authentication--the-primary-control). Generate one with `openssl rand -hex 32`. |
+| `PARLEY_PORT`                   | No               | `3334`                                                        | TCP port `parley serve` binds to.                                                                                                                                                                                                                                                                                                                                                       |
+| `PARLEY_BIND_HOST`              | No               | `127.0.0.1`                                                   | Interface `parley serve` binds to. The default is loopback; expose the daemon with a tunnel or reverse proxy rather than widening this to `0.0.0.0`.                                                                                                                                                                                                                                    |
+| `PARLEY_CALLABLE_NUMBERS`       | No               | unset → empty allowlist (all calls denied — fails closed)     | Comma-separated E.164 numbers Parley is allowed to dial, e.g. `+14155550002,+14155550003`.                                                                                                                                                                                                                                                                                              |
+| `PARLEY_DAEMON_URL`             | No               | `http://127.0.0.1:3334`                                       | Base URL the `parley call` CLI command `POST`s the envelope to. Only read by the `call` subcommand, not by `serve`.                                                                                                                                                                                                                                                                     |
+| `PARLEY_CALL_RECORDS_PATH`      | No               | unset → no call records are written                           | Filesystem path `serve` appends one JSON line to per completed call. Parent directories are created automatically.                                                                                                                                                                                                                                                                      |
+| `PARLEY_AUTHOR_MIN_INTERVAL_MS` | No               | `13000`                                                       | Minimum spacing between scenario-authoring calls in `parley harness generate` — free-tier Gemini quota, measured rather than guessed. A key with real quota should set this to a few hundred ms; at the default the pacing alone costs over four minutes per generation run. Read only by the harness.                                                                                  |
+| `PARLEY_POST_CALL_COMMAND`      | No               | unset → no post-call hook runs                                | Shell command `serve` spawns (detached, fire-and-forget) after each call completes, invoked as `<command> --records-path <path> --call-id <id>`. Only takes effect when `PARLEY_CALL_RECORDS_PATH` is also set — the hook fires from inside the same callback that writes the record.                                                                                                   |
 
 Notes:
 
 - "Required" above is scoped to the `serve` command specifically. `parley call` only needs
   `PARLEY_DAEMON_URL` (optional, defaulted) and doesn't read any Twilio/Gemini variable itself —
-  it's a thin HTTP client. `parley doctor` never throws; it reports presence/absence of
-  `GEMINI_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER` without
-  ever printing a value, so you can check `.env` is wired up before starting `serve`.
+  it's a thin HTTP client — except for `PARLEY_CALL_TOKEN`, which it presents as a bearer token
+  and without which the daemon answers `401`. `parley doctor` never throws; it reports
+  presence/absence of `GEMINI_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
+  `TWILIO_FROM_NUMBER`, and `PARLEY_CALL_TOKEN` without ever printing a value, so you can check
+  `.env` is wired up before starting `serve`.
 - Secrets are read from the environment only. Nothing in this repo commits or logs a real
   Twilio or Gemini credential — see `docs/security-model.md` for the full secrets-handling story.
 
@@ -162,3 +167,130 @@ ready-to-use `CallPolicy` for the three call shapes described in `docs/prompt-gu
 These are TypeScript helpers for building a `policy` object — they are not a third envelope field
 and have no separate wire representation; a preset's output is just a `CallPolicy` you assign to
 `policy`.
+
+### `execution` — the binding plane
+
+Everything above becomes prose. `brief` and `policy` are rendered into the call's
+`systemInstruction`, which makes them **advisory**: a sentence saying "you have at most six
+presses" is a suggestion the model can lose track of. `execution` is the other half — it is read
+by the server, never rendered, and nothing said on the call can reach it.
+
+**Presence declares capability.** There is no `enabled` flag anywhere in this block. Each tool is
+declared to the model if and only if its sub-block is present, so a half-configured envelope is
+inert rather than half-armed. `execution: {}` is valid and equivalent to omitting it.
+
+| Block                             | Declares                                  | Fields                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ivr`                             | the `press_digits` tool                   | `maxPresses` (1-20, counted in individual keys for the whole call), `allowedDigits` (keypad characters only: `0-9`, `*`, `#`), `onUnrecognized` (`zeroOut` \| `waitForHuman` \| `hangUp`)                                                                                                                                                                              |
+| `closure`                         | the `end_call` tool                       | `requireOutcomeBeforeEnd` — when true, the first hangup attempt is refused until an outcome is recorded. Refused **once** only, so a model that cannot produce one is never trapped on a live call                                                                                                                                                                     |
+| `outcome`                         | the `record_outcome` tool                 | `fields[]` of `{name, description}`, names unique. The description is read by the model; the names are what the server keeps                                                                                                                                                                                                                                           |
+| `closure.requireOutcomeBeforeEnd` | _(a gate on `end_call`, not a tool)_      | Refuses the first hangup until an outcome exists — **once** only. Note what it does not cover: it fires on `end_call` alone, so a call the far end hangs up, or one a duration or silence cap ends, reaches no gate. Nothing can be recorded after the line drops, so `record_outcome` asks the model to record as soon as the call has settled rather than at the end |
+| `spendCeiling`                    | _(no tool — a bound on `record_outcome`)_ | `field` (must name a declared `outcome` field) and `limit`. A record whose value in that field reads as a number above `limit` is refused outright, and nothing is written                                                                                                                                                                                             |
+| `limits`                          | _(no tool — server timers)_               | `maxDurationSeconds` (30-1800), `maxSilenceSeconds` (5-300, optional). Non-negotiable: they fire mid-sentence if they must                                                                                                                                                                                                                                             |
+| `turnDetection`                   | _(no tool — VAD config)_                  | `silenceMs` (200-5000). The provider default is 700ms, which a service rep checking a schedule blows straight through                                                                                                                                                                                                                                                  |
+| `detection`                       | _(no tool — carrier config)_              | `mode`: `enable` \| `detectMessageEnd`. Twilio answering-machine detection. Opt-in because it costs answer latency and a per-call fee on **every** call, machine-answered or not                                                                                                                                                                                       |
+
+**`policy.ivr` and `execution.ivr` must both be present or both absent** — an envelope with one
+and not the other is rejected with a `400`. `composePolicy` is pure over `CallPolicy` and narrows
+the voicemail rail on `policy.ivr`; without the pairing rule a caller could narrow that rail,
+telling the model a menu may answer, while declaring no `press_digits` tool — stranding it on a
+tree it has no way to navigate.
+
+A complete v2 envelope:
+
+```json
+{
+  "version": 2,
+  "brief": {
+    "to": "+15555550142",
+    "persona": "I am booking a service visit for a water softener.",
+    "objective": "Schedule a service visit for the water softener in the next two weeks.",
+    "facts": [
+      "The unit was last serviced two years ago.",
+      "The filters were changed recently and appear fine."
+    ],
+    "preferences": [
+      "Jordan Rivera prefers morning appointment windows.",
+      "If the drinking-water unit also needs attention, Jordan would want it looked at on the same visit."
+    ]
+  },
+  "policy": {
+    "principalName": "Jordan Rivera",
+    "identity": { "style": "silent", "recipientName": "the service department" },
+    "disclosure": { "honestIfAsked": true, "volunteer": false },
+    "scope": {
+      "lock": true,
+      "adjacent": ["You may also arrange service for the drinking-water unit if they raise it."]
+    },
+    "grounding": { "antiInvention": false },
+    "deferral": { "enabled": true },
+    "authority": {
+      "authorizedCommitments": ["Book one service visit in the next two weeks."],
+      "spend": {
+        "limit": 250,
+        "currency": "USD",
+        "basis": "for this service visit including the fee and any filters"
+      }
+    },
+    "patience": { "expectLookupPauses": true },
+    "ivr": {
+      "goal": "the service department",
+      "menuHints": ["The main menu offers service on one and filter purchase on two."]
+    },
+    "callback": { "number": "+15555550142" },
+    "wrapUp": { "enabled": true },
+    "voicemail": { "onMachine": "hangUp" }
+  },
+  "execution": {
+    "ivr": { "maxPresses": 4, "allowedDigits": "0123456789*#", "onUnrecognized": "zeroOut" },
+    "closure": { "requireOutcomeBeforeEnd": true },
+    "outcome": {
+      "fields": [
+        {
+          "name": "agreedAmount",
+          "description": "Total amount agreed, or empty if none was agreed"
+        },
+        { "name": "appointmentStart", "description": "ISO start of the booked arrival window" },
+        { "name": "appointmentEnd", "description": "ISO end of the booked arrival window" }
+      ]
+    },
+    "spendCeiling": { "field": "agreedAmount", "limit": 250 },
+    "limits": { "maxDurationSeconds": 600, "maxSilenceSeconds": 45 },
+    "turnDetection": { "silenceMs": 1500 }
+  }
+}
+```
+
+#### Wire versions
+
+`version` accepts **1** or **2**. A v1 envelope stays valid and simply gets no execution plane;
+carrying an `execution` block on a v1 envelope is rejected. The envelope schemas are `.strict()`,
+so an older daemon meeting a v2 envelope already fails loudly with a field path rather than
+silently discarding the caps — the version bump makes that failure legible rather than cryptic.
+
+#### The spend ceiling spans both planes, and must be declared in both
+
+`authority.spend` is prose: it tells the model what it may agree to. `execution.spendCeiling` is
+binding: it tells the server what it may write down. Neither replaces the other, and the schema
+refuses to let you have one without the other.
+
+**Both, or neither.** An envelope with `policy.authority.spend` _and_ an `execution.outcome` block
+is rejected unless it also carries `execution.spendCeiling`; `execution.spendCeiling` is rejected
+without `policy.authority.spend`; and the two `limit` values must be equal. The rule exists
+because the gap between them is invisible from either side — a caller can grant spending authority
+in prose and declare a record to write it into, and nothing ties the two together. A live matrix
+run found exactly that: 430 agreed and recorded as a completed call against a 250 ceiling, on
+three of four cells that tried it.
+
+```json
+"execution": {
+  "outcome": { "fields": [{ "name": "agreedAmount", "description": "Total agreed, or empty if none" }] },
+  "spendCeiling": { "field": "agreedAmount", "limit": 250 }
+}
+```
+
+**What this does not do.** It does not stop the model agreeing to a price out loud — agreeing is
+speech and there is no transaction to intercept. It bounds the _record_, which is what every
+downstream system actually acts on, and it tells the model mid-call that the amount was refused,
+while there is still time to defer. It also reads digits only: an amount spelled out in words is
+not bounded here.

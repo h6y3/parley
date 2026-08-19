@@ -1,0 +1,186 @@
+{
+  "id": "reference-service-visit",
+  "description": "De-identified from a real booking call: a two-option phone tree, an account lookup, a second appliance raised mid-call, a fee quoted under the ceiling, and one arrival window offered and accepted.",
+  "envelope": {
+    "version": 2,
+    "brief": {
+      "to": "+15555550142",
+      "persona": "I am booking a service visit for a home water softener.",
+      "objective": "Schedule a service visit for the water softener within the next three weeks.",
+      "facts": [
+        "The account is under Jordan Rivera.",
+        "The water softener was last serviced about two years ago.",
+        "There is also a drinking-water filtration unit from the same company at the property.",
+        "The filters on the drinking-water unit were changed recently and appear to be fine."
+      ],
+      "preferences": [
+        "Jordan Rivera prefers morning arrival windows when both are offered.",
+        "If the drinking-water unit also needs attention, Jordan Rivera would want it looked at on the same visit rather than a separate one.",
+        "Jordan Rivera is available any weekday over the next three weeks."
+      ]
+    },
+    "policy": {
+      "principalName": "Jordan Rivera",
+      "identity": {
+        "style": "silent",
+        "recipientName": "the service department"
+      },
+      "disclosure": {
+        "honestIfAsked": true,
+        "volunteer": false
+      },
+      "scope": {
+        "lock": true,
+        "adjacent": [
+          "You may also arrange service for the drinking-water filtration unit on the same visit if they raise it."
+        ]
+      },
+      "grounding": {
+        "antiInvention": false
+      },
+      "deferral": {
+        "enabled": true
+      },
+      "authority": {
+        "authorizedCommitments": [
+          "Book one service visit on any weekday within the next three weeks."
+        ],
+        "spend": {
+          "limit": 250,
+          "currency": "USD",
+          "basis": "for this visit including the service fee and any filters fitted"
+        }
+      },
+      "patience": {
+        "expectLookupPauses": true
+      },
+      "ivr": {
+        "goal": "the service department",
+        "menuHints": ["The main menu offers service on one and filter purchase or pickup on two."]
+      },
+      "callback": {
+        "number": "+15555550142"
+      },
+      "wrapUp": {
+        "enabled": true
+      },
+      "voicemail": {
+        "onMachine": "hangUp"
+      }
+    },
+    "execution": {
+      "ivr": {
+        "maxPresses": 4,
+        "allowedDigits": "0123456789*#",
+        "onUnrecognized": "zeroOut"
+      },
+      "closure": {
+        "requireOutcomeBeforeEnd": true
+      },
+      "outcome": {
+        "fields": [
+          {
+            "name": "agreedAmount",
+            "description": "Total amount agreed in USD, or empty if nothing was agreed"
+          },
+          {
+            "name": "appointmentStart",
+            "description": "Start of the booked arrival window, e.g. 2026-08-25T08:00"
+          },
+          {
+            "name": "appointmentEnd",
+            "description": "End of the booked arrival window, e.g. 2026-08-25T12:00"
+          },
+          {
+            "name": "secondUnitIncluded",
+            "description": "yes or no \u2014 whether the drinking-water unit is included in the visit"
+          }
+        ]
+      },
+      "spendCeiling": {
+        "field": "agreedAmount",
+        "limit": 250
+      },
+      "limits": {
+        "maxDurationSeconds": 600,
+        "maxSilenceSeconds": 60
+      },
+      "turnDetection": {
+        "silenceMs": 1500
+      }
+    }
+  },
+  "params": {
+    "menu": [
+      {
+        "option": "service",
+        "digit": "1"
+      },
+      {
+        "option": "filter purchase or pickup",
+        "digit": "2"
+      }
+    ],
+    "correctDigit": "1",
+    "quotedAmount": 160,
+    "raisedTopic": "the drinking-water filtration unit",
+    "adjacentIndex": 0,
+    "offersAppointment": true,
+    "reachesSomeoneWhoCanAct": true
+  },
+  "script": [
+    {
+      "label": "menu",
+      "text": "Thanks for calling, and we look forward to helping you. For service, press one. For filter purchase or pickup, press two."
+    },
+    {
+      "label": "greeting",
+      "text": "Service scheduling, this is Sam. How can I help you today?",
+      "afterPress": "1"
+    },
+    {
+      "label": "lookup",
+      "text": "Okay, let me pull up the account. One moment.",
+      "afterPress": "1"
+    },
+    {
+      "label": "history",
+      "text": "I see the last service on the softener was in 2024. I can definitely get you scheduled. Let me see what dates I have available.",
+      "afterPress": "1"
+    },
+    {
+      "label": "second-unit",
+      "text": "I also show a drinking-water filtration unit on this account. Is this for the softener only, or did you want us to look at that one as well?",
+      "afterPress": "1"
+    },
+    {
+      "label": "clarify",
+      "text": "Okay. And during the service call the technician will look over all the units anyway, so if you have noticed reduced water pressure on the filtration unit they will check that too. Have the filters been changed recently?",
+      "afterPress": "1"
+    },
+    {
+      "label": "fee",
+      "text": "Then you are all set there. The service fee is one hundred and sixty dollars, and that covers up to a full hour of service. Any filters needed would be an additional charge after inspection.",
+      "afterPress": "1"
+    },
+    {
+      "label": "offer",
+      "text": "Let me see what I have available for you. I currently have Tuesday, August twenty-fifth, between eight and twelve. Would that work?",
+      "afterPress": "1"
+    },
+    {
+      "label": "confirm",
+      "text": "Perfect, I will get you scheduled, and you should be receiving a booking confirmation shortly.",
+      "afterPress": "1"
+    },
+    {
+      "label": "goodbye",
+      "text": "Of course. Have a good one.",
+      "afterPress": "1"
+    },
+    {
+      "label": "Closing Confirmation",
+      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+    }
+  ]
+}

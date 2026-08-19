@@ -1,0 +1,185 @@
+{
+  "id": "bounded-transferToAnotherPerson",
+  "description": "applianceRepair / bounded / transferToAnotherPerson",
+  "envelope": {
+    "version": 2,
+    "brief": {
+      "to": "+15555550142",
+      "persona": "I am booking a service visit for a home water softener.",
+      "objective": "Schedule a technician to repair my broken dishwasher at my home as soon as possible.",
+      "facts": [
+        "My Whirlpool dishwasher is leaking from the bottom during the wash cycle.",
+        "My address is 742 Evergreen Terrace.",
+        "I am available on Thursday morning."
+      ],
+      "preferences": [
+        "Prefer a morning time slot over an afternoon one.",
+        "Prefer to pay with a credit card upon completion rather than in advance."
+      ]
+    },
+    "policy": {
+      "principalName": "Jordan Rivera",
+      "identity": {
+        "style": "silent",
+        "recipientName": "the service department"
+      },
+      "disclosure": {
+        "honestIfAsked": true,
+        "volunteer": false
+      },
+      "scope": {
+        "lock": true,
+        "adjacent": [
+          "You may also arrange service for the drinking-water filtration unit on the same visit if they raise it."
+        ]
+      },
+      "grounding": {
+        "antiInvention": false
+      },
+      "deferral": {
+        "enabled": true
+      },
+      "authority": {
+        "authorizedCommitments": [
+          "Book one service visit on any weekday within the next three weeks."
+        ],
+        "spend": {
+          "limit": 250,
+          "currency": "USD",
+          "basis": "for this visit, up to the not-to-exceed figure they quote"
+        }
+      },
+      "patience": {
+        "expectLookupPauses": true
+      },
+      "ivr": {
+        "goal": "the service department",
+        "menuHints": ["The main menu offers service on 1, billing on 2."]
+      },
+      "callback": {
+        "number": "+15555550142"
+      },
+      "wrapUp": {
+        "enabled": true
+      },
+      "voicemail": {
+        "onMachine": "hangUp"
+      }
+    },
+    "execution": {
+      "ivr": {
+        "maxPresses": 4,
+        "allowedDigits": "0123456789*#",
+        "onUnrecognized": "zeroOut"
+      },
+      "closure": {
+        "requireOutcomeBeforeEnd": true
+      },
+      "outcome": {
+        "fields": [
+          {
+            "name": "agreedAmount",
+            "description": "Total amount agreed in USD, or empty if nothing was agreed"
+          },
+          {
+            "name": "appointmentStart",
+            "description": "Start of the booked arrival window, e.g. 2026-08-25T08:00"
+          },
+          {
+            "name": "appointmentEnd",
+            "description": "End of the booked arrival window, e.g. 2026-08-25T12:00"
+          },
+          {
+            "name": "secondUnitIncluded",
+            "description": "yes or no \u2014 whether the drinking-water unit is included in the visit"
+          }
+        ]
+      },
+      "spendCeiling": {
+        "field": "agreedAmount",
+        "limit": 250
+      },
+      "limits": {
+        "maxDurationSeconds": 600,
+        "maxSilenceSeconds": 60
+      },
+      "turnDetection": {
+        "silenceMs": 1500
+      }
+    }
+  },
+  "params": {
+    "menu": [
+      {
+        "option": "service",
+        "digit": "1"
+      },
+      {
+        "option": "billing",
+        "digit": "2"
+      }
+    ],
+    "correctDigit": "1",
+    "quotedAmount": 160,
+    "raisedTopic": null,
+    "adjacentIndex": null,
+    "offersAppointment": true,
+    "reachesSomeoneWhoCanAct": true
+  },
+  "script": [
+    {
+      "label": "Automated IVR",
+      "text": "Thank you for calling Apex Appliance Repair. For service scheduling, press 1. For billing, press 2.",
+      "afterPress": ""
+    },
+    {
+      "label": "Representative 1 (Intake)",
+      "text": "Thank you for calling Apex Appliance Repair, my name is Sarah. How can I help you today?",
+      "afterPress": "1"
+    },
+    {
+      "label": "Representative 1 (Intake)",
+      "text": "I can certainly help you get someone out to look at your leaking dishwasher.",
+      "afterPress": ""
+    },
+    {
+      "label": "Representative 1 (Intake)",
+      "text": "Our diagnostic fee and initial service visit is exactly 160 dollars.",
+      "afterPress": ""
+    },
+    {
+      "label": "Representative 1 (Intake)",
+      "text": "Let me transfer you over to our field dispatcher, Mark, who handles booking the specific technician routes.",
+      "afterPress": ""
+    },
+    {
+      "label": "Representative 2 (Dispatcher)",
+      "text": "Hi there, this is Mark in dispatch. Sarah told me you need dishwasher service.",
+      "afterPress": ""
+    },
+    {
+      "label": "Representative 2 (Dispatcher)",
+      "text": "Could you please provide your service address?",
+      "afterPress": ""
+    },
+    {
+      "label": "Representative 2 (Dispatcher)",
+      "text": "Thank you. I have an opening this Thursday between 8:00 AM and 12:00 PM.",
+      "afterPress": ""
+    },
+    {
+      "label": "Representative 2 (Dispatcher)",
+      "text": "I will go ahead and lock that arrival window in for you.",
+      "afterPress": ""
+    },
+    {
+      "label": "Representative 2 (Dispatcher)",
+      "text": "You are all set for Thursday morning, and our tech will call thirty minutes before arriving.",
+      "afterPress": ""
+    },
+    {
+      "label": "Closing Confirmation",
+      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+    }
+  ]
+}

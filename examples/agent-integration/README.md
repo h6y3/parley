@@ -8,6 +8,7 @@ agent framework — this file is the acceptance test for that decoupling.
 Usage:
 
     PARLEY_DAEMON_URL=http://127.0.0.1:3334 \
+    PARLEY_CALL_TOKEN=<the-daemon's-token> \
       node examples/agent-integration/call.mjs examples/briefs/represented.json
 
 See `docs/agent-setup.md` for copy-paste prompts that drive setup and calling

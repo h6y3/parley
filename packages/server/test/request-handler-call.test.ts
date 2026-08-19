@@ -11,7 +11,11 @@ import { createHostAllowlist, createNumberAllowlist } from "../src/allowlist.js"
 import { PendingSessions } from "../src/pending-sessions.js";
 import { handleHttpRequest, type HttpRequest, type ServerDeps } from "../src/request-handler.js";
 
-const codec: AudioCodec = { decodeInbound: (f) => f, encodeOutbound: (f) => f };
+const codec: AudioCodec = {
+  decodeInbound: (f) => f,
+  encodeOutbound: (f) => f,
+  dtmfTones: () => ({ encoding: "mulaw8k", data: Buffer.alloc(0) })
+};
 const realtime: RealtimeProvider = { name: "fake", connect: vi.fn() };
 
 function fakeTelephony(
@@ -25,12 +29,18 @@ function fakeTelephony(
     attachMediaStream: () => ({
       sendOutboundAudio: () => {},
       clearOutboundBuffer: () => {},
+      drainOutbound: async () => ({ confirmed: true, waitedMs: 0 }),
       close: () => {}
     }),
-    sendDtmf: async () => {},
     hangup: async () => {}
   };
 }
+
+// Since 2026-08-17, POST /call requires `Authorization: Bearer <callToken>` and
+// refuses every call when none is configured. These tests exercise the envelope
+// and origination behaviour BEHIND that gate, so they authenticate; the gate
+// itself is covered in request-handler-auth.test.ts.
+const TOKEN = "test-call-token";
 
 function deps(overrides: Partial<ServerDeps> = {}): ServerDeps {
   return {
@@ -43,6 +53,7 @@ function deps(overrides: Partial<ServerDeps> = {}): ServerDeps {
     numberAllowlist: createNumberAllowlist(["+14155550002"]),
     hostAllowlist: createHostAllowlist(["voice.example.com"]),
     pending: new PendingSessions(),
+    callToken: TOKEN,
     ...overrides
   };
 }
@@ -61,7 +72,7 @@ function callReq(body: unknown): HttpRequest {
     method: "POST",
     path: "/call",
     query: "",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
     rawBody: JSON.stringify(body)
   };
 }
@@ -128,10 +139,18 @@ describe("handleHttpRequest POST /call", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "invalid call envelope" });
   });
 
-  it("rejects an envelope with the wrong version with 400", async () => {
-    const res = await handleHttpRequest(callReq({ version: 2, brief, policy }), deps());
+  it("rejects an envelope with an unsupported version with 400", async () => {
+    const res = await handleHttpRequest(callReq({ version: 3, brief, policy }), deps());
     expect(res.status).toBe(400);
     expect(JSON.parse(res.body)).toEqual({ error: "invalid call envelope" });
+  });
+
+  // Counterpart to the above: 2 used to be the example of a "wrong" version and
+  // is now the current one. Pinning both directions means a future version bump
+  // has to think about this pair rather than silently widening what is accepted.
+  it("accepts version 2", async () => {
+    const res = await handleHttpRequest(callReq({ version: 2, brief, policy }), deps());
+    expect(res.status).toBe(202);
   });
 
   it("rejects an envelope with an unknown top-level field with 400", async () => {

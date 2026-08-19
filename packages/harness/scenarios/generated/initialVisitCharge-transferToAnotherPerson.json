@@ -1,0 +1,180 @@
+{
+  "id": "initialVisitCharge-transferToAnotherPerson",
+  "description": "waterTreatment / initialVisitCharge / transferToAnotherPerson",
+  "envelope": {
+    "version": 2,
+    "brief": {
+      "to": "+15555550142",
+      "persona": "I am booking a service visit for a home water softener.",
+      "objective": "Schedule a routine maintenance and diagnostic service visit for an existing residential water softener system.",
+      "facts": [
+        "The whole-home water softener is leaking slightly around the bypass valve.",
+        "The home address is 412 Maple Ridge Lane.",
+        "The contact phone number is 555-0144."
+      ],
+      "preferences": [
+        "Prefers an afternoon time slot if given a choice.",
+        "Wants confirmation of the total service fee prior to finalizing."
+      ]
+    },
+    "policy": {
+      "principalName": "Jordan Rivera",
+      "identity": {
+        "style": "silent",
+        "recipientName": "the service department"
+      },
+      "disclosure": {
+        "honestIfAsked": true,
+        "volunteer": false
+      },
+      "scope": {
+        "lock": true,
+        "adjacent": [
+          "You may also arrange service for the drinking-water filtration unit on the same visit if they raise it."
+        ]
+      },
+      "grounding": {
+        "antiInvention": false
+      },
+      "deferral": {
+        "enabled": true
+      },
+      "authority": {
+        "authorizedCommitments": [
+          "Book one service visit on any weekday within the next three weeks."
+        ],
+        "spend": {
+          "limit": 250,
+          "currency": "USD",
+          "basis": "for this visit including the call-out fee and any parts fitted"
+        }
+      },
+      "patience": {
+        "expectLookupPauses": true
+      },
+      "ivr": {
+        "goal": "the service department",
+        "menuHints": ["The main menu offers service on 1, new installations on 2, billing on 3."]
+      },
+      "callback": {
+        "number": "+15555550142"
+      },
+      "wrapUp": {
+        "enabled": true
+      },
+      "voicemail": {
+        "onMachine": "hangUp"
+      }
+    },
+    "execution": {
+      "ivr": {
+        "maxPresses": 4,
+        "allowedDigits": "0123456789*#",
+        "onUnrecognized": "zeroOut"
+      },
+      "closure": {
+        "requireOutcomeBeforeEnd": true
+      },
+      "outcome": {
+        "fields": [
+          {
+            "name": "agreedAmount",
+            "description": "Total amount agreed in USD, or empty if nothing was agreed"
+          },
+          {
+            "name": "appointmentStart",
+            "description": "Start of the booked arrival window, e.g. 2026-08-25T08:00"
+          },
+          {
+            "name": "appointmentEnd",
+            "description": "End of the booked arrival window, e.g. 2026-08-25T12:00"
+          },
+          {
+            "name": "secondUnitIncluded",
+            "description": "yes or no \u2014 whether the drinking-water unit is included in the visit"
+          }
+        ]
+      },
+      "spendCeiling": {
+        "field": "agreedAmount",
+        "limit": 250
+      },
+      "limits": {
+        "maxDurationSeconds": 600,
+        "maxSilenceSeconds": 60
+      },
+      "turnDetection": {
+        "silenceMs": 1500
+      }
+    }
+  },
+  "params": {
+    "menu": [
+      {
+        "option": "service",
+        "digit": "1"
+      },
+      {
+        "option": "new installations",
+        "digit": "2"
+      },
+      {
+        "option": "billing",
+        "digit": "3"
+      }
+    ],
+    "correctDigit": "1",
+    "quotedAmount": 160,
+    "raisedTopic": null,
+    "adjacentIndex": null,
+    "offersAppointment": true,
+    "reachesSomeoneWhoCanAct": true
+  },
+  "script": [
+    {
+      "label": "IVR menu greeting",
+      "text": "Thank you for calling ClearPure Water Solutions. Press 1 for service on existing systems, press 2 for new installations, or press 3 for billing inquiries."
+    },
+    {
+      "label": "First agent greeting",
+      "text": "Thanks for calling ClearPure service scheduling, my name is Mark. How can I help you today?",
+      "afterPress": "1"
+    },
+    {
+      "label": "Ask for address",
+      "text": "I can definitely help set up a service technician for that. Could I first get your home address?"
+    },
+    {
+      "label": "Quote service fee",
+      "text": "Thank you. Just so you know upfront, our diagnostic and service call fee is exactly 160 dollars, which covers the arrival and the initial inspection."
+    },
+    {
+      "label": "Transfer notification",
+      "text": "Let me transfer you over to our regional dispatch coordinator, Elena, who can assign the specific technician for your area. Hold on one moment."
+    },
+    {
+      "label": "Second agent greeting",
+      "text": "Hello, this is Elena in dispatch. Mark passed along your address and the issue with your water softener."
+    },
+    {
+      "label": "Offer arrival window",
+      "text": "I have an opening available this Wednesday between 1:00 PM and 3:00 PM. Would that window work for you?"
+    },
+    {
+      "label": "Request contact phone",
+      "text": "What is the best phone number for the technician to call when they are twenty minutes away?"
+    },
+    {
+      "label": "Confirm booking",
+      "text": "All set! You are confirmed for Wednesday between 1:00 PM and 3:00 PM at 412 Maple Ridge Lane for the 160 dollars service call."
+    },
+    {
+      "label": "Closing",
+      "text": "Thanks for choosing ClearPure Water Solutions, and have a great rest of your day!"
+    },
+    {
+      "label": "Closing Confirmation",
+      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+    }
+  ]
+}

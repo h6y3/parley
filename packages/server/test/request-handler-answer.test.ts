@@ -9,7 +9,11 @@ import { createHostAllowlist, createNumberAllowlist } from "../src/allowlist.js"
 import { PendingSessions } from "../src/pending-sessions.js";
 import { handleHttpRequest, type HttpRequest, type ServerDeps } from "../src/request-handler.js";
 
-const codec: AudioCodec = { decodeInbound: (f) => f, encodeOutbound: (f) => f };
+const codec: AudioCodec = {
+  decodeInbound: (f) => f,
+  encodeOutbound: (f) => f,
+  dtmfTones: () => ({ encoding: "mulaw8k", data: Buffer.alloc(0) })
+};
 const realtime: RealtimeProvider = { name: "fake", connect: vi.fn() };
 
 function telephony(verify: boolean): TelephonyProvider {
@@ -24,9 +28,9 @@ function telephony(verify: boolean): TelephonyProvider {
     attachMediaStream: () => ({
       sendOutboundAudio: () => {},
       clearOutboundBuffer: () => {},
+      drainOutbound: async () => ({ confirmed: true, waitedMs: 0 }),
       close: () => {}
     }),
-    sendDtmf: async () => {},
     hangup: async () => {}
   };
 }
@@ -54,7 +58,12 @@ function deps(verify: boolean): ServerDeps {
     model: "m",
     numberAllowlist: createNumberAllowlist(["+14155550002"]),
     hostAllowlist: createHostAllowlist(["voice.example.com"]),
-    pending
+    pending,
+    // Configured, but deliberately never presented by these tests:
+    // /twilio/answer must NOT require it. Twilio cannot send a bearer token,
+    // and its control is the webhook signature these tests exercise. Pinned in
+    // request-handler-auth.test.ts.
+    callToken: "unused-by-the-answer-route"
   };
 }
 

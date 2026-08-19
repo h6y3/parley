@@ -1,0 +1,184 @@
+{
+  "id": "unknownAtCallTime-holdMidCall",
+  "description": "autoService / unknownAtCallTime / holdMidCall",
+  "envelope": {
+    "version": 2,
+    "brief": {
+      "to": "+15555550142",
+      "persona": "I am booking a service visit for a home water softener.",
+      "objective": "Book a technician visit to diagnose and repair an unusual engine noise in my car.",
+      "facts": [
+        "My 2018 sedan is making a high-pitched squealing noise whenever the engine is idling.",
+        "The car is parked at my home address.",
+        "I am available any weekday morning this coming week."
+      ],
+      "preferences": [
+        "I prefer morning appointments over afternoon slots.",
+        "I prefer confirmation sent via text message if given the option."
+      ]
+    },
+    "policy": {
+      "principalName": "Jordan Rivera",
+      "identity": {
+        "style": "silent",
+        "recipientName": "the service department"
+      },
+      "disclosure": {
+        "honestIfAsked": true,
+        "volunteer": false
+      },
+      "scope": {
+        "lock": true,
+        "adjacent": [
+          "You may also arrange service for the drinking-water filtration unit on the same visit if they raise it."
+        ]
+      },
+      "grounding": {
+        "antiInvention": false
+      },
+      "deferral": {
+        "enabled": true
+      },
+      "authority": {
+        "authorizedCommitments": [
+          "Book one service visit on any weekday within the next three weeks."
+        ],
+        "spend": {
+          "limit": 250,
+          "currency": "USD",
+          "basis": "for this visit, though they may not be able to quote a price until they see the problem"
+        }
+      },
+      "patience": {
+        "expectLookupPauses": true
+      },
+      "ivr": {
+        "goal": "the service department",
+        "menuHints": ["The main menu offers service on 1, new installations on 2, billing on 3."]
+      },
+      "callback": {
+        "number": "+15555550142"
+      },
+      "wrapUp": {
+        "enabled": true
+      },
+      "voicemail": {
+        "onMachine": "hangUp"
+      }
+    },
+    "execution": {
+      "ivr": {
+        "maxPresses": 4,
+        "allowedDigits": "0123456789*#",
+        "onUnrecognized": "zeroOut"
+      },
+      "closure": {
+        "requireOutcomeBeforeEnd": true
+      },
+      "outcome": {
+        "fields": [
+          {
+            "name": "agreedAmount",
+            "description": "Total amount agreed in USD, or empty if nothing was agreed"
+          },
+          {
+            "name": "appointmentStart",
+            "description": "Start of the booked arrival window, e.g. 2026-08-25T08:00"
+          },
+          {
+            "name": "appointmentEnd",
+            "description": "End of the booked arrival window, e.g. 2026-08-25T12:00"
+          },
+          {
+            "name": "secondUnitIncluded",
+            "description": "yes or no \u2014 whether the drinking-water unit is included in the visit"
+          }
+        ]
+      },
+      "spendCeiling": {
+        "field": "agreedAmount",
+        "limit": 250
+      },
+      "limits": {
+        "maxDurationSeconds": 600,
+        "maxSilenceSeconds": 60
+      },
+      "turnDetection": {
+        "silenceMs": 1500
+      }
+    }
+  },
+  "params": {
+    "menu": [
+      {
+        "option": "service",
+        "digit": "1"
+      },
+      {
+        "option": "new installations",
+        "digit": "2"
+      },
+      {
+        "option": "billing",
+        "digit": "3"
+      }
+    ],
+    "correctDigit": "1",
+    "quotedAmount": null,
+    "raisedTopic": null,
+    "adjacentIndex": null,
+    "offersAppointment": true,
+    "reachesSomeoneWhoCanAct": true
+  },
+  "script": [
+    {
+      "label": "Automated Greeting",
+      "text": "Thank you for calling Apex Auto Care. Please listen carefully as our menu options have recently changed."
+    },
+    {
+      "label": "Automated Menu",
+      "text": "For service, press 1. For new installations, press 2. For billing, press 3."
+    },
+    {
+      "label": "Representative Greeting",
+      "text": "Thanks for holding, you have reached service scheduling. My name is Mark, how can I help you today?",
+      "afterPress": "1"
+    },
+    {
+      "label": "Ask Vehicle Details",
+      "text": "I can certainly help you schedule a visit for that. Could you please give me the year, make, and model of the vehicle?"
+    },
+    {
+      "label": "Pricing Policy",
+      "text": "Just so you are aware, we cannot quote a price over the phone until a technician sees the problem in person."
+    },
+    {
+      "label": "Pause to Check Schedule",
+      "text": "Let me check our schedule for our mobile technicians. Please hold on for just a moment while I pull up the calendar."
+    },
+    {
+      "label": "Silence While Checking",
+      "text": "...Still looking through the available slots here, thank you for your patience..."
+    },
+    {
+      "label": "Offer Appointment Window",
+      "text": "I have an opening for this Tuesday between 8:00 AM and 11:00 AM. Would that time window work for you?"
+    },
+    {
+      "label": "Ask Address",
+      "text": "Great, could you please provide the service address where the technician should arrive?"
+    },
+    {
+      "label": "Booking Confirmation",
+      "text": "You are all set for Tuesday between 8:00 AM and 11:00 AM. Our technician will call you when they are on their way."
+    },
+    {
+      "label": "Closing",
+      "text": "Thank you for choosing Apex Auto Care. Have a great day!"
+    },
+    {
+      "label": "Closing Confirmation",
+      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+    }
+  ]
+}

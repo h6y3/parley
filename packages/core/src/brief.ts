@@ -10,4 +10,9 @@ export interface Brief {
   objective: string;
   /** Flat declarative statements baked in as facts the call can draw on. */
   facts: readonly string[];
+  /** Standing wishes the call may reason FROM when a question is not covered by
+   * `facts`. Deliberately weaker than a fact: facts are asserted, preferences
+   * are answered from. Without this, `deferralRule` turns every calibrating
+   * question ("so you only wanted X?") into a bail. */
+  preferences?: readonly string[];
 }

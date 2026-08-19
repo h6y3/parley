@@ -252,3 +252,118 @@ describe("transcript final dedup", () => {
     expect(finalEvents[1].text).toBe(""); // Turn 2's sentinel is empty-text
   });
 });
+
+/** Like connectWithFakeGenAI, but also captures the connect `config` and gives
+ * the fake session a sendToolResponse spy — the two things the tool channel
+ * needs to observe. */
+async function connectForTools(extra: Partial<RealtimeConnectParams> = {}) {
+  const sendToolResponse = vi.fn();
+  const fakeSession = { sendRealtimeInput: vi.fn(), sendToolResponse, close: vi.fn() };
+  let captured:
+    { config: Record<string, unknown>; callbacks: { onmessage: (m: unknown) => void } } | undefined;
+  const fakeGenAI = {
+    live: {
+      connect: vi.fn(
+        async (params: {
+          config: Record<string, unknown>;
+          callbacks: { onmessage: (m: unknown) => void };
+        }) => {
+          captured = params;
+          return fakeSession;
+        }
+      )
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+  const provider = new GeminiRealtimeProvider({ apiKey: "fake" }, () => fakeGenAI);
+  const callbacks = makeCallbacks();
+  const session = await provider.connect({ ...makeConnectParams(callbacks), ...extra });
+  return {
+    session,
+    sendToolResponse,
+    callbacks,
+    config: captured?.config ?? {},
+    emitMessage: (m: unknown) => captured?.callbacks.onmessage(m)
+  };
+}
+
+describe("tool channel", () => {
+  it("declares tools on connect using parametersJsonSchema", async () => {
+    const { config } = await connectForTools({
+      tools: [
+        {
+          name: "press_digits",
+          description: "d",
+          parametersJsonSchema: { type: "object", properties: {} }
+        }
+      ]
+    });
+    const tools = config.tools as Array<{
+      functionDeclarations: Array<{ name: string; parametersJsonSchema: unknown }>;
+    }>;
+    expect(tools[0].functionDeclarations[0].name).toBe("press_digits");
+    expect(tools[0].functionDeclarations[0].parametersJsonSchema).toEqual({
+      type: "object",
+      properties: {}
+    });
+  });
+
+  it("omits tools from the config entirely when none are passed", async () => {
+    const { config } = await connectForTools();
+    expect(config).not.toHaveProperty("tools");
+  });
+
+  it("omits tools from the config when passed an empty array", async () => {
+    const { config } = await connectForTools({ tools: [] });
+    expect(config).not.toHaveProperty("tools");
+  });
+
+  it("surfaces a server toolCall through onToolCall", async () => {
+    const seen: unknown[] = [];
+    const run = await connectForTools({
+      callbacks: { ...makeCallbacks(), onToolCall: (c) => seen.push(c) }
+    });
+    run.emitMessage({
+      toolCall: { functionCalls: [{ id: "c1", name: "press_digits", args: { digits: "1" } }] }
+    });
+    expect(seen).toEqual([{ id: "c1", name: "press_digits", args: { digits: "1" } }]);
+  });
+
+  it("ignores a tool call with no id — it could never be answered", async () => {
+    const seen: unknown[] = [];
+    const callbacks = makeCallbacks();
+    const run = await connectForTools({
+      callbacks: { ...callbacks, onToolCall: (c) => seen.push(c) }
+    });
+    run.emitMessage({ toolCall: { functionCalls: [{ name: "press_digits", args: {} }] } });
+    expect(seen).toEqual([]);
+  });
+
+  it("still surfaces a tool call when the payload carries no serverContent", async () => {
+    const seen: unknown[] = [];
+    const callbacks = makeCallbacks();
+    const run = await connectForTools({
+      callbacks: { ...callbacks, onToolCall: (c) => seen.push(c) }
+    });
+    run.emitMessage({ toolCall: { functionCalls: [{ id: "c9", name: "end_call", args: {} }] } });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("sends a tool response echoing id and name", async () => {
+    const { session, sendToolResponse } = await connectForTools();
+    session.sendToolResponse({ id: "c1", name: "press_digits", args: {} }, "ok");
+    expect(sendToolResponse).toHaveBeenCalledWith({
+      functionResponses: [{ id: "c1", name: "press_digits", response: { output: "ok" } }]
+    });
+  });
+
+  it("passes turnDetection.silenceDurationMs into the realtime input config", async () => {
+    const { config } = await connectForTools({
+      turnDetection: { mode: "automatic", silenceDurationMs: 1800 }
+    });
+    const rt = config.realtimeInputConfig as {
+      automaticActivityDetection: { silenceDurationMs: number };
+    };
+    expect(rt.automaticActivityDetection.silenceDurationMs).toBe(1800);
+  });
+});

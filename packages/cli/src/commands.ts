@@ -5,6 +5,10 @@ export interface CallArgs {
   to?: string;
   briefPath?: string;
   daemonUrl: string;
+  /** Shared secret the daemon requires on POST /call. Absent sends the request
+   * unauthenticated, and the daemon answers 401 — surfaced as an ordinary call
+   * failure, never retried without it. */
+  callToken?: string;
 }
 
 export interface CallDeps {
@@ -45,7 +49,10 @@ export async function runCall(args: CallArgs, deps: CallDeps): Promise<string> {
   }
   const res = await fetchImpl(`${args.daemonUrl}/call`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(args.callToken ? { authorization: `Bearer ${args.callToken}` } : {})
+    },
     body: JSON.stringify(envelope)
   });
   const json = (await res.json()) as { callId?: string; error?: string };
@@ -86,7 +93,8 @@ const SECRET_KEYS = [
   "GEMINI_API_KEY",
   "TWILIO_AUTH_TOKEN",
   "TWILIO_ACCOUNT_SID",
-  "TWILIO_FROM_NUMBER"
+  "TWILIO_FROM_NUMBER",
+  "PARLEY_CALL_TOKEN"
 ] as const;
 
 /** Presence-only diagnostics — never prints a secret value (Global Constraint:

@@ -31,6 +31,32 @@ describe("runCall", () => {
     expect(JSON.parse((init as RequestInit).body as string)).toEqual(envelope);
   });
 
+  it("sends the call token as a bearer header when one is configured", async () => {
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify({ callId: "CA555" }), { status: 202 })
+    ) as unknown as typeof fetch;
+    await runCall(
+      { briefPath: "b.json", daemonUrl: "http://127.0.0.1:3334", callToken: "tok-abc" },
+      { readFile: () => JSON.stringify(envelopeFixture()), fetchImpl }
+    );
+    const [, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect((init as RequestInit).headers).toMatchObject({ authorization: "Bearer tok-abc" });
+  });
+
+  it("omits the header entirely when no token is configured, rather than sending an empty one", async () => {
+    // `Authorization: Bearer ` would be a token the daemon then has to reject;
+    // sending nothing keeps the resulting 401 unambiguous on both sides.
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify({ callId: "CA555" }), { status: 202 })
+    ) as unknown as typeof fetch;
+    await runCall(
+      { briefPath: "b.json", daemonUrl: "http://127.0.0.1:3334" },
+      { readFile: () => JSON.stringify(envelopeFixture()), fetchImpl }
+    );
+    const [, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect((init as RequestInit).headers).not.toHaveProperty("authorization");
+  });
+
   it("throws when --brief is missing", async () => {
     await expect(
       runCall({ to: "+1", briefPath: undefined, daemonUrl: "http://d" }, {})

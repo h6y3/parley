@@ -3,7 +3,9 @@ import type {
   AudioFrame,
   RealtimeConnectParams,
   RealtimeProvider,
-  RealtimeSession
+  RealtimeSession,
+  ToolCallRequest,
+  ToolResult
 } from "@parley/core";
 
 /** Parley's V1 fixed model (design spec §4.5). Exported so callers building a
@@ -69,6 +71,21 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
       },
       ...(params.contextWindowCompression !== false
         ? { contextWindowCompression: { slidingWindow: {} } }
+        : {}),
+      // Omitted entirely when the caller declared none, so a session with no
+      // execution plane is byte-identical to Parley before tools existed.
+      ...(params.tools && params.tools.length > 0
+        ? {
+            tools: [
+              {
+                functionDeclarations: params.tools.map((t) => ({
+                  name: t.name,
+                  description: t.description,
+                  parametersJsonSchema: t.parametersJsonSchema
+                }))
+              }
+            ]
+          }
         : {})
     };
 
@@ -80,6 +97,16 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
       callbacks: {
         onopen: () => {},
         onmessage: (message) => {
+          // BEFORE the serverContent guard: a toolCall arrives on a sibling
+          // field and carries no serverContent, so an early return would drop
+          // every tool call the model ever makes.
+          for (const fc of message.toolCall?.functionCalls ?? []) {
+            // No id means no way to address a response, and an unanswered tool
+            // call stalls the model's turn. Dropping it is the lesser failure.
+            if (!fc.id || !fc.name) continue;
+            params.callbacks.onToolCall?.({ id: fc.id, name: fc.name, args: fc.args ?? {} });
+          }
+
           const serverContent = message.serverContent;
           if (!serverContent) return;
 
@@ -119,6 +146,7 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
               params.callbacks.onTranscript({ speaker: "model", text: "", isFinal: true });
             }
             sawModelFinalThisTurn = false;
+            params.callbacks.onTurnComplete?.();
           }
         },
         onerror: (event) => {
@@ -146,6 +174,11 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
         }
         genAISession.sendRealtimeInput({
           audio: { data: frame.data.toString("base64"), mimeType: "audio/pcm;rate=16000" }
+        });
+      },
+      sendToolResponse(call: ToolCallRequest, result: ToolResult) {
+        genAISession.sendToolResponse({
+          functionResponses: [{ id: call.id, name: call.name, response: { output: result } }]
         });
       },
       notifyActivityEnd() {

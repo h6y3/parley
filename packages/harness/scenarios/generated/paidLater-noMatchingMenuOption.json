@@ -1,0 +1,177 @@
+{
+  "id": "paidLater-noMatchingMenuOption",
+  "description": "autoService / paidLater / noMatchingMenuOption",
+  "envelope": {
+    "version": 2,
+    "brief": {
+      "to": "+15555550142",
+      "persona": "I am booking a service visit for a home water softener.",
+      "objective": "Book a routine maintenance service appointment for my vehicle as soon as possible.",
+      "facts": [
+        "My car is due for its 30,000-mile standard service check.",
+        "The vehicle is running fine but needs regular oil and filter changes.",
+        "I am available any weekday morning next week."
+      ],
+      "preferences": [
+        "I prefer a morning slot over an afternoon slot.",
+        "I prefer drop-off rather than waiting at the centre.",
+        "I would like to be notified via text message once the car is ready."
+      ]
+    },
+    "policy": {
+      "principalName": "Jordan Rivera",
+      "identity": {
+        "style": "silent",
+        "recipientName": "the service department"
+      },
+      "disclosure": {
+        "honestIfAsked": true,
+        "volunteer": false
+      },
+      "scope": {
+        "lock": true,
+        "adjacent": [
+          "You may also arrange service for the drinking-water filtration unit on the same visit if they raise it."
+        ]
+      },
+      "grounding": {
+        "antiInvention": false
+      },
+      "deferral": {
+        "enabled": true
+      },
+      "authority": {
+        "authorizedCommitments": [
+          "Book one service visit on any weekday within the next three weeks."
+        ],
+        "spend": {
+          "limit": 250,
+          "currency": "USD",
+          "basis": "for this visit, which will be invoiced afterwards rather than paid on the call"
+        }
+      },
+      "patience": {
+        "expectLookupPauses": true
+      },
+      "ivr": {
+        "goal": "the service department",
+        "menuHints": ["The main menu offers new installations on 1, billing on 2."]
+      },
+      "callback": {
+        "number": "+15555550142"
+      },
+      "wrapUp": {
+        "enabled": true
+      },
+      "voicemail": {
+        "onMachine": "hangUp"
+      }
+    },
+    "execution": {
+      "ivr": {
+        "maxPresses": 4,
+        "allowedDigits": "0123456789*#",
+        "onUnrecognized": "zeroOut"
+      },
+      "closure": {
+        "requireOutcomeBeforeEnd": true
+      },
+      "outcome": {
+        "fields": [
+          {
+            "name": "agreedAmount",
+            "description": "Total amount agreed in USD, or empty if nothing was agreed"
+          },
+          {
+            "name": "appointmentStart",
+            "description": "Start of the booked arrival window, e.g. 2026-08-25T08:00"
+          },
+          {
+            "name": "appointmentEnd",
+            "description": "End of the booked arrival window, e.g. 2026-08-25T12:00"
+          },
+          {
+            "name": "secondUnitIncluded",
+            "description": "yes or no \u2014 whether the drinking-water unit is included in the visit"
+          }
+        ]
+      },
+      "spendCeiling": {
+        "field": "agreedAmount",
+        "limit": 250
+      },
+      "limits": {
+        "maxDurationSeconds": 600,
+        "maxSilenceSeconds": 60
+      },
+      "turnDetection": {
+        "silenceMs": 1500
+      }
+    }
+  },
+  "params": {
+    "menu": [
+      {
+        "option": "new installations",
+        "digit": "1"
+      },
+      {
+        "option": "billing",
+        "digit": "2"
+      }
+    ],
+    "correctDigit": null,
+    "quotedAmount": null,
+    "raisedTopic": null,
+    "adjacentIndex": null,
+    "offersAppointment": false,
+    "reachesSomeoneWhoCanAct": true
+  },
+  "script": [
+    {
+      "label": "Greeting & IVR Menu",
+      "text": "Thank you for calling Apex Auto Centre. For new installations, press 1. For billing and account enquiries, press 2."
+    },
+    {
+      "label": "Billing Department Agent",
+      "text": "Hello, thank you for calling billing, my name is Marcus. How can I assist with your account today?",
+      "afterPress": "2"
+    },
+    {
+      "label": "Misroute Explanation",
+      "text": "I see. You've reached accounts receivable, so I don't have access to the workshop calendar to book services."
+    },
+    {
+      "label": "Transfer Offer",
+      "text": "Let me transfer you over to the main service desk so they can get you booked in."
+    },
+    {
+      "label": "Hold Music / Notification",
+      "text": "Please hold while I connect your call to the service department."
+    },
+    {
+      "label": "Reception Greeting",
+      "text": "Apex Auto front desk, Brenda speaking. Are you calling to book or enquire about an existing job?"
+    },
+    {
+      "label": "Service Availability Update",
+      "text": "I'm sorry, our service advisors are all currently on the workshop floor and unable to take bookings right now."
+    },
+    {
+      "label": "Payment Information Note",
+      "text": "Just so you know, we don't provide quotes over the phone anyway; full itemised invoices are issued after the work is complete."
+    },
+    {
+      "label": "Callback Request",
+      "text": "I can take your name and number to have an advisor call you back before five to arrange the date."
+    },
+    {
+      "label": "Closing",
+      "text": "Thank you, I've noted that down. Someone will be in touch with you shortly. Have a great day."
+    },
+    {
+      "label": "Closing Confirmation",
+      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+    }
+  ]
+}

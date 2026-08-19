@@ -56,7 +56,12 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
       From: params.from,
       Url: params.answerWebhookUrl
     });
-    if (params.statusCallbackUrl) body.set("StatusCallback", params.statusCallbackUrl);
+    if (params.statusCallbackUrl) {
+      body.set("StatusCallback", params.statusCallbackUrl);
+      // Twilio takes these space-separated in one field, not as repeated keys.
+      body.set("StatusCallbackEvent", "initiated ringing answered completed");
+    }
+    if (params.machineDetection) body.set("MachineDetection", params.machineDetection);
     const res = await this.fetchImpl(this.callsUrl(".json"), {
       method: "POST",
       headers: {
@@ -90,17 +95,13 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
     return attachTwilioMediaStream(params);
   }
 
-  async sendDtmf(callId: string, digits: string): Promise<void> {
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Play digits="${digits}"/></Response>`;
-    await this.fetchImpl(this.callsUrl(`/${callId}.json`), {
-      method: "POST",
-      headers: {
-        Authorization: this.authHeader(),
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body: new URLSearchParams({ Twiml: twiml }).toString()
-    });
-  }
+  /* sendDtmf is gone, deliberately. It posted
+       <Response><Play digits="N"/></Response>
+     to POST /Calls/{sid}.json, and posting TwiML REDIRECTS a live call: it tore
+     down the <Connect><Stream> carrying the conversation, played the tone to
+     nobody, hit the end of the new document and hung up. Measured on the first
+     live call that ever pressed a key. Keypresses are audio now — see
+     AudioCodec.dtmfTones. */
 
   async hangup(callId: string): Promise<void> {
     await this.fetchImpl(this.callsUrl(`/${callId}.json`), {

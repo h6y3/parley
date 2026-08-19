@@ -7,9 +7,13 @@ import {
 } from "@parley/core";
 import { CallSession } from "@parley/core";
 import { PendingSessions } from "../src/pending-sessions.js";
-import { handleMediaConnection } from "../src/media-connection.js";
+import { handleMediaConnection, type CompletedCallRecord } from "../src/media-connection.js";
 
-const codec: AudioCodec = { decodeInbound: (f) => f, encodeOutbound: (f) => f };
+const codec: AudioCodec = {
+  decodeInbound: (f) => f,
+  encodeOutbound: (f) => f,
+  dtmfTones: () => ({ encoding: "mulaw8k", data: Buffer.alloc(0) })
+};
 
 function fakeSocket(): WebSocketLike & { closed: boolean; triggerClose: () => void } {
   const closeListeners: Array<(...args: unknown[]) => void> = [];
@@ -39,9 +43,9 @@ function sessionWithAttachSpy(stop = vi.fn(async () => {})) {
     attachMediaStream: () => ({
       sendOutboundAudio: () => {},
       clearOutboundBuffer: () => {},
+      drainOutbound: async () => ({ confirmed: true, waitedMs: 0 }),
       close: () => {}
     }),
-    sendDtmf: async () => {},
     hangup: async () => {}
   };
   const session = new CallSession({
@@ -148,5 +152,77 @@ describe("handleMediaConnection", () => {
     expect(ok).toBe(true);
     expect(stop).toHaveBeenCalledTimes(1);
     expect(pending.get("CA1")).toBeUndefined();
+  });
+});
+
+describe("CompletedCallRecord contents", () => {
+  it("carries endedBy, answeredBy, outcome and dtmf from the session", async () => {
+    const records: CompletedCallRecord[] = [];
+    const pending = new PendingSessions();
+    const session = {
+      attach: async () => ({
+        transcript: [],
+        endedBy: "model" as const,
+        stop: async () => {}
+      }),
+      answeredBy: "human" as const,
+      gateSnapshot: () => ({
+        outcome: { status: "completed" as const, fields: { x: "v" }, recordedAt: "T" },
+        dtmf: { pressed: ["1"], refused: 0 }
+      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    pending.set("CA1", session);
+
+    let onClose!: () => void;
+    const socket = {
+      send: () => {},
+      on: (e: string, l: () => void) => {
+        if (e === "close") onClose = l;
+      },
+      close: () => {}
+    };
+    await handleMediaConnection("CA1", socket, {
+      pending,
+      onCallCompleted: (r) => records.push(r)
+    });
+    onClose();
+
+    expect(records[0].endedBy).toBe("model");
+    expect(records[0].answeredBy).toBe("human");
+    expect(records[0].outcome?.status).toBe("completed");
+    expect(records[0].dtmf).toEqual({ pressed: ["1"], refused: 0 });
+  });
+
+  it("omits outcome, answeredBy and dtmf entirely when the session recorded none", async () => {
+    const records: CompletedCallRecord[] = [];
+    const pending = new PendingSessions();
+    const session = {
+      attach: async () => ({ transcript: [], endedBy: undefined, stop: async () => {} }),
+      answeredBy: undefined,
+      gateSnapshot: () => ({})
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    pending.set("CA1", session);
+
+    let onClose!: () => void;
+    const socket = {
+      send: () => {},
+      on: (e: string, l: () => void) => {
+        if (e === "close") onClose = l;
+      },
+      close: () => {}
+    };
+    await handleMediaConnection("CA1", socket, {
+      pending,
+      onCallCompleted: (r) => records.push(r)
+    });
+    onClose();
+
+    expect(records[0].outcome).toBeUndefined();
+    expect(records[0].answeredBy).toBeUndefined();
+    expect(records[0].dtmf).toBeUndefined();
+    // A socket closing with no recorded reason IS the far end hanging up.
+    expect(records[0].endedBy).toBe("remote");
   });
 });

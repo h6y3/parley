@@ -1,0 +1,175 @@
+{
+  "id": "bounded-noMatchingMenuOption",
+  "description": "plumbing / bounded / noMatchingMenuOption",
+  "envelope": {
+    "version": 2,
+    "brief": {
+      "to": "+15555550142",
+      "persona": "I am booking a service visit for a home water softener.",
+      "objective": "Book a plumbing service visit to repair a leaking pipe under the kitchen sink.",
+      "facts": [
+        "A pipe under the kitchen sink has been leaking since yesterday.",
+        "Available for a technician visit on Thursday or Friday morning.",
+        "Located at 742 Evergreen Terrace."
+      ],
+      "preferences": [
+        "Prefers an early morning arrival window.",
+        "Willing to pay a standard diagnostic fee under 200 dollars."
+      ]
+    },
+    "policy": {
+      "principalName": "Jordan Rivera",
+      "identity": {
+        "style": "silent",
+        "recipientName": "the service department"
+      },
+      "disclosure": {
+        "honestIfAsked": true,
+        "volunteer": false
+      },
+      "scope": {
+        "lock": true,
+        "adjacent": [
+          "You may also arrange service for the drinking-water filtration unit on the same visit if they raise it."
+        ]
+      },
+      "grounding": {
+        "antiInvention": false
+      },
+      "deferral": {
+        "enabled": true
+      },
+      "authority": {
+        "authorizedCommitments": [
+          "Book one service visit on any weekday within the next three weeks."
+        ],
+        "spend": {
+          "limit": 250,
+          "currency": "USD",
+          "basis": "for this visit, up to the not-to-exceed figure they quote"
+        }
+      },
+      "patience": {
+        "expectLookupPauses": true
+      },
+      "ivr": {
+        "goal": "the service department",
+        "menuHints": ["The main menu offers new installations on 1, billing on 2."]
+      },
+      "callback": {
+        "number": "+15555550142"
+      },
+      "wrapUp": {
+        "enabled": true
+      },
+      "voicemail": {
+        "onMachine": "hangUp"
+      }
+    },
+    "execution": {
+      "ivr": {
+        "maxPresses": 4,
+        "allowedDigits": "0123456789*#",
+        "onUnrecognized": "zeroOut"
+      },
+      "closure": {
+        "requireOutcomeBeforeEnd": true
+      },
+      "outcome": {
+        "fields": [
+          {
+            "name": "agreedAmount",
+            "description": "Total amount agreed in USD, or empty if nothing was agreed"
+          },
+          {
+            "name": "appointmentStart",
+            "description": "Start of the booked arrival window, e.g. 2026-08-25T08:00"
+          },
+          {
+            "name": "appointmentEnd",
+            "description": "End of the booked arrival window, e.g. 2026-08-25T12:00"
+          },
+          {
+            "name": "secondUnitIncluded",
+            "description": "yes or no \u2014 whether the drinking-water unit is included in the visit"
+          }
+        ]
+      },
+      "spendCeiling": {
+        "field": "agreedAmount",
+        "limit": 250
+      },
+      "limits": {
+        "maxDurationSeconds": 600,
+        "maxSilenceSeconds": 60
+      },
+      "turnDetection": {
+        "silenceMs": 1500
+      }
+    }
+  },
+  "params": {
+    "menu": [
+      {
+        "option": "new installations",
+        "digit": "1"
+      },
+      {
+        "option": "billing",
+        "digit": "2"
+      }
+    ],
+    "correctDigit": null,
+    "quotedAmount": 160,
+    "raisedTopic": null,
+    "adjacentIndex": null,
+    "offersAppointment": false,
+    "reachesSomeoneWhoCanAct": false
+  },
+  "script": [
+    {
+      "label": "Automated Greeting",
+      "text": "Thank you for calling Apex Plumbing. For new installations, press 1. For billing, press 2."
+    },
+    {
+      "label": "Automated Fallback",
+      "text": "Your selection was not recognized. Please hold while we connect you to an operator."
+    },
+    {
+      "label": "Operator Greeting",
+      "text": "Apex Plumbing front desk, this is Marcus speaking. How can I help you today?"
+    },
+    {
+      "label": "Service Inquiry Response",
+      "text": "I understand you need a technician out for a pipe repair."
+    },
+    {
+      "label": "Fee Quote",
+      "text": "Just so you are aware, our standard diagnostic service visit is exactly 160 dollars."
+    },
+    {
+      "label": "Scheduling Limitation",
+      "text": "I cannot book the appointment from the front desk, so I need to transfer you to our dispatch coordinator."
+    },
+    {
+      "label": "Transfer Initiation",
+      "text": "Please hold for just a moment while I patch you through to scheduling."
+    },
+    {
+      "label": "Queue Message",
+      "text": "You are being transferred to the scheduling queue. All dispatchers are currently on other calls."
+    },
+    {
+      "label": "System Failure Message",
+      "text": "We apologize, but our appointment booking system is currently down for maintenance."
+    },
+    {
+      "label": "Call Termination",
+      "text": "We cannot schedule visits at this time. Please call back tomorrow morning. Goodbye."
+    },
+    {
+      "label": "Closing Confirmation",
+      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+    }
+  ]
+}

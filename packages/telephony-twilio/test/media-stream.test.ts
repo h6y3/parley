@@ -319,3 +319,84 @@ describe("outboundFramesDue (wall-clock pacing math)", () => {
     expect(outboundFramesDue(elapsed, 1)).toEqual({ send: 1, resyncTo: due - 1 });
   });
 });
+
+/**
+ * Han, after the first call that ever completed its objective: "It was going
+ * then hung up your side… there is a latency between when the audio is sent and
+ * the hang up so you might have delivered the final words but the last sentence
+ * got cut off."
+ *
+ * Exactly right, and it is a queueing bug rather than a prose one. Outbound
+ * audio is PACED at 20ms a frame, so when the model calls end_call its closing
+ * sentence is still sitting in our queue and in Twilio's playout buffer.
+ * Hanging up then cuts it off mid-word.
+ *
+ * The condition to wait on is not a duration. Twilio's `mark` event exists for
+ * this: send a mark after the audio, and Twilio echoes it back once it has
+ * finished playing everything ahead of it. The code had been ignoring marks
+ * since V1 — the switch statement said so in a comment.
+ */
+describe("drainOutbound", () => {
+  function connected() {
+    const sent: string[] = [];
+    const listeners: Record<string, (raw: unknown) => void> = {};
+    const socket = {
+      send: (m: string) => sent.push(m),
+      close: () => {},
+      on: (event: string, cb: (raw: unknown) => void) => {
+        listeners[event] = cb;
+      }
+    };
+    const handle = attachTwilioMediaStream({
+      callId: "CA1",
+      socket: socket as never,
+      onInboundAudio: () => {},
+      onCallEvent: () => {}
+    });
+    listeners.message?.(JSON.stringify({ event: "start", start: { streamSid: "MZ1" } }));
+    const parsed = () =>
+      sent.map((m) => JSON.parse(m) as { event: string; mark?: { name: string } });
+    const echoMark = () => {
+      const mark = parsed().find((m) => m.event === "mark");
+      if (mark?.mark)
+        listeners.message?.(JSON.stringify({ event: "mark", streamSid: "MZ1", mark: mark.mark }));
+    };
+    return { handle, parsed, echoMark };
+  }
+
+  it("resolves only once Twilio confirms it played to the mark", async () => {
+    const { handle, parsed, echoMark } = connected();
+    handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.alloc(320, 0x7f) });
+    let done = false;
+    const drain = handle.drainOutbound(1_000).then(() => {
+      done = true;
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(parsed().some((m) => m.event === "mark")).toBe(true);
+    expect(done).toBe(false); // still waiting on the far end
+    echoMark();
+    await drain;
+    expect(done).toBe(true);
+  });
+
+  it("gives up after its timeout rather than holding a live call open", async () => {
+    // A mark that never comes back must not strand a billing call. The cap is
+    // the honest failure, not the mechanism.
+    const { handle } = connected();
+    handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.alloc(160, 0x7f) });
+    const started = Date.now();
+    await handle.drainOutbound(120);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(100);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("returns immediately when there is nothing queued and no stream", async () => {
+    const handle = attachTwilioMediaStream({
+      callId: "CA1",
+      socket: { send: () => {}, close: () => {}, on: () => {} } as never,
+      onInboundAudio: () => {},
+      onCallEvent: () => {}
+    });
+    await handle.drainOutbound(500);
+  });
+});

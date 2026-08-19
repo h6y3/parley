@@ -1,12 +1,12 @@
 {
   "name": "@parley/harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "parley-harness": "dist/cli.js"
+    "parley-harness": "dist/bin.js"
   },
   "exports": {
     ".": {
@@ -29,7 +29,8 @@
     "@parley/audio": "workspace:*",
     "@parley/core": "workspace:*",
     "@parley/policy": "workspace:*",
-    "@parley/realtime-gemini": "workspace:*"
+    "@parley/realtime-gemini": "workspace:*",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",

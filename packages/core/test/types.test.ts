@@ -17,9 +17,9 @@ describe("TelephonyProvider interface shape", () => {
       attachMediaStream: (): MediaStreamHandle => ({
         sendOutboundAudio: () => {},
         clearOutboundBuffer: () => {},
+        drainOutbound: async () => ({ confirmed: true, waitedMs: 0 }),
         close: () => {}
       }),
-      sendDtmf: async () => {},
       hangup: async () => {}
     };
 
@@ -49,6 +49,7 @@ describe("RealtimeProvider interface shape", () => {
         sendOpeningTrigger: () => {},
         sendAudio: () => {},
         notifyActivityEnd: () => {},
+        sendToolResponse: () => {},
         close: async () => {}
       })
     };

@@ -23,7 +23,8 @@ You are setting up the Parley voice-call daemon in this repo.
 2. Open `.env` and ask me, one at a time, for each value that's still unset:
    `GEMINI_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`,
    `PARLEY_PUBLIC_HOST`, `PARLEY_CALLABLE_NUMBERS`. Fill them into `.env` exactly as I give them
-   to you. Never echo a secret value back to me or write one into a log, commit message, or any
+   to you. `PARLEY_CALL_TOKEN` is also required, but do not ask me for it — generate it yourself
+   with `openssl rand -hex 32` and write it straight into `.env`. Never echo a secret value back to me or write one into a log, commit message, or any
    file other than `.env` itself.
 3. Run `parley doctor` and report the result (it never prints secret values, only which
    variables are present or missing).
@@ -74,9 +75,15 @@ real call will use, read it directly from the envelope file (§3) — it is vali
 ## 3. Integrating Parley into your agent
 
 Parley's only inbound interface is `POST /call` on the daemon (`parley serve`, listening on
-`PARLEY_PORT`, default `3334`). Any agent framework can drive a call by POSTing a JSON **call
-envelope** to that endpoint — there is no SDK, no framework plugin, and no Parley-side coupling to
-any particular agent runtime.
+`PARLEY_BIND_HOST`:`PARLEY_PORT`, default `127.0.0.1:3334`). Any agent framework can drive a call
+by POSTing a JSON **call envelope** to that endpoint — there is no SDK, no framework plugin, and
+no Parley-side coupling to any particular agent runtime.
+
+**The request must be authenticated.** `POST /call` requires the daemon's shared secret as
+`Authorization: Bearer $PARLEY_CALL_TOKEN`; without it the daemon answers `401`, and a daemon
+started without the variable answers `503` to everyone rather than dialing for anyone. See
+[`examples/agent-integration/call.mjs`](../examples/agent-integration/call.mjs) for a complete
+21-line client.
 
 **The envelope contract:**
 

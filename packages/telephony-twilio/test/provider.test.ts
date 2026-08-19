@@ -87,3 +87,46 @@ describe("TwilioTelephonyProvider.hangup", () => {
     );
   });
 });
+
+describe("TwilioTelephonyProvider.originate — lifecycle wiring", () => {
+  async function capturedOriginate(extra: Record<string, unknown>) {
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify({ sid: "CA999", status: "queued" }), { status: 201 })
+    ) as unknown as typeof fetch;
+    await makeProvider(fetchImpl).originate({
+      to: "+14155550002",
+      from: "+14155550001",
+      answerWebhookUrl: "https://voice.example.com/twilio/answer",
+      ...extra
+    });
+    const [, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    return new URLSearchParams((init as RequestInit).body as string);
+  }
+
+  it("sends the four status events when a status URL is given", async () => {
+    const body = await capturedOriginate({
+      statusCallbackUrl: "https://voice.example.com/twilio/status"
+    });
+    expect(body.get("StatusCallback")).toBe("https://voice.example.com/twilio/status");
+    expect(body.get("StatusCallbackEvent")).toBe("initiated ringing answered completed");
+  });
+
+  it("sends no status event list when no status URL is given", async () => {
+    const body = await capturedOriginate({});
+    expect(body.get("StatusCallback")).toBeNull();
+    expect(body.get("StatusCallbackEvent")).toBeNull();
+  });
+
+  it("omits MachineDetection unless asked for", async () => {
+    expect((await capturedOriginate({})).get("MachineDetection")).toBeNull();
+  });
+
+  it("sends MachineDetection when asked for", async () => {
+    expect((await capturedOriginate({ machineDetection: "Enable" })).get("MachineDetection")).toBe(
+      "Enable"
+    );
+    expect(
+      (await capturedOriginate({ machineDetection: "DetectMessageEnd" })).get("MachineDetection")
+    ).toBe("DetectMessageEnd");
+  });
+});

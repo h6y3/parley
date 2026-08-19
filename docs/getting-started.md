@@ -56,13 +56,15 @@ environment, never from a CLI flag or a committed file. Fill in each variable:
 | `TWILIO_AUTH_TOKEN`        | Your Twilio auth token. Also used to verify inbound Twilio webhook signatures.                                                                                                                   | Yes, for `serve`.                                                                                                                                             |
 | `TWILIO_FROM_NUMBER`       | The E.164 number Twilio originates outbound calls from, e.g. `+14155550001`.                                                                                                                     | Yes, for `serve`.                                                                                                                                             |
 | `PARLEY_PUBLIC_HOST`       | The daemon's public hostname (no scheme), e.g. `voice.example.com`. Given to Twilio as the callback host; also seeds the SSRF-safe host allowlist for inbound webhook and media-stream requests. | Yes, for `serve`.                                                                                                                                             |
+| `PARLEY_CALL_TOKEN`        | Shared secret authorizing `POST /call`. `parley call` sends it as `Authorization: Bearer <token>`; the daemon rejects any request without it. Generate one with `openssl rand -hex 32`.          | Yes, for `serve` — and `serve` refuses to start without it.                                                                                                   |
 | `PARLEY_PORT`              | TCP port `parley serve` binds to.                                                                                                                                                                | No — defaults to `3334`.                                                                                                                                      |
+| `PARLEY_BIND_HOST`         | Interface `parley serve` binds to.                                                                                                                                                               | No — defaults to `127.0.0.1`. Front the daemon with a tunnel or reverse proxy rather than widening this.                                                      |
 | `PARLEY_CALLABLE_NUMBERS`  | Comma-separated E.164 numbers Parley is allowed to dial, e.g. `+15555550187,+15555550188`.                                                                                                       | No — but if unset, the allowlist is empty and **every** call is denied (fails closed).                                                                        |
 | `PARLEY_DAEMON_URL`        | Base URL the `parley call` CLI command `POST`s the envelope to.                                                                                                                                  | No — defaults to `http://127.0.0.1:3334`. Only read by `call`, not `serve`.                                                                                   |
 | `PARLEY_POST_CALL_COMMAND` | Optional shell command `serve` spawns (detached) after each call completes.                                                                                                                      | No — and it only fires when `PARLEY_CALL_RECORDS_PATH` is also set; see [`docs/configuration.md`](configuration.md) for that variable and the full reference. |
 
-`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, and `GEMINI_API_KEY` are secrets
-— never commit real values.
+`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `GEMINI_API_KEY`, and
+`PARLEY_CALL_TOKEN` are secrets — never commit real values.
 
 ## 4. Check your config
 
@@ -70,19 +72,20 @@ environment, never from a CLI flag or a committed file. Fill in each variable:
 node packages/cli/dist/cli.js doctor
 ```
 
-`doctor` reports presence or absence of the four required secrets
-(`GEMINI_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`) — it never
-prints their values, so it's safe to run and paste anywhere. Before `.env` is filled in, it looks
-like this:
+`doctor` reports presence or absence of the five required secrets
+(`GEMINI_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`,
+`PARLEY_CALL_TOKEN`) — it never prints their values, so it's safe to run and paste anywhere.
+Before `.env` is filled in, it looks like this:
 
 ```
 GEMINI_API_KEY: MISSING
 TWILIO_AUTH_TOKEN: MISSING
 TWILIO_ACCOUNT_SID: MISSING
 TWILIO_FROM_NUMBER: MISSING
+PARLEY_CALL_TOKEN: MISSING
 ```
 
-Every line should read `present` before you move on. Note that `doctor` only checks these four —
+Every line should read `present` before you move on. Note that `doctor` only checks these five —
 it doesn't validate `PARLEY_PUBLIC_HOST`, `PARLEY_PORT`, or `PARLEY_CALLABLE_NUMBERS`, so
 double-check those by eye.
 
@@ -93,7 +96,9 @@ node packages/cli/dist/cli.js serve
 ```
 
 This starts `@parley/server`, which throws immediately if any required secret above is missing.
-On success it prints `parley daemon listening on :<port>` and stays in the foreground. `serve`
+On success it prints `parley daemon listening on 127.0.0.1:<port>` and stays in the foreground.
+Note the host: the daemon binds loopback, so your public ingress must forward to it rather than
+the daemon listening on a public interface itself. `serve`
 only accepts calls that Twilio can actually reach — your public HTTPS endpoint (see
 [`docs/runbooks/deployment.md`](runbooks/deployment.md)) needs to be up and forwarding to
 `PARLEY_PORT` on `127.0.0.1` **before** you place a call, since both the answer webhook and the
@@ -106,6 +111,9 @@ Use the sample brief in `examples/briefs/represented.json` and dial the number i
 ```bash
 node packages/cli/dist/cli.js call --to +15555550187 --brief examples/briefs/represented.json
 ```
+
+`PARLEY_CALL_TOKEN` must be set in this shell too — `call` reads it from the environment and
+presents it as a bearer token; without it the daemon answers `401`.
 
 Two things to get right here:
 
@@ -151,5 +159,7 @@ signals instead, in order:
 | Twilio returns 403 / "bad signature" on the answer webhook                 | `TWILIO_AUTH_TOKEN` is wrong, or Twilio's request isn't reaching the hostname in `PARLEY_PUBLIC_HOST` unmodified (a proxy rewriting the URL will break signature verification).                                  |
 | Webhook or media stream never arrives at the daemon                        | Your public ingress isn't forwarding to `PARLEY_PORT` on `127.0.0.1` — recheck the tunnel/reverse-proxy setup in [`docs/runbooks/deployment.md`](runbooks/deployment.md).                                        |
 | `parley call` fails with a "call refused" / allowlist-style error          | The `--to` number isn't in `PARLEY_CALLABLE_NUMBERS`. Add it and restart `serve` (env vars are read at process start).                                                                                           |
+| `parley call` returns `401 unauthorized`                                   | `PARLEY_CALL_TOKEN` isn't set in the shell running `call`, or it doesn't match the one `serve` started with.                                                                                                     |
+| `parley call` returns `503 call authentication is not configured`          | `serve` is running without `PARLEY_CALL_TOKEN`. It fails closed rather than dialing for anybody — set the variable and restart.                                                                                  |
 | Immediate auth error from `serve` or the call fails right after connecting | Recheck `GEMINI_API_KEY` and the three `TWILIO_*` secrets — rerun `node packages/cli/dist/cli.js doctor` to confirm which are missing.                                                                           |
 | Call connects but there's no audio either direction                        | Confirm the media-stream WebSocket path is publicly reachable over the same HTTPS endpoint as the webhook — a proxy that forwards HTTP but not WebSocket upgrades will look "connected" while carrying no audio. |

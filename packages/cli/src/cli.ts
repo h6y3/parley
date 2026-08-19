@@ -33,6 +33,10 @@ async function serve(): Promise<void> {
       parseCallableNumbers(process.env.PARLEY_CALLABLE_NUMBERS)
     ),
     hostAllowlist: createHostAllowlist([requireEnv("PARLEY_PUBLIC_HOST")]),
+    // requireEnv, not an optional read. A daemon that starts without this would
+    // answer every /call with 503, which surfaces hours later as an outage
+    // rather than now as a misconfiguration. Fail at boot, loudly.
+    callToken: requireEnv("PARLEY_CALL_TOKEN"),
     onCallCompleted: callRecordsPath
       ? (record) => {
           mkdirSync(dirname(callRecordsPath), { recursive: true });
@@ -45,8 +49,12 @@ async function serve(): Promise<void> {
       : undefined
   });
   const port = Number(process.env.PARLEY_PORT ?? "3334");
-  await handle.listen(port);
-  console.log(`parley daemon listening on :${port}`);
+  // Loopback unless deliberately overridden. Until 2026-08-17 no host was
+  // plumbed here at all, so the daemon bound every interface and there was no
+  // configuration that could have stopped it.
+  const bindHost = process.env.PARLEY_BIND_HOST ?? "127.0.0.1";
+  await handle.listen(port, bindHost);
+  console.log(`parley daemon listening on ${bindHost}:${port}`);
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
@@ -61,7 +69,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
           {
             to: args.to,
             briefPath: args.briefPath,
-            daemonUrl: process.env.PARLEY_DAEMON_URL ?? "http://127.0.0.1:3334"
+            daemonUrl: process.env.PARLEY_DAEMON_URL ?? "http://127.0.0.1:3334",
+            callToken: process.env.PARLEY_CALL_TOKEN
           },
           {}
         )

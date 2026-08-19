@@ -19,9 +19,21 @@ if (!envelopePath) {
 const envelope = JSON.parse(readFileSync(envelopePath, "utf8"));
 const daemonUrl = process.env.PARLEY_DAEMON_URL ?? "http://127.0.0.1:3334";
 
+// POST /call is the only route that can dial a human being, so it requires the
+// daemon's shared secret as a bearer token. Read it from the environment — never
+// a CLI argument, which lands in shell history and `ps` output.
+const callToken = process.env.PARLEY_CALL_TOKEN;
+if (!callToken) {
+  console.error("PARLEY_CALL_TOKEN must be set — the daemon answers 401 without it");
+  process.exit(1);
+}
+
 const res = await fetch(`${daemonUrl}/call`, {
   method: "POST",
-  headers: { "content-type": "application/json" },
+  headers: {
+    "content-type": "application/json",
+    authorization: `Bearer ${callToken}`
+  },
   body: JSON.stringify(envelope)
 });
 const json = await res.json();

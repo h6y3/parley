@@ -41,3 +41,70 @@ describe("presets", () => {
     expect(p.pronunciation).toEqual(["Pronounce the last name Rivera as ree-VAIR-uh."]);
   });
 });
+
+import { navigableCall } from "../src/index.js";
+
+describe("transactionalCall extensions", () => {
+  it("threads the new fields through", () => {
+    const p = transactionalCall({
+      principalName: "Alex Rivera",
+      adjacent: ["Also service the second unit."],
+      ivrGoal: "the service department",
+      menuHints: ["Press one for service."],
+      spend: { limit: 250, currency: "USD", basis: "for this visit" },
+      expectLookupPauses: true
+    });
+    expect(p.scope).toEqual({ lock: true, adjacent: ["Also service the second unit."] });
+    expect(p.ivr).toEqual({
+      goal: "the service department",
+      menuHints: ["Press one for service."]
+    });
+    expect(p.authority.spend).toEqual({ limit: 250, currency: "USD", basis: "for this visit" });
+    expect(p.patience).toEqual({ expectLookupPauses: true });
+  });
+
+  it("omits every new field when not asked for (golden-equivalence safety)", () => {
+    const p = transactionalCall({ principalName: "Alex Rivera" });
+    expect(p.scope).toEqual({ lock: true });
+    expect(p.ivr).toBeUndefined();
+    expect(p.patience).toBeUndefined();
+    expect(p.authority.spend).toBeUndefined();
+  });
+
+  it("accepts an ivrGoal with no menuHints", () => {
+    const p = transactionalCall({
+      principalName: "Alex Rivera",
+      ivrGoal: "the service department"
+    });
+    expect(p.ivr).toEqual({ goal: "the service department" });
+  });
+});
+
+describe("navigableCall", () => {
+  it("builds only the blocks it was given", () => {
+    const e = navigableCall({
+      maxPresses: 6,
+      outcomeFields: [{ name: "appointmentStart", description: "ISO start" }]
+    });
+    expect(e.ivr).toEqual({
+      maxPresses: 6,
+      allowedDigits: "0123456789*#",
+      onUnrecognized: "zeroOut"
+    });
+    expect(e.outcome?.fields).toHaveLength(1);
+    expect(e.limits).toBeUndefined();
+    expect(e.closure).toBeUndefined();
+  });
+
+  it("returns an empty execution when given nothing", () => {
+    expect(navigableCall({})).toEqual({});
+  });
+
+  it("carries maxSilenceSeconds only alongside a duration cap", () => {
+    expect(navigableCall({ maxSilenceSeconds: 30 }).limits).toBeUndefined();
+    expect(navigableCall({ maxDurationSeconds: 600, maxSilenceSeconds: 30 }).limits).toEqual({
+      maxDurationSeconds: 600,
+      maxSilenceSeconds: 30
+    });
+  });
+});

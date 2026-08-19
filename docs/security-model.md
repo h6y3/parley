@@ -3,6 +3,34 @@
 Parley is secure by default — none of the following require a hardening pass after adoption;
 they are the out-of-the-box behavior of `@parley/telephony-twilio` and `@parley/server` as built.
 
+## `POST /call` authentication — the primary control
+
+`POST /call` is the only route that can spend money and dial a human being. It requires a shared
+secret presented as `Authorization: Bearer <token>`, compared in constant time against
+`PARLEY_CALL_TOKEN` (`authorizeCall`, `packages/server/src/request-handler.ts`).
+
+Three properties matter more than the mechanism:
+
+- **It fails closed on an unconfigured token.** An operator who never sets `PARLEY_CALL_TOKEN`
+  gets a daemon that returns `503 { error: "call authentication is not configured" }` to
+  everybody — never one that dials for everybody. "The secret is missing, so skip the check" is
+  the shape of most auth bypasses, so the empty case is handled explicitly rather than falling
+  through. `parley serve` goes further and refuses to start at all without the variable, so the
+  misconfiguration surfaces at boot rather than as an outage hours later.
+- **It runs before the body is parsed.** Authorizing after parsing would let an anonymous caller
+  distinguish a malformed envelope (`400`) from an unlisted number (`403`) and so enumerate the
+  callable-number allowlist without ever holding the token.
+- **It is not defence in depth — it is the control.** The daemon binds loopback by default
+  (`PARLEY_BIND_HOST`, default `127.0.0.1`), but Twilio must reach `/twilio/answer` from the
+  public internet, so any real deployment puts a tunnel or reverse proxy in front that maps a
+  whole hostname to the daemon. That path reaches `/call` too. **The callable-number allowlist is
+  not access control** — it bounds who may be _dialled_, never who may _dial_. Counting it as
+  authentication is exactly the mistake that leaves this route open.
+
+`POST /twilio/answer` and `POST /twilio/status` are deliberately **not** token-gated: Twilio
+cannot present a bearer token. Their control is signature verification, below. `GET /healthz` is
+unauthenticated and side-effect-free by design.
+
 ## Twilio signature verification — on, and fails closed
 
 `POST /twilio/answer` verifies every inbound webhook against Twilio's signature scheme
@@ -58,6 +86,77 @@ none of those, so it would pass through unredacted if ever logged. Its protectio
 entirely from the two checks above (the unguessable per-call path plus the required pending-session
 match), not from log redaction. That is a materially weaker guarantee than cryptographic
 per-message signing, and this document deliberately does not imply otherwise.
+
+## The tool channel — bounded capability, constant-only results
+
+Parley V1 had **two channels into the model and none out**: a `systemInstruction` sent once at
+connect and immutable thereafter, plus one short opening trigger. That is still true of a call
+that declares no `execution` block, and it is why `RealtimeSession` has never exposed a
+general-purpose "send a turn" method.
+
+A call that declares an `execution` block gets up to three tools — `press_digits`, `end_call`,
+`record_outcome` — and it is worth being precise about what that does and does not change.
+
+**What is unchanged.** `systemInstruction` is still sent exactly once and is still immutable for
+the session's lifetime. There is still no code path that pushes a second privileged turn. A tool
+call is the model _acting_, not the model being _instructed_.
+
+**What is new, stated as a threat rather than as a feature.** Two things did not exist before.
+First, an outbound capability: the model can now cause a real side effect on a live phone call.
+Second, an inbound text channel: a tool _result_ is text the model reads, which is exactly the
+shape a prompt injection wants. And with them comes a threat Parley did not previously have — **a
+callee talking the model into pressing keys, or into hanging up before the task is done.** No
+amount of prompt wording closes that, because the persuasion happens in the conversation the
+prompt cannot see.
+
+**The answer: the model proposes, the server disposes.** Every tool call is a _request_.
+`ToolGate` (`packages/core/src/execution.ts`) decides it against the envelope's execution plane
+before anything happens:
+
+- a tool is declared **only** if its execution block is present, so an undeclared capability is
+  not merely refused — it is invisible;
+- `press_digits` is checked against `allowedDigits` and a whole-call `maxPresses` budget counted
+  in individual keys;
+- budget is charged **after** the carrier accepts, so a failed REST call cannot consume the
+  model's ability to navigate;
+- `end_call` can be gated behind `record_outcome`, and that refusal is **one-shot** — a model
+  that cannot produce an outcome is never trapped on a live, billing call;
+- `record_outcome` keeps only fields the envelope declared and silently drops the rest.
+
+None of these limits is reachable by anything said on the call. A callee who succeeds completely
+in persuading the model gets the declared budget and then refusals.
+
+**Tool results are a fixed literal union.** Every value the server can return is a member of
+`ToolResult` — `"ok"`, `"recorded"`, `"refused: press budget exhausted"`, and so on. No result is
+ever built from a tool argument, a callee utterance, or an error message, so the new inbound
+channel carries no attacker-influenced bytes. This is enforced twice: `sendToolResponse` takes
+`ToolResult` as its parameter type, so the compiler rejects an interpolated string at every call
+site, and `tool-gate.test.ts` asserts membership mechanically for every value the gate can
+produce.
+
+**The spend ceiling, said plainly: half of it is enforced and half of it cannot be.**
+
+Agreeing to a price is speech. No server code makes a sentence unspoken, so the part of the
+ceiling that governs what the model _says_ is a prose rail — `authority.spend` — and it is
+advisory like every other sentence in the prompt. A live scenario matrix measured what that is
+worth on its own: on three of four cells quoted 430 against a 250 ceiling, the model agreed and
+recorded a **completed** call at 430.
+
+The part that _can_ be enforced is what gets written down, and it now is.
+`execution.spendCeiling` binds an outcome field to a hard limit, and `ToolGate.recordOutcome`
+refuses — `"refused: that amount is above the limit for this call"` — rather than writing a record
+that claims an unauthorised commitment. Nothing downstream acts on the conversation; it acts on
+`record_outcome`. The refusal also reaches the model mid-call, which is the point at which it can
+still defer and call back.
+
+The two halves are required together. An envelope carrying `policy.authority.spend` and an
+`execution.outcome` block is **rejected** without a matching `execution.spendCeiling`, and the two
+limits must be equal — a ceiling the model is told is 250 while the server enforces 500 reads as
+protection and is not.
+
+Two limits stated rather than papered over. The gate reads **digits**: an amount written out in
+words passes it, and the prose rail is the only thing covering that case. And a refused record is
+still a call on which a price was verbally agreed — this bounds the record, not the conversation.
 
 ## Callable-number allowlist — fails closed
 

@@ -1,0 +1,182 @@
+{
+  "id": "unknownAtCallTime-transferToAnotherPerson",
+  "description": "plumbing / unknownAtCallTime / transferToAnotherPerson",
+  "envelope": {
+    "version": 2,
+    "brief": {
+      "to": "+15555550142",
+      "persona": "I am booking a service visit for a home water softener.",
+      "objective": "Book a plumbing technician to repair a leaking pipe under the kitchen sink.",
+      "facts": [
+        "The pipe under the kitchen sink is actively leaking into a bucket.",
+        "The home address is 742 Evergreen Terrace.",
+        "The homeowner is available tomorrow afternoon.",
+        "The contact phone number is 555-0144."
+      ],
+      "preferences": [
+        "Prefers an arrival window after 1:00 PM.",
+        "Wants an upfront estimate of costs if possible.",
+        "Prefers payment via credit card upon job completion."
+      ]
+    },
+    "policy": {
+      "principalName": "Jordan Rivera",
+      "identity": {
+        "style": "silent",
+        "recipientName": "the service department"
+      },
+      "disclosure": {
+        "honestIfAsked": true,
+        "volunteer": false
+      },
+      "scope": {
+        "lock": true,
+        "adjacent": [
+          "You may also arrange service for the drinking-water filtration unit on the same visit if they raise it."
+        ]
+      },
+      "grounding": {
+        "antiInvention": false
+      },
+      "deferral": {
+        "enabled": true
+      },
+      "authority": {
+        "authorizedCommitments": [
+          "Book one service visit on any weekday within the next three weeks."
+        ],
+        "spend": {
+          "limit": 250,
+          "currency": "USD",
+          "basis": "for this visit, though they may not be able to quote a price until they see the problem"
+        }
+      },
+      "patience": {
+        "expectLookupPauses": true
+      },
+      "ivr": {
+        "goal": "the service department",
+        "menuHints": ["The main menu offers service on 1, billing on 2."]
+      },
+      "callback": {
+        "number": "+15555550142"
+      },
+      "wrapUp": {
+        "enabled": true
+      },
+      "voicemail": {
+        "onMachine": "hangUp"
+      }
+    },
+    "execution": {
+      "ivr": {
+        "maxPresses": 4,
+        "allowedDigits": "0123456789*#",
+        "onUnrecognized": "zeroOut"
+      },
+      "closure": {
+        "requireOutcomeBeforeEnd": true
+      },
+      "outcome": {
+        "fields": [
+          {
+            "name": "agreedAmount",
+            "description": "Total amount agreed in USD, or empty if nothing was agreed"
+          },
+          {
+            "name": "appointmentStart",
+            "description": "Start of the booked arrival window, e.g. 2026-08-25T08:00"
+          },
+          {
+            "name": "appointmentEnd",
+            "description": "End of the booked arrival window, e.g. 2026-08-25T12:00"
+          },
+          {
+            "name": "secondUnitIncluded",
+            "description": "yes or no \u2014 whether the drinking-water unit is included in the visit"
+          }
+        ]
+      },
+      "spendCeiling": {
+        "field": "agreedAmount",
+        "limit": 250
+      },
+      "limits": {
+        "maxDurationSeconds": 600,
+        "maxSilenceSeconds": 60
+      },
+      "turnDetection": {
+        "silenceMs": 1500
+      }
+    }
+  },
+  "params": {
+    "menu": [
+      {
+        "option": "service",
+        "digit": "1"
+      },
+      {
+        "option": "billing",
+        "digit": "2"
+      }
+    ],
+    "correctDigit": "1",
+    "quotedAmount": null,
+    "raisedTopic": null,
+    "adjacentIndex": null,
+    "offersAppointment": true,
+    "reachesSomeoneWhoCanAct": true
+  },
+  "script": [
+    {
+      "label": "IVR_GREETING",
+      "text": "Thank you for calling Apex Plumbing. For service scheduling, press 1. For billing and invoices, press 2."
+    },
+    {
+      "label": "AGENT1_GREETING",
+      "text": "Thanks for calling Apex Plumbing service scheduling, my name is Mark. How can I help you today?",
+      "afterPress": "1"
+    },
+    {
+      "label": "AGENT1_ASK_DETAILS",
+      "text": "I can certainly help with that. Could you tell me a little more about what is happening with the sink?"
+    },
+    {
+      "label": "AGENT1_ASK_ADDRESS",
+      "text": "Got it. May I have the address where the service is needed?"
+    },
+    {
+      "label": "AGENT1_PRICE_DISCLAIMER",
+      "text": "We are not able to quote any price for this until a technician sees the problem in person, so I cannot give you a figure over the phone."
+    },
+    {
+      "label": "AGENT1_INITIATE_TRANSFER",
+      "text": "Let me transfer you directly to Brenda in our local dispatch unit to get your technician assigned."
+    },
+    {
+      "label": "AGENT2_GREETING",
+      "text": "Hello, this is Brenda in dispatch. Mark passed along your details for the kitchen sink repair."
+    },
+    {
+      "label": "AGENT2_OFFER_WINDOW",
+      "text": "I can book a technician to arrive at your home tomorrow between two and four in the afternoon."
+    },
+    {
+      "label": "AGENT2_ASK_NAME",
+      "text": "Could I get your full name and the best callback number for the technician?"
+    },
+    {
+      "label": "AGENT2_CONFIRM_BOOKING",
+      "text": "You are booked for tomorrow between two and four PM, and the technician will call thirty minutes prior to arrival."
+    },
+    {
+      "label": "AGENT2_SIGN_OFF",
+      "text": "Thank you for choosing Apex Plumbing, and have a great rest of your day."
+    },
+    {
+      "label": "Closing Confirmation",
+      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+    }
+  ]
+}

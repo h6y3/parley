@@ -154,3 +154,52 @@ describe("runReliabilityCommand", () => {
     expect(out).toContain("scenario: hostile");
   });
 });
+
+describe("scenario commands", () => {
+  it("parses the scenario command", () => {
+    expect(parseCliArgs(["scenario", "--file", "s.json", "--runs", "1"])).toEqual({
+      command: "scenario",
+      scenarioPath: "s.json",
+      runs: 1,
+      concurrency: 1
+    });
+  });
+
+  it("parses an --only filter", () => {
+    expect(
+      parseCliArgs(["scenario", "--file", "d", "--runs", "2", "--only", "bounded-holdMidCall"])
+    ).toEqual({
+      command: "scenario",
+      scenarioPath: "d",
+      runs: 2,
+      only: "bounded-holdMidCall",
+      concurrency: 1
+    });
+  });
+
+  // No default on --runs, deliberately: each run is a billed Gemini Live
+  // session, and a default is how a quick check becomes twenty of them.
+  it("refuses a scenario run with no explicit --runs", () => {
+    expect(() => parseCliArgs(["scenario", "--file", "s.json"])).toThrow(/--runs/);
+  });
+
+  it("refuses a non-positive --runs", () => {
+    expect(() => parseCliArgs(["scenario", "--file", "s.json", "--runs", "0"])).toThrow(/positive/);
+  });
+
+  it("refuses a scenario command with no --file", () => {
+    expect(() => parseCliArgs(["scenario", "--runs", "1"])).toThrow(/--file/);
+  });
+
+  it("parses the generate-scenarios command", () => {
+    expect(parseCliArgs(["generate-scenarios", "--seed", "s.json", "--out", "d"])).toEqual({
+      command: "generate-scenarios",
+      seedPath: "s.json",
+      outDir: "d"
+    });
+  });
+
+  it("refuses generate-scenarios without both --seed and --out", () => {
+    expect(() => parseCliArgs(["generate-scenarios", "--seed", "s.json"])).toThrow(/--out/);
+  });
+});

@@ -11,6 +11,11 @@ import { wrapWsSocket } from "./ws-adapter.js";
 // pre-auth body buffering so an unauthenticated caller can't exhaust memory.
 const MAX_BODY_BYTES = 64 * 1024;
 
+// Loopback, because the alternative is a billed outbound phone call for anyone
+// who can route to this host. An explicit host is still accepted — a container
+// has to bind its pod address to be reachable at all — but it must be asked for.
+const DEFAULT_BIND_HOST = "127.0.0.1";
+
 export interface ParleyServerConfig {
   telephony: TelephonyProvider;
   realtime: RealtimeProvider;
@@ -20,12 +25,16 @@ export interface ParleyServerConfig {
   model: string;
   numberAllowlist: NumberAllowlist;
   hostAllowlist: HostAllowlist;
+  /** Shared secret required on POST /call. Required in the type, because
+   * choosing who may originate a call is not a field anyone should be able to
+   * forget; empty or absent makes the daemon refuse every call. */
+  callToken: string | undefined;
   onCallCompleted?: (record: CompletedCallRecord) => void;
 }
 
 export function createParleyServer(config: ParleyServerConfig): {
   server: Server;
-  listen: (port: number) => Promise<void>;
+  listen: (port: number, host?: string) => Promise<void>;
   close: () => Promise<void>;
 } {
   const pending = new PendingSessions();
@@ -102,7 +111,12 @@ export function createParleyServer(config: ParleyServerConfig): {
 
   return {
     server,
-    listen: (port) => new Promise((resolve) => server.listen(port, resolve)),
+    // `server.listen(port, host, callback)`. Passing the callback second — as
+    // this did until 2026-08-17 — supplies no host, and Node then binds `::`.
+    // The live daemon listened on `*:3335` for that reason, reachable from the
+    // LAN with no authentication on /call.
+    listen: (port, host = DEFAULT_BIND_HOST) =>
+      new Promise((resolve) => server.listen(port, host, () => resolve())),
     close: () => new Promise((resolve) => server.close(() => resolve()))
   };
 }

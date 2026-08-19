@@ -24,7 +24,13 @@ function makeFakeProvider(): {
     name: "fake",
     connect: async (params: RealtimeConnectParams): Promise<RealtimeSession> => {
       capturedParams = params;
-      return { sendOpeningTrigger, sendAudio, notifyActivityEnd: () => {}, close };
+      return {
+        sendOpeningTrigger,
+        sendAudio,
+        notifyActivityEnd: () => {},
+        sendToolResponse: () => {},
+        close
+      };
     }
   };
 
@@ -46,6 +52,7 @@ function makeThrowingProvider(close: ReturnType<typeof vi.fn>): RealtimeProvider
         throw new Error("boom");
       },
       notifyActivityEnd: () => {},
+      sendToolResponse: () => {},
       close
     })
   };
@@ -60,6 +67,7 @@ function makeOpeningTriggerThrowingProvider(close: ReturnType<typeof vi.fn>): Re
       },
       sendAudio: () => {},
       notifyActivityEnd: () => {},
+      sendToolResponse: () => {},
       close
     })
   };

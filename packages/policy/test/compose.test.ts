@@ -78,3 +78,73 @@ describe("composePolicy", () => {
     expect(CANARY_PHRASES.length).toBeGreaterThanOrEqual(3);
   });
 });
+
+import { transactionalCall as _tc } from "../src/presets.js";
+import type { CallPolicy as _CP } from "../src/schema.js";
+
+const newRailBase = (): _CP => _tc({ principalName: "Alex Rivera" });
+
+describe("new prose-plane rails", () => {
+  it("emits the adjacency rail and swaps the scope statement", () => {
+    const p: _CP = {
+      ...newRailBase(),
+      scope: { lock: true, adjacent: ["Also service the second unit."] }
+    };
+    const out = composePolicy(p).join(" ");
+    expect(out).toContain("Also service the second unit.");
+    expect(out).toContain("plus the small number of explicitly permitted extensions");
+    expect(out).not.toContain("IMPORTANT: this call has exactly one purpose.");
+  });
+
+  it("emits the IVR rail and narrows the voicemail rail", () => {
+    const p: _CP = { ...newRailBase(), ivr: { goal: "the service department" } };
+    const out = composePolicy(p).join(" ");
+    expect(out).toContain("do not assume a menu and do not act until you have heard one");
+    expect(out).not.toContain("automated system you cannot complete the task with");
+  });
+
+  it("emits the preferences rail before the deferral rail", () => {
+    const out = composePolicy(newRailBase(), ["Prefers morning appointments."]);
+    const prefIdx = out.findIndex((r) => r.includes("standing preferences"));
+    const deferIdx = out.findIndex((r) => r.includes("will need to follow up with"));
+    expect(prefIdx).toBeGreaterThanOrEqual(0);
+    expect(deferIdx).toBeGreaterThanOrEqual(0);
+    expect(prefIdx).toBeLessThan(deferIdx);
+  });
+
+  it("emits the spend rail and narrows always-defer to exclude routine fees", () => {
+    const b = newRailBase();
+    const p: _CP = {
+      ...b,
+      authority: { ...b.authority, spend: { limit: 250, currency: "USD", basis: "for this visit" } }
+    };
+    const out = composePolicy(p).join(" ");
+    expect(out).toContain("up to 250 USD in TOTAL for this visit");
+    expect(out).toContain("For anything involving deposits, cancellation charges, contracts");
+    expect(out).not.toContain("For anything involving money, fees, deposits");
+  });
+
+  it("a caller-supplied alwaysDefer list still wins over the spend narrowing", () => {
+    const b = newRailBase();
+    const p: _CP = {
+      ...b,
+      authority: {
+        ...b.authority,
+        alwaysDefer: ["Legal waivers."],
+        spend: { limit: 250, currency: "USD", basis: "for this visit" }
+      }
+    };
+    const out = composePolicy(p).join(" ");
+    expect(out).toContain("For anything involving Legal waivers.");
+    expect(out).toContain("up to 250 USD");
+  });
+
+  it("emits the patience rail", () => {
+    const p: _CP = { ...newRailBase(), patience: { expectLookupPauses: true } };
+    expect(composePolicy(p).join(" ")).toContain("Wait for them rather than filling the silence");
+  });
+
+  it("all new fields absent composes identically to today", () => {
+    expect(composePolicy(newRailBase())).toEqual(composePolicy(newRailBase(), []));
+  });
+});

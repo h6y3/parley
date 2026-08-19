@@ -16,6 +16,7 @@ export type {
   RealtimeSession,
   RealtimeSessionCallbacks,
   TelephonyProvider,
+  ToolCallRequest,
   TranscriptEvent,
   TurnDetectionConfig,
   WebhookVerificationRequest,
@@ -30,4 +31,13 @@ export { OPENING_TRIGGER, renderSystemInstruction } from "./render.js";
 export type { RenderInput } from "./render.js";
 
 export { CallSession } from "./call-session.js";
-export type { CallSessionHandle, CallSessionParams } from "./call-session.js";
+export type { CallSessionHandle, CallSessionParams, EndReason } from "./call-session.js";
+export type {
+  CallExecution,
+  ToolName,
+  ToolResult,
+  RecordedOutcome,
+  ToolDeclaration,
+  ToolCarrier
+} from "./execution.js";
+export { TOOL_RESULTS, buildToolDeclarations, ToolGate, routeToolCall } from "./execution.js";

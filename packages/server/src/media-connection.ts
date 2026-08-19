@@ -1,10 +1,17 @@
-import type { TranscriptEvent, WebSocketLike } from "@parley/core";
+import type { EndReason, RecordedOutcome, TranscriptEvent, WebSocketLike } from "@parley/core";
 import type { PendingSessions } from "./pending-sessions.js";
 
 export interface CompletedCallRecord {
   callId: string;
   endedAt: string;
   transcript: readonly TranscriptEvent[];
+  /** How the call ended. `remote` means the far end hung up; `error` means our
+   * own teardown failed. An absent `outcome` alongside `remote` is a caller's
+   * signal that the call died before anything was agreed — no prose to parse. */
+  endedBy: EndReason;
+  answeredBy?: "human" | "machine" | "fax" | "unknown";
+  outcome?: RecordedOutcome;
+  dtmf?: { pressed: string[]; refused: number };
 }
 
 /** Correlate an inbound media WebSocket to its pending CallSession by the
@@ -30,12 +37,20 @@ export async function handleMediaConnection(
       deps.onCallCompleted?.({
         callId,
         endedAt: new Date().toISOString(),
-        transcript: handle.transcript
+        transcript: handle.transcript,
+        // The socket closing without an explicit reason IS the far end hanging
+        // up, which is why "remote" is the fallback rather than "error".
+        endedBy: handle.endedBy ?? "remote",
+        ...(session.answeredBy ? { answeredBy: session.answeredBy } : {}),
+        ...session.gateSnapshot()
       });
     }
     if (handle && !stopped) {
       stopped = true;
-      void handle.stop("socket closed");
+      // The media socket closing IS the far end going away, so the reason is
+      // "remote" — CallSession then skips asking the carrier to hang up a call
+      // that is already over.
+      void handle.stop("remote");
     }
   };
   socket.on("close", () => {

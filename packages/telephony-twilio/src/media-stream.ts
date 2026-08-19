@@ -5,6 +5,7 @@ interface TwilioInbound {
   streamSid?: string;
   start?: { streamSid: string; callSid: string };
   media?: { track?: string; payload: string; timestamp?: string };
+  mark?: { name: string };
 }
 
 // Twilio plays outbound audio on a bidirectional <Connect><Stream> at the
@@ -59,6 +60,9 @@ export function attachTwilioMediaStream(params: AttachMediaStreamParams): MediaS
   let streamSid: string | undefined;
   let lastTimestampMs = 0;
   let outboundQueue = Buffer.alloc(0);
+  /** Marks we are waiting for Twilio to play past, by name. */
+  const pendingMarks = new Map<string, () => void>();
+  let markSeq = 0;
   const silenceFrame = Buffer.alloc(OUTBOUND_FRAME_BYTES, MULAW_SILENCE_BYTE);
 
   const sendMedia = (payload: Buffer): void => {
@@ -137,8 +141,21 @@ export function attachTwilioMediaStream(params: AttachMediaStreamParams): MediaS
       case "stop":
         onCallEvent({ type: "completed", durationSeconds: Math.round(lastTimestampMs / 1000) });
         break;
+      case "mark": {
+        // Twilio echoes a mark once it has PLAYED everything queued ahead of
+        // it. That is the only signal that says the closing sentence actually
+        // reached the callee, and it went unread until a live call hung up
+        // mid-word.
+        const name = msg.mark?.name;
+        const resolve = name === undefined ? undefined : pendingMarks.get(name);
+        if (name !== undefined && resolve) {
+          pendingMarks.delete(name);
+          resolve();
+        }
+        break;
+      }
       default:
-        break; // connected, mark, dtmf — not consumed in V1
+        break; // connected, dtmf — not consumed in V1
     }
   });
 
@@ -160,6 +177,44 @@ export function attachTwilioMediaStream(params: AttachMediaStreamParams): MediaS
       // own playout buffer, so both layers stop together (design spec §4.5).
       outboundQueue = Buffer.alloc(0);
       if (streamSid) socket.send(JSON.stringify({ event: "clear", streamSid }));
+    },
+    async drainOutbound(timeoutMs: number): Promise<{ confirmed: boolean; waitedMs: number }> {
+      const startedAt = Date.now();
+      if (!streamSid) return { confirmed: false, waitedMs: 0 };
+      let confirmed = false;
+      const name = `drain-${++markSeq}`;
+      // The pacer is still draining `outboundQueue`, and Twilio processes our
+      // messages in order — so a mark sent now is played after every media
+      // frame the pacer has already emitted. Anything still queued locally is
+      // waited for first, in whole 20ms frames.
+      const localMs = Math.ceil(outboundQueue.length / OUTBOUND_FRAME_BYTES) * PACING_INTERVAL_MS;
+      await new Promise<void>((resolve) => {
+        const deadline = setTimeout(() => {
+          pendingMarks.delete(name);
+          resolve();
+        }, timeoutMs);
+        const arm = (): void => {
+          if (!streamSid) {
+            clearTimeout(deadline);
+            return resolve();
+          }
+          pendingMarks.set(name, () => {
+            confirmed = true;
+            clearTimeout(deadline);
+            resolve();
+          });
+          try {
+            socket.send(JSON.stringify({ event: "mark", streamSid, mark: { name } }));
+          } catch {
+            clearTimeout(deadline);
+            pendingMarks.delete(name);
+            resolve();
+          }
+        };
+        if (localMs > 0) setTimeout(arm, localMs);
+        else arm();
+      });
+      return { confirmed, waitedMs: Date.now() - startedAt };
     },
     close(): void {
       clearInterval(pacer);

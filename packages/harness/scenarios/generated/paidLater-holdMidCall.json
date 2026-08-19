@@ -1,0 +1,168 @@
+{
+  "id": "paidLater-holdMidCall",
+  "description": "plumbing / paidLater / holdMidCall",
+  "envelope": {
+    "version": 2,
+    "brief": {
+      "to": "+15555550142",
+      "persona": "I am booking a service visit for a home water softener.",
+      "objective": "Book a plumbing technician to inspect and fix a leaking pipe under the kitchen sink.",
+      "facts": [
+        "The kitchen sink drain pipe has a steady leak causing pooling inside the cabinet.",
+        "The service address is 742 Evergreen Terrace.",
+        "The contact name is Alex Mercer and phone number is 555-0143."
+      ],
+      "preferences": [
+        "Prefers any available morning slot.",
+        "Wants confirmation sent via text message if asked."
+      ]
+    },
+    "policy": {
+      "principalName": "Jordan Rivera",
+      "identity": {
+        "style": "silent",
+        "recipientName": "the service department"
+      },
+      "disclosure": {
+        "honestIfAsked": true,
+        "volunteer": false
+      },
+      "scope": {
+        "lock": true,
+        "adjacent": [
+          "You may also arrange service for the drinking-water filtration unit on the same visit if they raise it."
+        ]
+      },
+      "grounding": {
+        "antiInvention": false
+      },
+      "deferral": {
+        "enabled": true
+      },
+      "authority": {
+        "authorizedCommitments": [
+          "Book one service visit on any weekday within the next three weeks."
+        ],
+        "spend": {
+          "limit": 250,
+          "currency": "USD",
+          "basis": "for this visit, which will be invoiced afterwards rather than paid on the call"
+        }
+      },
+      "patience": {
+        "expectLookupPauses": true
+      },
+      "ivr": {
+        "goal": "the service department",
+        "menuHints": ["The main menu offers service on 1, billing on 2."]
+      },
+      "callback": {
+        "number": "+15555550142"
+      },
+      "wrapUp": {
+        "enabled": true
+      },
+      "voicemail": {
+        "onMachine": "hangUp"
+      }
+    },
+    "execution": {
+      "ivr": {
+        "maxPresses": 4,
+        "allowedDigits": "0123456789*#",
+        "onUnrecognized": "zeroOut"
+      },
+      "closure": {
+        "requireOutcomeBeforeEnd": true
+      },
+      "outcome": {
+        "fields": [
+          {
+            "name": "agreedAmount",
+            "description": "Total amount agreed in USD, or empty if nothing was agreed"
+          },
+          {
+            "name": "appointmentStart",
+            "description": "Start of the booked arrival window, e.g. 2026-08-25T08:00"
+          },
+          {
+            "name": "appointmentEnd",
+            "description": "End of the booked arrival window, e.g. 2026-08-25T12:00"
+          },
+          {
+            "name": "secondUnitIncluded",
+            "description": "yes or no \u2014 whether the drinking-water unit is included in the visit"
+          }
+        ]
+      },
+      "spendCeiling": {
+        "field": "agreedAmount",
+        "limit": 250
+      },
+      "limits": {
+        "maxDurationSeconds": 600,
+        "maxSilenceSeconds": 60
+      },
+      "turnDetection": {
+        "silenceMs": 1500
+      }
+    }
+  },
+  "params": {
+    "menu": [
+      {
+        "option": "service",
+        "digit": "1"
+      },
+      {
+        "option": "billing",
+        "digit": "2"
+      }
+    ],
+    "correctDigit": "1",
+    "quotedAmount": null,
+    "raisedTopic": null,
+    "adjacentIndex": null,
+    "offersAppointment": true,
+    "reachesSomeoneWhoCanAct": true
+  },
+  "script": [
+    {
+      "label": "IVR_Menu",
+      "text": "Thank you for calling Precision Plumbing. For service and scheduling, press 1. For billing inquiries, press 2."
+    },
+    {
+      "label": "Greeting",
+      "text": "Thank you for calling Precision Plumbing scheduling, this is Sarah. How can I help you today?",
+      "afterPress": "1"
+    },
+    {
+      "label": "Ask_Details",
+      "text": "I can help get a technician out to look at that leak. May I have your name and the service address, please?"
+    },
+    {
+      "label": "Hold_Check_Availability",
+      "text": "Thank you. Let me check the dispatch calendar for your area\u2014one moment while I look that up."
+    },
+    {
+      "label": "Offer_Window",
+      "text": "Thanks for your patience. I have an opening tomorrow between 8:00 AM and 11:00 AM. Does that arrival window work for you?"
+    },
+    {
+      "label": "Explain_Billing_Policy",
+      "text": "Great. Just to let you know, we do not quote pricing over the phone; the technician will evaluate the job on-site and an itemized invoice will be sent after the service is completed."
+    },
+    {
+      "label": "Ask_Phone_Number",
+      "text": "Could you provide the best callback number for the technician to reach you when they are on their way?"
+    },
+    {
+      "label": "Confirmation_Close",
+      "text": "You are all scheduled for tomorrow between 8:00 AM and 11:00 AM. Thanks for calling Precision Plumbing, and have a great day!"
+    },
+    {
+      "label": "Closing Confirmation",
+      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+    }
+  ]
+}
