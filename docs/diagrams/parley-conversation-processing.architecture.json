@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Parley Conversation Processing",
+    "output": "parley-conversation-processing.html",
+    "quality_profile": "showcase",
+    "locale": "en",
+    "viewBox": [1300, 510],
+    "repository": {
+      "url": "https://github.com/h6y3/parley",
+      "provider": "github",
+      "revision": "53b643b81f3f454e8c65dfda3b14cf68077b017f"
+    },
+    "views": [
+      {
+        "id": "call-setup",
+        "label": "Call setup",
+        "focus": ["caller", "server", "policy", "pending", "session"],
+        "note": "POST /call composes guardrails, builds the session, and registers it under CallSid."
+      },
+      {
+        "id": "speech-loop",
+        "label": "Speech loop",
+        "focus": ["twilio", "audio", "gemini", "twilio-provider", "gemini-provider"],
+        "note": "Both speech directions cross the same resampling bridge between carrier and model."
+      },
+      {
+        "id": "barge-in",
+        "label": "Barge-in",
+        "focus": ["gemini", "audio", "twilio"],
+        "note": "Interruption clears the bridge buffer and tells Twilio to stop playback."
+      }
+    ]
+  },
+  "components": [
+    { "id": "caller", "type": "external", "label": "Consumer", "sublabel": "CLI · your app", "pos": [40, 100], "size": [150, 60] },
+    { "id": "server", "type": "backend", "label": "@parley/server", "sublabel": "daemon · HTTP + WS", "pos": [300, 100], "size": [180, 64], "sources": [{ "path": "packages/server/src/server.ts", "label": "routes" }] },
+    { "id": "policy", "type": "security", "label": "@parley/policy", "sublabel": "guardrail composition", "pos": [580, 100], "size": [160, 64], "sources": [{ "path": "packages/policy/src/compose.ts", "label": "composePolicy" }] },
+    { "id": "pending", "type": "database", "label": "pendingSessions", "sublabel": "Map<CallSid, CallSession>", "pos": [60, 190], "size": [180, 52], "sources": [{ "path": "packages/server/src/pending-sessions.ts", "label": "registry" }] },
+    { "id": "session", "type": "backend", "label": "CallSession", "sublabel": "@parley/core orchestrator", "tag": "attach before connect", "pos": [520, 240], "size": [200, 76], "sources": [{ "path": "packages/core/src/call-session.ts", "line": 49, "end_line": 130, "label": "orchestration" }] },
+    { "id": "twilio-provider", "type": "backend", "label": "@parley/telephony-twilio", "sublabel": "TwiML · media WS · pacer", "tag": "20 ms · 160 B frames", "pos": [60, 250], "size": [200, 70], "sources": [{ "path": "packages/telephony-twilio/src/twilio-telephony-provider.ts", "label": "provider" }] },
+    { "id": "gemini-provider", "type": "backend", "label": "@parley/realtime-gemini", "sublabel": "ai.live.connect", "tag": "AUDIO modality", "pos": [1000, 240], "size": [200, 70], "sources": [{ "path": "packages/realtime-gemini/src/gemini-realtime-provider.ts", "label": "provider" }] },
+    { "id": "twilio", "type": "cloud", "label": "Twilio", "sublabel": "PSTN carrier · callee phone", "pos": [260, 400], "size": [170, 64] },
+    { "id": "audio", "type": "backend", "label": "@parley/audio", "sublabel": "μ-law ⟷ PCM bridge", "tag": "8k→16k · ÷3 decimation", "pos": [560, 400], "size": [200, 70], "sources": [{ "path": "packages/audio/src/resample.ts", "label": "resampling" }] },
+    { "id": "gemini", "type": "external", "label": "Gemini Live", "sublabel": "realtime model session", "pos": [1000, 400], "size": [200, 64], "brand": "google-gemini" }
+  ],
+  "connections": [
+    { "id": "caller-to-server", "from": "caller", "to": "server", "label": "POST /call", "variant": "emphasis", "labelAt": [245, 146] },
+    { "id": "server-to-policy", "from": "server", "to": "policy", "label": "guardrails", "labelAt": [530, 146] },
+    { "id": "server-to-pending", "from": "server", "to": "pending", "label": "set(CallSid, session)", "fromSide": "bottom", "toSide": "top", "labelAt": [300, 213] },
+    { "id": "policy-to-session", "from": "policy", "to": "session", "label": "inject guardrails", "fromSide": "bottom", "toSide": "top", "labelAt": [720, 205] },
+    { "id": "server-to-session", "from": "server", "to": "session", "label": "originate() · attach(callId, socket)", "fromSide": "bottom", "labelAt": [475, 216] },
+    { "id": "twilio-to-server", "from": "twilio", "to": "server", "label": "answer webhook + media WS", "variant": "dashed", "fromSide": "left", "toSide": "top", "via": [[20, 432], [20, 60], [390, 60]], "labelAt": [190, 78] },
+    { "id": "session-to-twilio-provider", "from": "session", "to": "twilio-provider", "label": "attachMediaStream", "labelAt": [390, 280] },
+    { "id": "session-to-gemini-provider", "from": "session", "to": "gemini-provider", "label": "connect + opening trigger", "labelAt": [860, 280] },
+    { "id": "twilio-provider-to-twilio", "from": "twilio-provider", "to": "twilio", "label": "REST + media frames", "fromSide": "bottom", "toSide": "top", "labelAt": [252, 372] },
+    { "id": "gemini-provider-to-gemini", "from": "gemini-provider", "to": "gemini", "label": "send_realtime_input", "fromSide": "bottom", "toSide": "top", "labelAt": [1168, 360] },
+    { "id": "speech-in-up", "from": "twilio", "to": "audio", "label": "8 kHz μ-law in", "labelAt": [495, 492] },
+    { "id": "speech-out-down", "from": "audio", "to": "twilio", "label": "μ-law out · 20 ms pacer", "labelAt": [495, 380] },
+    { "id": "speech-in-model", "from": "audio", "to": "gemini", "label": "16 kHz PCM", "labelAt": [880, 380] },
+    { "id": "speech-out-model", "from": "gemini", "to": "audio", "label": "24 kHz PCM", "labelAt": [880, 492] },
+    { "id": "barge-in", "from": "gemini", "to": "audio", "label": "onInterrupted · clear", "variant": "dashed", "labelAt": [880, 350] }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Call setup",
+      "items": [
+        "POST /call validates the destination against the callable-number allowlist, fail closed",
+        "CallSid correlates origination, the answer webhook, and the media WS",
+        "Media socket attaches before realtime.connect() so the start frame is never dropped"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Conversation loop",
+      "items": [
+        "Caller speech: 8 kHz μ-law → 16 kHz PCM → Gemini",
+        "Model speech: 24 kHz PCM → ÷3 averaging decimation → 8 kHz μ-law",
+        "Twilio drops faster-than-real-time audio, so a 20 ms frame pacer drains output"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Guardrails",
+      "items": [
+        "Policy guardrails composed upstream of CallSession",
+        "systemInstruction renders persona → rules → guardrails, exactly once",
+        "Brief never re-enters the call as a conversational turn"
+      ]
+    }
+  ]
+}
