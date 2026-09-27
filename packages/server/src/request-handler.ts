@@ -2,8 +2,10 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import {
   CallSession,
   type AudioCodec,
+  type FrameConverter,
   type RealtimeProvider,
-  type TelephonyProvider
+  type TelephonyProvider,
+  type TranscriptionProvider
 } from "@parley/core";
 import { parseCallEnvelope, composePolicy } from "@parley/policy";
 import type { NumberAllowlist, HostAllowlist } from "./allowlist.js";
@@ -40,6 +42,31 @@ export interface ServerDeps {
    * or absent at runtime means the daemon refuses to dial for anyone — see
    * `authorizeCall`. */
   callToken: string | undefined;
+  /** The listening plane, matching the shape `CallSessionParams.transcription`
+   * already takes. Optional because meeting support is optional — a
+   * deployment with no transcription provider configured can still place
+   * ordinary calls. What it must NOT do is let a meeting envelope through
+   * when this is absent: without it, `beginNotetaking()` throws AFTER
+   * consent is granted (`CallSession` gates that at the tool-call boundary,
+   * not at intake), which means the agent has told a room "I will take
+   * notes now" and then silently takes none, still live on the speaking
+   * plane. `handleCall` refuses the request instead — see the check right
+   * after envelope parsing. */
+  transcription?: { provider: TranscriptionProvider; convert: FrameConverter };
+  /** Whether anything is wired to RECEIVE a finished meeting.
+   *
+   * The listening plane and the artifact sink are two independent pieces of
+   * configuration, and a daemon can hold exactly one of them. With
+   * `DEEPGRAM_API_KEY` set and `PARLEY_CALL_RECORDS_PATH` unset, the meeting
+   * was accepted, the bridge dialled, consent obtained on the record and notes
+   * taken for hours — and no transcript, no record and no hook ever existed,
+   * with nothing logging that. The room was told its words were being noted;
+   * they went nowhere.
+   *
+   * So the 503 covers BOTH halves. `createParleyServer` derives this from
+   * `onCallCompleted`, which is the thing that turns a finished call into the
+   * files a reader consumes: no hook, no artifacts, no meeting. */
+  meetingArtifactsConfigured: boolean;
 }
 
 function json(status: number, value: unknown): HttpResponse {
@@ -111,6 +138,32 @@ async function handleCall(req: HttpRequest, deps: ServerDeps): Promise<HttpRespo
   } catch {
     return json(400, { error: "invalid call envelope" });
   }
+  // Fail CLOSED, before the call is placed. Discovering the missing plane
+  // after consent is granted is the failure this exists to prevent: the
+  // agent has told the room it will take notes, the gate has authorized
+  // begin_notetaking, and only THEN does CallSession learn there is nowhere
+  // to send the audio — silently taking no notes while still live on the
+  // speaking plane. Refusing here costs a caller one rejected request; the
+  // alternative costs a room its honesty about being recorded.
+  if (envelope.execution?.meeting !== undefined) {
+    if (!deps.transcription) {
+      return json(503, {
+        error:
+          "meeting calls require a transcription plane, which this daemon does not have configured"
+      });
+    }
+    // The other half of the same promise. A meeting whose artifacts have
+    // nowhere to go is a meeting nobody can read, and the room was told
+    // otherwise — refusing costs one rejected request, and the alternative
+    // costs a meeting.
+    if (!deps.meetingArtifactsConfigured) {
+      return json(503, {
+        error:
+          "meeting calls require somewhere to write the transcript and record, which this " +
+          "daemon does not have configured"
+      });
+    }
+  }
   const { brief } = envelope;
   // Dual wire shape: a typed `policy` is composed here; already-composed raw
   // `guardrails[]` are passed straight through. `@parley/policy` remains a
@@ -123,6 +176,12 @@ async function handleCall(req: HttpRequest, deps: ServerDeps): Promise<HttpRespo
       : envelope.guardrails;
   if (!deps.numberAllowlist.permits(brief.to)) {
     return json(403, { error: "number not permitted" });
+  }
+  if (brief.operation) {
+    const reservation = deps.pending.reserveOperation(brief.operation);
+    if (reservation !== "reserved") {
+      return json(409, { error: `operation ${reservation}` });
+    }
   }
   const session = new CallSession({
     brief,
@@ -141,18 +200,21 @@ async function handleCall(req: HttpRequest, deps: ServerDeps): Promise<HttpRespo
     // writes no call record (records are written on a clean end), so without
     // this the only evidence anywhere is a caller saying it went dead.
     onDiagnostic: (message) => console.error(`[call] ${message}`),
-    ...(envelope.execution ? { execution: envelope.execution } : {})
+    ...(envelope.execution ? { execution: envelope.execution } : {}),
+    ...(deps.transcription ? { transcription: deps.transcription } : {})
   });
   let result;
   try {
     result = await session.originate();
   } catch {
+    if (brief.operation) deps.pending.releaseOperation(brief.operation);
     return json(502, { error: "origination error" });
   }
   if (result.status === "failed" || !result.providerCallId) {
+    if (brief.operation) deps.pending.releaseOperation(brief.operation);
     return json(502, { error: "origination failed" });
   }
-  deps.pending.set(result.providerCallId, session);
+  deps.pending.set(result.providerCallId, session, brief.operation);
   return json(202, { callId: result.providerCallId });
 }
 
@@ -200,10 +262,15 @@ function handleStatus(req: HttpRequest, deps: ServerDeps): HttpResponse {
   const denied = verifyTwilioRequest(req, deps);
   if (denied) return denied;
   const params = new URLSearchParams(req.rawBody);
-  const session = deps.pending.get(params.get("CallSid") ?? "");
+  const callId = params.get("CallSid") ?? "";
+  const callStatus = params.get("CallStatus");
+  const session = deps.pending.get(callId);
   const answeredBy = mapAnsweredBy(params.get("AnsweredBy"));
-  if (session && params.get("CallStatus") === "answered") {
+  if (session && callStatus === "answered") {
     session.noteLifecycleEvent({ type: "answered", ...(answeredBy ? { answeredBy } : {}) });
+  }
+  if (["busy", "canceled", "completed", "failed", "no-answer"].includes(callStatus ?? "")) {
+    deps.pending.deleteIfUnconnected(callId);
   }
   return { status: 204, headers: {}, body: "" };
 }

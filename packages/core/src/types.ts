@@ -23,10 +23,40 @@ export interface WebSocketLike {
   close(): void;
 }
 
+export interface AudioEncoding {
+  codec: "mulaw" | "pcm";
+  sampleRate: number;
+}
+
+export const MULAW_8K: AudioEncoding = Object.freeze({ codec: "mulaw", sampleRate: 8000 });
+export const PCM_16K: AudioEncoding = Object.freeze({ codec: "pcm", sampleRate: 16000 });
+export const PCM_24K: AudioEncoding = Object.freeze({ codec: "pcm", sampleRate: 24000 });
+
+export function encodingEquals(a: AudioEncoding, b: AudioEncoding): boolean {
+  return a.codec === b.codec && a.sampleRate === b.sampleRate;
+}
+
+export function formatEncoding(e: AudioEncoding): string {
+  return `${e.codec}@${e.sampleRate}`;
+}
+
 export interface AudioFrame {
-  encoding: "mulaw8k" | "pcm16k" | "pcm24k";
+  encoding: AudioEncoding;
   data: Buffer;
 }
+
+/** Which audio stream a frame arrived on.
+ *
+ * A PSTN carrier delivers ONE mixed stream and passes MIXED_SOURCE. A native
+ * meeting API delivers one stream per participant and populates
+ * `participantId`. The parameter exists now because adding it later would
+ * break the single callback every audio sink hangs off. */
+export interface AudioSource {
+  streamId: string;
+  participantId?: string;
+}
+
+export const MIXED_SOURCE: AudioSource = Object.freeze({ streamId: "mixed" });
 
 /** Two-way audio bridge between the telephony carrier's encoding and the
  * realtime model's (design spec §3, §4.5). Implemented by @parley/audio and
@@ -50,6 +80,13 @@ export type CallLifecycleEvent =
    * answering-machine detection. Without it, whether a machine picked up is
    * something the model has to infer from a few hundred milliseconds of audio. */
   | { type: "answered"; answeredBy?: "human" | "machine" | "fax" | "unknown" }
+  /** Connected, but held before the conversation — a bridge waiting room.
+   * A PSTN carrier cannot report this; a native meeting API can. */
+  | { type: "waiting" }
+  /** Admitted to the conversation. Twilio synthesises this from `start`. */
+  | { type: "admitted" }
+  | { type: "participant"; participantId: string; action: "joined" | "left" }
+  | { type: "removed"; by: "host" | "unknown" }
   | { type: "completed"; durationSeconds: number }
   | { type: "failed"; reason: string };
 
@@ -61,6 +98,25 @@ export interface OriginateParams {
   /** Carrier-side answering-machine detection. Opt-in: it costs answer latency
    * and a per-call fee on EVERY call, machine-answered or not. */
   machineDetection?: "Enable" | "DetectMessageEnd";
+  /** Carrier-side DTMF, played by the carrier itself once the call is
+   * answered — Twilio's `SendDigits` parameter of `POST /Calls`. Out-of-band:
+   * it is set before any media stream exists and never touches the codec's
+   * in-band tone generator (`AudioCodec.dtmfTones`) at all.
+   *
+   * For deterministic entry into a bridge whose prompts are known in advance
+   * (a conference ID and passcode, said in a fixed order at a fixed pace), as
+   * distinct from the model's in-band `press_digits` tool (see
+   * `CallExecution.ivr` in execution.ts), which exists for menus the model
+   * must listen to and react to live. Both are legitimate; they serve
+   * different callees — a scripted bridge entry has no menu to listen for,
+   * and a live IVR has no fixed script to play.
+   *
+   * SECRET-SHAPED: this typically carries a bridge passcode. It must never
+   * appear in a log line, a diagnostic message, a thrown error, or a call
+   * record — see `redactSecrets` (`./redaction.ts`), which matches this key
+   * name, and `TwilioTelephonyProvider.originate`'s validation, whose thrown
+   * errors describe the violated rule without echoing the value. */
+  sendDigits?: string;
 }
 
 export interface OriginateResult {
@@ -87,7 +143,7 @@ export interface WebhookVerificationRequest {
 export interface AttachMediaStreamParams {
   callId: string;
   socket: WebSocketLike; // the inbound media-stream connection from the carrier
-  onInboundAudio: (frame: AudioFrame) => void;
+  onInboundAudio: (frame: AudioFrame, source: AudioSource) => void;
   onCallEvent: (event: CallLifecycleEvent) => void;
 }
 
@@ -132,7 +188,10 @@ export interface TelephonyProvider {
      existed and Twilio's implementation posted replacement TwiML to the live
      call, which redirected it off the media stream and hung up on the callee.
      There is no non-destructive REST way to do this on a streaming call, and
-     no need for one. */
+     no need for one. `OriginateParams.sendDigits` above is not this method
+     back under a different name: it is read once, inside `originate`, before
+     any call — let alone any media stream — exists, so there is nothing for
+     it to redirect or tear down. */
   /** Terminate an active call. */
   hangup(callId: string, reason?: string): Promise<void>;
 }
@@ -143,15 +202,39 @@ export interface TurnDetectionConfig {
   silenceDurationMs?: number;
 }
 
-export interface TranscriptEvent {
-  speaker: "caller" | "model";
-  /** An incremental DELTA of the current turn's transcript, not a full
-   * utterance. A provider emits one event per fragment and closes a turn with
-   * an `isFinal: true` event (which may carry empty `text`). To reconstruct an
-   * utterance, concatenate consecutive same-speaker events (no separator) up to
-   * and including `isFinal` — see @parley/harness `aggregateTranscript`. */
+export type SpeakerRole = "caller" | "model" | "participant";
+
+export interface TranscriptWord {
   text: string;
-  /** Marks the final event of the current speaker's turn. */
+  startMs: number;
+  endMs: number;
+  confidence?: number;
+}
+
+export interface TranscriptEvent {
+  /** `caller` = the far end of a two-party call. `participant` = a human on a
+   * multi-party meeting line, attributed or not. `model` = us. */
+  speaker: SpeakerRole;
+  /** Opaque, stable within a session. ABSENT means unattributed, which is the
+   * only value slice A ever produces. */
+  speakerId?: string;
+  /** Present only when `speakerId` was inferred rather than known. */
+  speakerConfidence?: number;
+  speakerSource?: "channel" | "roster" | "diarization";
+  /** Milliseconds since the session's declared t0. Required on the meeting
+   * path: without it a gap has no coordinate system to be placed in. */
+  startMs?: number;
+  endMs?: number;
+  /** Segment identity. Two events sharing a `segmentId` are two revisions of
+   * ONE segment — the later REPLACES the earlier. Absent means the historic
+   * append-only delta contract, which is what @parley/realtime-gemini emits.
+   * Deepgram-style providers emit growing prefixes and MUST set this, or the
+   * aggregator concatenates them into "thethe quickthe quick brown". */
+  segmentId?: string;
+  words?: readonly TranscriptWord[];
+  text: string;
+  /** Marks the final event of the current speaker's turn (or, with
+   * `segmentId`, the final revision of that segment). */
   isFinal: boolean;
 }
 
@@ -189,6 +272,17 @@ export interface RealtimeConnectParams {
   systemInstruction: string;
   responseModality: "audio";
   voice?: string;
+  /** How to tag the FAR END's transcript events at source. Absent (or
+   * `"caller"`) is the ordinary two-party call — unchanged from before this
+   * field existed. A meeting call passes `"participant"` so a human on the
+   * conference bridge is tagged correctly from the moment the provider emits
+   * the event, rather than the far end being labelled `"caller"` in
+   * production while everything downstream (a meeting's consent receipt
+   * included) expects `"participant"`. This is a source-side tag, not a
+   * rewrite: nothing downstream infers meeting-vs-call from context, and
+   * nothing patches a `"caller"` event into a `"participant"` one after the
+   * fact. */
+  speakerRole?: "caller" | "participant";
   turnDetection?: TurnDetectionConfig;
   /** Tools the model may call. Absent or empty means the session has NO tool
    * channel at all — byte-identical to Parley before tools existed. */

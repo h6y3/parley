@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { MEETING_OPENING_TRIGGER, OPENING_TRIGGER } from "@parley/core";
 import { runCallScenario, type ScenarioTraceEvent } from "../src/call-scenario-runner.js";
+import { callScenarioSchema } from "../src/call-scenario.js";
 import type { CallScenario, ScenarioTurn } from "../src/call-scenario.js";
 
 /** Fast timings. Every value here is a TIMEOUT — something that ends the run and
@@ -245,5 +247,152 @@ describe("an empty turn is still a completed turn", () => {
     );
     await run(s, fake.factory);
     expect(fake.sent.slice(1)).toEqual(["For service, press one.", "Service, this is Dave."]);
+  });
+});
+
+/**
+ * `routeToolCall` defaults `heard` and `modelTurnsCompleted` to empty, and
+ * with the defaults `ToolGate.authorizeNotetaking` refuses EVERY
+ * `begin_notetaking` regardless of what the room said — the same defect that
+ * refused every real call's handoff until `CallSession` started passing them.
+ * A scenario scored against a gate that can only ever refuse measures nothing
+ * about consent, which is what made the consent metamorphic pair pointless to
+ * run.
+ */
+describe("the consent gate sees what the scripted room actually said", () => {
+  const meeting = {
+    meeting: {
+      consent: {
+        phrase: "go ahead and take notes",
+        timeoutSeconds: 30,
+        onTimeout: "hangUp" as const
+      }
+    }
+  };
+
+  it("ADMITS begin_notetaking after the phrase has been delivered and a model turn has completed", async () => {
+    const { factory } = fakeLive((_text, n) =>
+      n === 1
+        ? [speak("Any objection to my taking notes?"), complete()]
+        : [toolCall("begin_notetaking", {}), complete()]
+    );
+    const result = await run(
+      scenario([{ label: "go-ahead", text: "Sure, go ahead and take notes." }], meeting),
+      factory
+    );
+    expect(result.toolCalls.map((c) => c.result)).toContain("ok");
+  });
+
+  it("REFUSES it when the phrase was never spoken — the gate, not the script, decides", async () => {
+    const { factory } = fakeLive((_text, n) =>
+      n === 1
+        ? [speak("Any objection to my taking notes?"), complete()]
+        : [toolCall("begin_notetaking", {}), complete()]
+    );
+    const result = await run(
+      scenario([{ label: "go-ahead", text: "Sure, that's fine with everyone." }], meeting),
+      factory
+    );
+    expect(result.toolCalls.map((c) => c.result)).toEqual([
+      "refused: the go-ahead phrase has not been spoken"
+    ]);
+  });
+});
+
+/** The runner bypasses `RealtimeProvider` and talks to the genai SDK directly
+ * (see the module doc), so the trigger choice `CallSession.attach` makes is one
+ * it has to make for itself. Left unmade, every meeting scenario — including
+ * one written to check the fix — would be run on the two-party trigger, and
+ * would reproduce the very silence that trigger caused on two live calls while
+ * reporting it as the model's own behavior. */
+describe("the opening trigger matches the shape of the envelope", () => {
+  const meeting = {
+    meeting: {
+      consent: {
+        phrase: "go ahead and take notes",
+        timeoutSeconds: 30,
+        onTimeout: "hangUp" as const
+      }
+    }
+  };
+
+  it("sends the meeting trigger when the envelope declares execution.meeting", async () => {
+    const fake = fakeLive(() => []);
+    await run(scenario([{ label: "room", text: "Let's get started." }], meeting), fake.factory);
+    expect(fake.sent[0]).toBe(MEETING_OPENING_TRIGGER);
+  });
+
+  it("still sends the generic trigger for an ordinary two-party call", async () => {
+    const fake = fakeLive(() => []);
+    await run(scenario([{ label: "menu", text: "For service, press one." }]), fake.factory);
+    expect(fake.sent[0]).toBe(OPENING_TRIGGER);
+  });
+});
+
+/** The runner's standing rule is that the script never advances on a timer, and
+ * `ScenarioTurn.unpromptedAfterMs` is the one exception — for lines that are
+ * not replies. A conference bridge's hold loop is the case: it plays on its own
+ * clock and is waiting for nobody. */
+describe("a line that is not a reply arrives on its own clock", () => {
+  const meeting = {
+    meeting: {
+      consent: {
+        phrase: "go ahead and take notes",
+        timeoutSeconds: 30,
+        onTimeout: "hangUp" as const
+      }
+    }
+  };
+
+  it("delivers an unprompted turn while the model has said nothing at all", async () => {
+    // The failure this exists for: an agent that correctly stays silent in a
+    // waiting room emits no `turnComplete`, so a script that only advances on
+    // model events never reaches the room going live. Three of five live runs
+    // ended `stalled` before the scenario had asked its question — and they did
+    // so on the round where the waiting-room instruction finally worked, so the
+    // measurement got worse exactly as the behaviour got better.
+    const fake = fakeLive(() => []);
+    const result = await run(
+      scenario(
+        [
+          { label: "hold", text: "Please wait for the host.", unpromptedAfterMs: 5 },
+          { label: "hold-again", text: "Still waiting for the host.", unpromptedAfterMs: 5 },
+          { label: "live", text: "Okay, everyone is here.", unpromptedAfterMs: 5 }
+        ],
+        meeting
+      ),
+      fake.factory
+    );
+    expect(result.turnsDelivered).toBe(3);
+    expect(fake.sent).toContain("Okay, everyone is here.");
+  });
+
+  it("sends each unprompted turn exactly once when model events land as well", async () => {
+    // The timer is armed for one turn at a time and cleared on delivery by any
+    // route. A stale one running on into the next turn would double-advance the
+    // script and put the room's answer before its own question.
+    const fake = fakeLive(() => [complete()]);
+    const result = await run(
+      scenario(
+        [
+          { label: "hold", text: "Please wait for the host.", unpromptedAfterMs: 40 },
+          { label: "live", text: "Okay, everyone is here.", unpromptedAfterMs: 40 }
+        ],
+        meeting
+      ),
+      fake.factory
+    );
+    expect(result.turnsDelivered).toBe(2);
+    expect(fake.sent.filter((t) => t === "Please wait for the host.")).toHaveLength(1);
+    expect(fake.sent.filter((t) => t === "Okay, everyone is here.")).toHaveLength(1);
+  });
+
+  it("refuses a turn that is both gated on a press and unprompted", () => {
+    expect(() =>
+      callScenarioSchema.parse({
+        ...scenario([{ label: "x", text: "y" }]),
+        script: [{ label: "x", text: "y", afterPress: "1", unpromptedAfterMs: 10 }]
+      })
+    ).toThrow(/cannot be both gated on a press and delivered unprompted/);
   });
 });

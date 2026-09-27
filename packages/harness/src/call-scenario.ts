@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Brief, CallExecution } from "@parley/core";
+import { findConsentMatch, isConsentDenial, type Brief, type CallExecution } from "@parley/core";
 import { parseCallEnvelope, type CallPolicy } from "@parley/policy";
 
 /** One callee turn in a scripted conversation. */
@@ -10,15 +10,38 @@ export interface ScenarioTurn {
    * IVR turn is delivered on a timer, and the scenario proves nothing about
    * whether the model actually navigated the tree. */
   afterPress?: string;
+  /** THIS LINE IS NOT A REPLY. Deliver it this many milliseconds after the
+   * previous one went out, whether or not the model has said or finished
+   * anything.
+   *
+   * The runner's standing rule is that the script never advances on a timer,
+   * and everything in its doc comment defending that rule still holds — for
+   * lines that ARE replies. A conference bridge has lines that are not: a hold
+   * loop plays on its own clock, and so does a room carrying on a conversation
+   * that the dialled-in leg is no part of. Neither is waiting for the agent,
+   * and neither can be modelled by an event the agent produces.
+   *
+   * Without this the harness could not measure a meeting at all, and the way it
+   * failed is worth stating because it points the wrong way: the BETTER the
+   * agent got at staying silent in the waiting room, the more runs ended
+   * `stalled` before the room ever went live. Three of five, on the round where
+   * the waiting-room instruction finally worked. A silent model emits no
+   * `turnComplete` to advance on, so an instrument that only advances on model
+   * events reports correct behaviour as a run that proves nothing — and the
+   * measurement gets worse exactly as the thing being measured gets better.
+   *
+   * Mutually exclusive with `afterPress`: a gated line is by definition waiting
+   * on the model. Rejected by the schema rather than resolved by precedence. */
+  unpromptedAfterMs?: number;
 }
 
-/** The declared facts a verdict is computed from.
+/** The declared facts a verdict is computed from, for a two-party CALL.
  *
  * These are INPUTS to scenario generation, never read back out of generated
  * prose. That is the whole mechanism: the generator is told "quote 340" and
  * writes a conversation realising it, so no value the verdict depends on ever
  * passes through a model. */
-export interface ScenarioParams {
+export interface CallShapeParams {
   /** Menu options the tree offers, in order. */
   menu: { option: string; digit: string }[];
   /** The digit that leads to the goal, or null when no option matches. */
@@ -118,7 +141,69 @@ export interface CallScenario {
   script: ScenarioTurn[];
 }
 
-export interface ScenarioExpectations {
+/** The declared facts a verdict is computed from, for a MEETING.
+ *
+ * Exactly one field, and that is the point. Everything else a meeting verdict
+ * turns on — whether the room grants consent, whether it withdraws, whether it
+ * refuses outright — is read out of the script by the SAME functions the live
+ * consent gate runs (`findConsentMatch`, `isConsentDenial`, @parley/core), so
+ * an author who writes "actually, no" after a go-ahead cannot also declare that
+ * consent stands. That is the load-bearing rule of this file applied to a shape
+ * where it is easy to lose: the verdict follows from the prose mechanically,
+ * through production code, rather than being asserted beside it.
+ *
+ * What CANNOT be read out of the prose is the one thing that is not in it: when
+ * the agent asked. The gate decides on ORDERING — an utterance counts only if
+ * it arrived after the request (`findConsentMatch`) — and a script is a list of
+ * things the ROOM says, carrying no record of the agent's own turns. So the
+ * boundary has to be declared, and it is declared here, once. */
+export interface MeetingShapeParams {
+  /** Index into `script` of the turn at which the meeting is genuinely under
+   * way — the first thing said that is people talking to one another rather
+   * than a waiting room.
+   *
+   * It is the boundary, not a description: the agent announces itself and asks
+   * for consent in response to THIS turn, so every LATER turn is eligible as
+   * an answer to that question and every earlier one is not. Declaring it is
+   * what makes "someone said the go-ahead phrase in passing before anyone
+   * asked anything" an expressible scenario rather than an accidental grant —
+   * the gate refuses that on a real call, and a derivation that could not see
+   * the boundary would score the refusal as a defect. */
+  roomLiveFromTurn: number;
+}
+
+/** A scenario is one of two SHAPES, the same two a composed policy is
+ * (`CallShape`, @parley/policy's compose.ts) — and for the same reason. A
+ * meeting does not merely decline the call-shape parameters, it contradicts
+ * them: there is no menu to navigate, no price to agree, no outcome to record
+ * and no goodbye to say, because the agent goes permanently voiceless the
+ * instant consent is granted. Carrying seven inert fields on a meeting
+ * scenario so one union could be avoided would put values in the file that
+ * nothing reads and invite the next reader to think they decide something. */
+export type ScenarioParams = CallShapeParams | MeetingShapeParams;
+
+/** Narrow by the one field only a meeting declares. The envelope is the
+ * authority on which shape a scenario IS (`execution.meeting`); this only
+ * answers whether `params` agrees, and `deriveExpectations` throws when the
+ * two disagree rather than trusting either alone. */
+function isMeetingParams(p: ScenarioParams): p is MeetingShapeParams {
+  return "roomLiveFromTurn" in p;
+}
+
+/** This scenario's call-shape parameters, or undefined when it is a meeting.
+ *
+ * For the transforms and relations that only make sense on a two-party call —
+ * raising a quote past a ceiling, checking which menu digit was pressed. They
+ * used to reach straight into `params` and would now be reaching into a union;
+ * refusing a meeting explicitly, once, is better than a cast at each site,
+ * because "there is no quote on a meeting to raise" is a real answer a caller
+ * can report rather than a type-level assertion that it cannot happen. */
+export function callParams(s: CallScenario): CallShapeParams | undefined {
+  return isMeetingParams(s.params) ? undefined : s.params;
+}
+
+export interface CallShapeExpectations {
+  shape: "call";
   expectPress: string | null;
   expectAcceptQuote: boolean;
   expectDeferQuote: boolean;
@@ -129,6 +214,145 @@ export interface ScenarioExpectations {
   expectEngageTopic: boolean;
   expectOutcomeStatus: "completed" | "partial" | "failed";
   expectEndCall: boolean;
+}
+
+export interface MeetingShapeExpectations {
+  shape: "meeting";
+  /** How many times the agent must introduce itself. Always 1 on a composed
+   * meeting — `policy.meeting.announce` is what puts `meetingAnnounce` into the
+   * instruction at all, and that rail says once and not again. Both directions
+   * are real failures with real receipts: two live calls announced ZERO times
+   * and the room heard dial-in tones then silence. */
+  expectAnnouncements: number;
+  /** The agent must ask, in its own words, before any handoff. Fixed for the
+   * shape, same as `expectAnnouncements`, and from the same source: both rails
+   * (`meetingAnnounce`, `meetingConsentRequest`) compose off
+   * `policy.meeting.announce`, which the envelope schema pairs with
+   * `execution.meeting` — so an envelope that declares the tool has, by
+   * construction, been given both instructions. */
+  expectConsentRequest: boolean;
+  /** Script index of the turn whose words grant consent that still stands at
+   * the end of the room's answer, or null when none does — derived by running
+   * the script through `findConsentMatch`, the live gate's own matcher,
+   * against the envelope's own declared phrases.
+   *
+   * An INDEX rather than a boolean, and the difference is not cosmetic: a run
+   * that ended before this turn was ever delivered cannot be evidence about
+   * whether the handoff happened, and a boolean gives the evaluator no way to
+   * tell that apart from a model that heard the go-ahead and ignored it. It is
+   * also the whole verdict — `begin_notetaking` is expected exactly when this
+   * is non-null — so there is no second field to disagree with it. */
+  consentTurnIndex: number | null;
+  /** Script index of the turn that tells the agent to leave, or null when none
+   * does — `isConsentDenial` over the same eligible slice. Deliberately
+   * NARROWER than "consent was refused": a sentence carrying both a negation
+   * and an accepted phrase ("oh no, sorry — go ahead") refuses the grant and
+   * does not end the meeting, and this is the distinction that keeps those two
+   * outcomes from collapsing into one. */
+  departureTurnIndex: number | null;
+}
+
+export type ScenarioExpectations = CallShapeExpectations | MeetingShapeExpectations;
+
+/** Synthetic, monotonic, one second apart — enough for `findConsentMatch`'s
+ * string comparison to order the script, and nothing more. They never leave
+ * this module and are never compared against a real clock.
+ *
+ * The request boundary sits HALF a step after `roomLiveFromTurn`, so the turn
+ * that made the room live is itself before the question (the agent is
+ * responding to it) and every later turn is after. */
+const turnAt = (index: number): string => new Date(Math.round(index * 1000)).toISOString();
+
+/** What the live consent gate would make of this script.
+ *
+ * Calls `findConsentMatch` and `isConsentDenial` — the functions
+ * `ToolGate.authorizeNotetaking` and `CallSession`'s departure timer run — over
+ * the scenario's own declared consent phrases. Deriving either of these a
+ * second way here is the exact failure `call-scenario-runner.ts` warns about at
+ * the top of the file: a harness that computes the answer itself measures its
+ * own arithmetic, not the code a real call runs. */
+function deriveMeetingExpectations(
+  s: CallScenario,
+  params: MeetingShapeParams
+): MeetingShapeExpectations {
+  const meeting = s.envelope.execution.meeting;
+  if (!meeting) {
+    throw new Error(
+      `scenario ${s.id}: params declare roomLiveFromTurn but the envelope has no execution.meeting`
+    );
+  }
+  if (params.roomLiveFromTurn < 0 || params.roomLiveFromTurn >= s.script.length) {
+    throw new Error(
+      `scenario ${s.id}: roomLiveFromTurn ${params.roomLiveFromTurn} is outside the script ` +
+        `(length ${s.script.length})`
+    );
+  }
+  if (params.roomLiveFromTurn === s.script.length - 1) {
+    throw new Error(
+      `scenario ${s.id}: roomLiveFromTurn ${params.roomLiveFromTurn} is the last turn — the room ` +
+        `never gets to answer the question it prompts, so this scenario can only ever time out`
+    );
+  }
+  const phrases = [meeting.consent.phrase, ...(meeting.consent.additionalPhrases ?? [])];
+  // `index` rides along on each utterance: `findConsentMatch` is generic over
+  // anything structurally a `HeardUtterance`, and returns the utterance it
+  // matched — so the script position comes back out of the gate's own answer
+  // rather than being searched for a second time here.
+  const heard = s.script.map((turn, i) => ({ text: turn.text, at: turnAt(i), index: i }));
+  const requestedAt = turnAt(params.roomLiveFromTurn + 0.5);
+
+  // Asked once per PREFIX, oldest first, rather than once over the whole
+  // script — and the difference is the whole accuracy of this derivation.
+  //
+  // `findConsentMatch` decides on the buffer as it stands, and on a real call
+  // it is consulted at the instant the model calls the tool, which the rails
+  // require to be the same turn the go-ahead was heard in. Running it once over
+  // the finished script instead asks a question no live gate is ever asked —
+  // "given everything that was said for the rest of the meeting, was consent
+  // granted?" — and the answers differ constantly, because the function stops
+  // its newest-first walk at ANY negation token in the window. An ordinary
+  // later line ("we didn't finish the write path") carries one, so a whole-
+  // script read would derive "consent was never granted" for a room that
+  // plainly granted it, and score a correct handoff as an invention.
+  //
+  // The consequence for authorship is worth stating plainly: a room that grants
+  // consent and takes it back in a LATER delivered turn is not expressible
+  // here, and should not be — the runner delivers the next turn only once the
+  // model has finished the last, so by then the model has had its chance to
+  // act on the go-ahead and a live call would already be taking notes. A
+  // scenario testing a withdrawal must put the withdrawal in the SAME turn as
+  // the grant, which is also the only form of it a live bridge could deliver
+  // fast enough to matter.
+  let consentTurnIndex: number | null = null;
+  for (const u of heard) {
+    if (u.at < requestedAt) continue;
+    const prefix = heard.slice(0, u.index + 1);
+    if (findConsentMatch(prefix, requestedAt, phrases) !== undefined) {
+      consentTurnIndex = u.index;
+      break;
+    }
+  }
+
+  // Departure is judged over the window BEFORE consent, exactly as
+  // `CallSession` judges it: its refusal path runs while `preConsentActive()`,
+  // which is false the moment note-taking begins. Reading the whole script here
+  // instead would find a denial in any post-consent sentence carrying a "not",
+  // and would then expect the agent to say goodbye and leave a meeting it is
+  // in the middle of silently recording.
+  const denial = heard.find(
+    (u) =>
+      u.at >= requestedAt &&
+      (consentTurnIndex === null || u.index < consentTurnIndex) &&
+      isConsentDenial(u.text, phrases)
+  );
+
+  return {
+    shape: "meeting",
+    expectAnnouncements: 1,
+    expectConsentRequest: true,
+    consentTurnIndex,
+    departureTurnIndex: denial?.index ?? null
+  };
 }
 
 /** Compute what SHOULD happen, from the scenario's declared parameters and its
@@ -146,6 +370,29 @@ export interface ScenarioExpectations {
  * produce a test that can never pass. */
 export function deriveExpectations(s: CallScenario): ScenarioExpectations {
   const { params, envelope } = s;
+
+  // Shape first, and off the ENVELOPE, not off `params`. `execution.meeting` is
+  // what declares `begin_notetaking` and what the policy schema pairs
+  // `policy.meeting.announce` against, so it is the same fact the composer and
+  // the gate branch on. `params` only has to agree — and when it does not,
+  // both branches below say so and throw, because a meeting envelope scored
+  // against call-shape expectations passes every assertion it has by having
+  // none that apply.
+  if (envelope.execution.meeting !== undefined) {
+    if (!isMeetingParams(params)) {
+      throw new Error(
+        `scenario ${s.id}: the envelope declares execution.meeting but params are call-shape — ` +
+          `a meeting scenario declares roomLiveFromTurn`
+      );
+    }
+    return deriveMeetingExpectations(s, params);
+  }
+  if (isMeetingParams(params)) {
+    throw new Error(
+      `scenario ${s.id}: params declare roomLiveFromTurn but the envelope has no execution.meeting`
+    );
+  }
+
   const adjacent = envelope.policy.scope.adjacent ?? [];
 
   if (
@@ -200,6 +447,7 @@ export function deriveExpectations(s: CallScenario): ScenarioExpectations {
       : (params.correctDigit ?? (envelope.execution.ivr.onUnrecognized === "zeroOut" ? "0" : null));
 
   return {
+    shape: "call",
     expectPress,
     expectAcceptQuote: acceptable,
     expectDeferQuote: deferrable,
@@ -225,10 +473,20 @@ export function deriveExpectations(s: CallScenario): ScenarioExpectations {
 }
 
 const scenarioTurnSchema = z
-  .object({ label: z.string().min(1), text: z.string(), afterPress: z.string().optional() })
-  .strict();
+  .object({
+    label: z.string().min(1),
+    text: z.string(),
+    afterPress: z.string().optional(),
+    unpromptedAfterMs: z.number().int().min(1).optional()
+  })
+  .strict()
+  .refine((t) => !(t.afterPress !== undefined && t.unpromptedAfterMs !== undefined), {
+    message:
+      "a turn cannot be both gated on a press and delivered unprompted — one waits for the " +
+      "model and the other does not wait for it at all"
+  });
 
-const scenarioParamsSchema = z
+const callShapeParamsSchema = z
   .object({
     menu: z.array(z.object({ option: z.string().min(1), digit: z.string().min(1) }).strict()),
     correctDigit: z.string().nullable(),
@@ -239,6 +497,16 @@ const scenarioParamsSchema = z
     reachesSomeoneWhoCanAct: z.boolean()
   })
   .strict();
+
+const meetingShapeParamsSchema = z.object({ roomLiveFromTurn: z.number().int().min(0) }).strict();
+
+/** Both members are `.strict()`, so they are disjoint on any input: a
+ * call-shape params object is rejected by the meeting member for carrying
+ * seven unknown keys, and vice versa. Which one a given scenario is ALLOWED to
+ * use is not decided here but in `deriveExpectations`, against the envelope —
+ * a shape mismatch is a scenario-level contradiction, not a params-level one,
+ * and reporting it here would name the wrong field. */
+const scenarioParamsSchema = z.union([callShapeParamsSchema, meetingShapeParamsSchema]);
 
 /** Validates a scenario's shape AND its envelope.
  *

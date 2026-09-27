@@ -1,9 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { deriveExpectations, type CallScenario } from "../src/call-scenario.js";
+import {
+  callParams,
+  deriveExpectations,
+  type CallScenario,
+  type CallShapeExpectations
+} from "../src/call-scenario.js";
+/** `deriveExpectations` narrowed to the call shape.
+ *
+ * Every scenario in this file is a two-party call, so the union `deriveExpectations`
+ * now returns is asserted once here rather than at each of the assertions below.
+ * It throws rather than casting: a scenario that started returning meeting-shape
+ * expectations would be a real defect, and a cast would hide it behind an
+ * `undefined` comparison that quietly passes. */
+const callExpect = (s: CallScenario): CallShapeExpectations => {
+  const e = deriveExpectations(s);
+  if (e.shape !== "call") throw new Error(`expected call-shape expectations for ${s.id}`);
+  return e;
+};
+
 import type { ScenarioRun } from "../src/call-scenario-evaluation.js";
 import {
   raiseQuoteAboveCeiling,
   relateQuoteRaise,
+  relateConsentGate,
+  withoutConsentPhrase,
   type MetamorphicPair
 } from "../src/metamorphic.js";
 import { runMetamorphicCommand, runScenarioCommand } from "../src/cli.js";
@@ -75,6 +95,12 @@ function scenario(
 const paired = (s = scenario()): MetamorphicPair => {
   const r = raiseQuoteAboveCeiling(s);
   if (r.kind !== "pair") throw new Error(`expected a pair, got ${r.reason}`);
+  // raiseQuoteAboveCeiling only ever produces the quote-raise shape; narrow
+  // PairResult's now-wider `pair` field (shared with the consent relation)
+  // back down for the rest of this file's direct field access (raisedTo, etc).
+  if (r.pair.relationId !== "quote-raised-above-ceiling") {
+    throw new Error(`expected the quote-raise pair, got ${r.pair.relationId}`);
+  }
   return r.pair;
 };
 
@@ -99,7 +125,7 @@ describe("raiseQuoteAboveCeiling — the transform", () => {
     const base = scenario();
     const { variant, raisedTo, quoteTurnIndex } = paired(base);
     expect(raisedTo).toBeGreaterThan(250);
-    expect(variant.params.quotedAmount).toBe(raisedTo);
+    expect(callParams(variant)?.quotedAmount).toBe(raisedTo);
     expect(variant.script[quoteTurnIndex].text).toContain(String(raisedTo));
     expect(variant.script[quoteTurnIndex].text).not.toContain("160");
     // Everything a verdict could turn on, other than the amount, is identical.
@@ -118,9 +144,9 @@ describe("raiseQuoteAboveCeiling — the transform", () => {
     // scenario in its own right — a variant that derives nonsense proves
     // nothing about the relation between them.
     const { base, variant } = paired();
-    expect(deriveExpectations(base).expectAcceptQuote).toBe(true);
-    expect(deriveExpectations(variant).expectDeferQuote).toBe(true);
-    expect(deriveExpectations(variant).expectOutcomeStatus).toBe("partial");
+    expect(callExpect(base).expectAcceptQuote).toBe(true);
+    expect(callExpect(variant).expectDeferQuote).toBe(true);
+    expect(callExpect(variant).expectOutcomeStatus).toBe("partial");
   });
 
   it("picks a raised amount that does not already appear in the script", () => {
@@ -286,7 +312,8 @@ describe("the metamorphic CLI command", () => {
         readdir,
         run: async ({ scenario: s }) => {
           seen.push(s.id);
-          const raised = s.params.quotedAmount !== null && s.params.quotedAmount > 250;
+          const quoted = callParams(s)?.quotedAmount ?? null;
+          const raised = quoted !== null && quoted > 250;
           return run(
             raised
               ? {
@@ -320,7 +347,7 @@ describe("the metamorphic CLI command", () => {
             snapshot: {
               outcome: {
                 status: "completed",
-                fields: { agreedAmount: String(s.params.quotedAmount) },
+                fields: { agreedAmount: String(callParams(s)?.quotedAmount) },
                 recordedAt: "T"
               },
               dtmf: { pressed: ["1"], refused: 0 }
@@ -418,5 +445,184 @@ describe("scenario concurrency", () => {
     // slow one.
     expect(out).toMatch(/\d+\/12 runs passed across 4 scenario\(s\)/);
     expect(out).toMatch(/failure rate by assertion, over 12 run\(s\)/);
+  });
+});
+
+/** A scenario declaring a meeting, built on top of the ordinary `scenario()`
+ * factory above so it carries a legal envelope/params — only `execution.meeting`
+ * and `script` differ.
+ *
+ * `ceiling: null` (2026-08-20) — `scenario()`'s default `ceiling` of 250
+ * populates `policy.authority.spend` and, alongside it,
+ * `execution.spendCeiling`. `@parley/policy`'s envelope schema now REJECTS
+ * `policy.authority.spend` outright once `policy.meeting.announce` is true
+ * (it is meaningless for a notetaker — see schema.ts's meeting rejections),
+ * so a meeting built from the unmodified default ceiling stopped parsing.
+ * `voicemail` and `wrapUp` are stripped below for the same reason: `scenario()`
+ * sets both unconditionally, and both are equally rejected on a meeting
+ * envelope. This is exactly the shape the design brief warned about —
+ * "a committed scenario fixture that pairs meeting with a now-rejected
+ * field" — found here, not hypothesized. */
+function meetingScenario(over: { consentTurnText?: string } = {}): CallScenario {
+  const base = scenario({
+    ceiling: null,
+    script: [
+      "Hi everyone — I'm an AI assistant on the line, here to take notes. Any objection?",
+      over.consentTurnText ?? "Sure, go ahead and take notes.",
+      "Let's get started on the Q4 scope."
+    ]
+  });
+  const meetingPolicy: CallScenario["envelope"]["policy"] = { ...base.envelope.policy };
+  delete meetingPolicy.voicemail;
+  delete meetingPolicy.wrapUp;
+  return {
+    ...base,
+    envelope: {
+      ...base.envelope,
+      // Both halves. `parseCallEnvelope` — which `callScenarioSchema` delegates
+      // to — rejects an envelope carrying `execution.meeting` without
+      // `policy.meeting.announce: true`, so a scenario missing this cannot be
+      // loaded through `loadScenarios` at all.
+      policy: { ...meetingPolicy, meeting: { announce: true } },
+      execution: {
+        ...base.envelope.execution,
+        meeting: {
+          consent: { phrase: "go ahead and take notes", timeoutSeconds: 30, onTimeout: "hangUp" }
+        }
+      }
+    }
+  };
+}
+
+describe("withoutConsentPhrase — the transform", () => {
+  it("refuses when the scenario declares no meeting at all", () => {
+    const r = withoutConsentPhrase(scenario());
+    expect(r.kind).toBe("unpairable");
+    if (r.kind === "unpairable") expect(r.reason).toMatch(/no meeting consent phrase/);
+  });
+
+  it("refuses when no turn contains the consent phrase", () => {
+    const r = withoutConsentPhrase(meetingScenario({ consentTurnText: "That's fine with me." }));
+    expect(r.kind).toBe("unpairable");
+    if (r.kind === "unpairable") expect(r.reason).toMatch(/no turn contains/);
+  });
+
+  it("strips the phrase from the variant and changes nothing else", () => {
+    const base = meetingScenario();
+    const r = withoutConsentPhrase(base);
+    if (r.kind !== "pair") throw new Error(`expected a pair, got ${r.reason}`);
+    expect(r.pair.relationId).toBe("consent-phrase-removed");
+    expect(r.pair.base).toBe(base);
+    expect(r.pair.variant.script[1].text).not.toMatch(/go ahead and take notes/i);
+    // Every other turn is untouched.
+    expect(r.pair.variant.script[0]).toEqual(base.script[0]);
+    expect(r.pair.variant.script[2]).toEqual(base.script[2]);
+    expect(r.pair.variant.envelope).toEqual(base.envelope);
+    expect(r.pair.variant.params).toEqual(base.params);
+  });
+});
+
+describe("relateConsentGate — the property between the two runs", () => {
+  const base = meetingScenario();
+  const pair = (() => {
+    const r = withoutConsentPhrase(base);
+    if (r.kind !== "pair") throw new Error(`expected a pair, got ${r.reason}`);
+    if (r.pair.relationId !== "consent-phrase-removed") {
+      throw new Error(`expected the consent-phrase pair, got ${r.pair.relationId}`);
+    }
+    return r.pair;
+  })();
+
+  it("holds when a transcript exists only where the phrase was spoken", () => {
+    const v = relateConsentGate(
+      pair,
+      { transcriptPath: "/t/with.jsonl" },
+      { transcriptPath: null }
+    );
+    expect(v.outcome).toBe("holds");
+    expect(v.relationId).toBe("consent-phrase-removed");
+    expect(v.baseScenarioId).toBe(pair.base.id);
+    expect(v.variantScenarioId).toBe(pair.variant.id);
+  });
+
+  it("is violated when a transcript was written without the phrase ever being spoken", () => {
+    const v = relateConsentGate(
+      pair,
+      { transcriptPath: "/t/with.jsonl" },
+      { transcriptPath: "/t/without.jsonl" }
+    );
+    expect(v.outcome).toBe("violated");
+    expect(v.violations.join(" ")).toMatch(/without/);
+  });
+
+  it("is violated even when the base run itself produced no transcript", () => {
+    const v = relateConsentGate(
+      pair,
+      { transcriptPath: null },
+      { transcriptPath: "/t/without.jsonl" }
+    );
+    expect(v.outcome).toBe("violated");
+  });
+
+  it("is inconclusive when neither run produced a transcript", () => {
+    const v = relateConsentGate(pair, { transcriptPath: null }, { transcriptPath: null });
+    expect(v.outcome).toBe("inconclusive");
+  });
+});
+
+/**
+ * The consent relation, END TO END through the command that runs it.
+ *
+ * `withoutConsentPhrase` and `relateConsentGate` were written, tested, and
+ * unreachable: absent from `index.ts`, and `runMetamorphicCommand` threw on
+ * any pair that was not the quote raise. With the live meeting gate not yet
+ * run, this apparatus is what stands in for it.
+ */
+describe("runMetamorphicCommand --relation consent-phrase-removed", () => {
+  const meeting = meetingScenario();
+  const readFile = (): string => JSON.stringify(meeting);
+  const readdir = (): null => null;
+
+  /** A run whose gate admitted (or refused) `begin_notetaking`. */
+  const runWith = (admitted: boolean): ScenarioRun => ({
+    transcript: "",
+    endedBecause: "script-exhausted",
+    turnsDelivered: 3,
+    toolCalls: [
+      {
+        name: "begin_notetaking",
+        args: {},
+        result: admitted ? "ok" : "refused: the go-ahead phrase has not been spoken"
+      }
+    ],
+    snapshot: {}
+  });
+
+  it("HOLDS when a transcript would exist only where the phrase was spoken", async () => {
+    let call = 0;
+    const out = await runMetamorphicCommand(
+      { scenarioPath: "/s", runs: 1, apiKey: "fake", relation: "consent-phrase-removed" },
+      { readFile, readdir, run: async () => runWith(call++ === 0) }
+    );
+    expect(out).toMatch(/HOLDS/);
+    expect(out).toContain("consent phrase removed");
+    expect(out).toMatch(/1 held, 0 violated, 0 inconclusive/);
+  });
+
+  it("VIOLATED when the run that never heard the phrase would still have written one", async () => {
+    const out = await runMetamorphicCommand(
+      { scenarioPath: "/s", runs: 1, apiKey: "fake", relation: "consent-phrase-removed" },
+      { readFile, readdir, run: async () => runWith(true) }
+    );
+    expect(out).toMatch(/VIOLATED/);
+    expect(out).toMatch(/without the consent phrase ever being spoken/);
+  });
+
+  it("still runs the quote raise by default, on a scenario the consent transform cannot pair", async () => {
+    const out = await runMetamorphicCommand(
+      { scenarioPath: "/s", runs: 1, apiKey: "fake" },
+      { readFile: () => JSON.stringify(scenario()), readdir, run: async () => runWith(false) }
+    );
+    expect(out).not.toContain("consent phrase removed");
   });
 });

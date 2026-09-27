@@ -37,25 +37,28 @@ pnpm lint          # eslint .
 pnpm format        # prettier --write .
 ```
 
-CI runs `lint`, `typecheck`, `test`, and `build` — it does not check formatting (`eslint.config.js`
-uses `eslint-config-prettier`, which disables ESLint's formatting rules in favor of Prettier). Run
-`pnpm format` yourself before committing; nothing in CI will catch unformatted code for you. If a
-check fails, fix it locally and re-run rather than pushing and waiting on CI.
+CI runs `build`, scenario validation, `lint`, `format:check`, `typecheck`, `test`, and the
+Playwright-backed browser suite. Run `pnpm format` before committing; use `pnpm format:check` when
+you only want to verify the tree. If a check fails, fix it locally and re-run rather than pushing
+and waiting on CI.
 
 ## Monorepo layout
 
-Parley is a pnpm workspace with eight packages under `packages/`:
+Parley is a pnpm workspace with eleven packages under `packages/`:
 
-| Package                                                 | Responsibility                                                                                                                                                                              |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`@parley/core`](packages/core)                         | `TelephonyProvider`/`RealtimeProvider` interfaces, the `CallSession` orchestrator, the pure-caller-content `Brief` type, generic `systemInstruction` rendering, redaction. Policy-agnostic. |
-| [`@parley/policy`](packages/policy)                     | The `CallPolicy`/`CallEnvelope` schema (zod-validated), guardrail composition (`composePolicy`), and the `principalCall`/`representedCall`/`transactionalCall` presets.                     |
-| [`@parley/audio`](packages/audio)                       | μ-law ⟷ PCM resampling, frame handling, barge-in buffer management. Usable standalone.                                                                                                      |
-| [`@parley/telephony-twilio`](packages/telephony-twilio) | `TelephonyProvider` implementation for Twilio: origination, TwiML, fail-closed signature verification, Media Streams, DTMF, hangup.                                                         |
-| [`@parley/realtime-gemini`](packages/realtime-gemini)   | `RealtimeProvider` implementation for Gemini Live via the official `@google/genai` SDK.                                                                                                     |
-| [`@parley/server`](packages/server)                     | The daemon: `POST /call`, the Twilio answer webhook, and the media-stream WebSocket endpoint.                                                                                               |
-| [`@parley/cli`](packages/cli)                           | The unified `parley` binary: `serve`, `call`, `harness …`, `doctor`.                                                                                                                        |
-| [`@parley/harness`](packages/harness)                   | Offline prompt/reliability tester: text and audio turns, multi-turn derail scripts, N-run reliability reporting, payload preview.                                                           |
+| Package                                                             | Responsibility                                                                                                                                                                              |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`@parley/core`](packages/core)                                     | `TelephonyProvider`/`RealtimeProvider` interfaces, the `CallSession` orchestrator, the pure-caller-content `Brief` type, generic `systemInstruction` rendering, redaction. Policy-agnostic. |
+| [`@parley/policy`](packages/policy)                                 | The `CallPolicy`/`CallEnvelope` schema (zod-validated), guardrail composition (`composePolicy`), and the `principalCall`/`representedCall`/`transactionalCall` presets.                     |
+| [`@parley/audio`](packages/audio)                                   | μ-law ⟷ PCM resampling, frame handling, barge-in buffer management. Usable standalone.                                                                                                      |
+| [`@parley/telephony-twilio`](packages/telephony-twilio)             | `TelephonyProvider` implementation for Twilio: origination, TwiML, fail-closed signature verification, Media Streams, DTMF, hangup.                                                         |
+| [`@parley/realtime-gemini`](packages/realtime-gemini)               | `RealtimeProvider` implementation for Gemini Live via the official `@google/genai` SDK.                                                                                                     |
+| [`@parley/realtime-deepgram`](packages/realtime-deepgram)           | Experimental speaking-plane `RealtimeProvider` for Deepgram.                                                                                                                                |
+| [`@parley/transcription-deepgram`](packages/transcription-deepgram) | Transcript-only listening-plane provider used by meeting calls.                                                                                                                             |
+| [`@parley/server`](packages/server)                                 | The daemon: `POST /call`, the Twilio answer webhook, and the media-stream WebSocket endpoint.                                                                                               |
+| [`@parley/cli`](packages/cli)                                       | The unified `parley` binary: `serve`, `call`, `harness …`, `doctor`.                                                                                                                        |
+| [`@parley/harness`](packages/harness)                               | Offline prompt/reliability tester: text and audio turns, multi-turn derail scripts, N-run reliability reporting, payload preview.                                                           |
+| [`@parley/meeting-browser`](packages/meeting-browser)               | Browser-driven meeting transport with consent disclosure, system-audio capture, captions, and attribution.                                                                                  |
 
 `examples/` holds reference material (an agent-integration script, an illustrative Express
 embedding, and sample call envelopes) — not packages in the pnpm workspace.

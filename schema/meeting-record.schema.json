@@ -1,0 +1,274 @@
+{
+  "$ref": "#/definitions/MeetingRecord",
+  "definitions": {
+    "MeetingRecord": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "const": 1,
+          "description": "This document's own schema version — always the literal 1. Not a value a producer chooses; present so a future non-additive redesign of MeetingRecord can identify itself."
+        },
+        "kind": {
+          "type": "string",
+          "const": "meeting",
+          "description": "Always the literal \"meeting\" — the discriminator a reader needs because the same post-call hook also fires for ordinary, non-meeting calls."
+        },
+        "callId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "An opaque identifier for this call or meeting, stable for its lifetime. WHO assigned it depends on transport, and a consumer joining these to anything external must read that field first. \"telephony\": the provider's own identifier for the call (its call SID), assigned by the provider and not by Parley, so it joins against that provider's call logs. \"browser\": there is no telephony provider and no such log — Parley assigns the id itself when the meeting starts, and it will match no provider record anywhere. Treat its format as opaque on both; it is not parseable and nothing downstream should try."
+        },
+        "startedAt": {
+          "type": "string",
+          "description": "ISO-8601 UTC instant the call began. The origin every other timestamp in this record, including the consent receipt's own, is measured from."
+        },
+        "endedAt": {
+          "type": "string",
+          "description": "ISO-8601 UTC instant the call ended, captured at hangup teardown."
+        },
+        "durationSeconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Wall-clock length of the whole call, in seconds, start to end. Not the same span gapMs/coveredMs account for — see those two fields for why the numbers don't sum."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["completed", "consent_refused", "consent_timeout", "failed", "never_joined"],
+          "description": "The meeting's consent outcome, classified from whether a consent receipt exists, how the call ended, and modelTurnsCompleted (see classifyMeetingOutcome in commands.ts) — a different axis from endedReason below, which describes how the call itself ended, not what happened with consent. \"completed\": a consent receipt was obtained and notes were taken. \"consent_refused\": the room was reached and the agent completed at least one turn, but consent was never granted — a real no. \"consent_timeout\": the meeting's consent window expired with no decision either way. \"failed\": the call ended in an error unrelated to consent. \"never_joined\": the agent never completed a single turn on this call — nothing was ever asked, so this is NOT a refusal and must not be read as one; it means the agent never got far enough to ask. That is the distinction that matters most: consent_refused is a statement about the room's wishes, never_joined is not a statement about the room at all."
+        },
+        "endedReason": {
+          "type": "string",
+          "enum": ["far_end", "duration_cap", "transcription_lost"],
+          "description": "How the underlying call/media connection itself ended — orthogonal to status above; do not infer one from the other, a failed or consent_timeout record still typically reads far_end here too. \"far_end\": the default/catch-all — covers the remote party disconnecting, the agent itself ending the call, an error, or the consent window timing out; it is not a promise the other party hung up. \"duration_cap\": Parley's own meeting duration or silence cap was reached and the call was ended by Parley, not either party. \"transcription_lost\": the transcriber connection dropped mid-meeting and could not be restored, so the call was ended deliberately rather than continue billing a call that was no longer taking notes."
+        },
+        "transport": {
+          "type": "string",
+          "enum": ["telephony", "browser"],
+          "description": "How this meeting was conducted, and the field the consent rules below key on. \"telephony\": a dialled call, answered by the far end, where consent is obtained by the agent asking the room aloud and hearing a go-ahead — such a record carries a consentReceipt recording that exchange. \"browser\": the agent was admitted to a conference under a caller-supplied display name, and that name is the disclosure to the room; there is no spoken exchange, so there is no consentReceipt to carry and its absence on a completed browser meeting is correct rather than missing data. ABSENT means telephony: this field is additive, and every record written before it existed was on that transport. Do not read an absent transport as unknown."
+        },
+        "joinOutcome": {
+          "type": "string",
+          "enum": [
+            "admitted",
+            "waiting_room_timeout",
+            "denied",
+            "not_started",
+            "auth_required",
+            "join_error"
+          ],
+          "description": "How the attempt to JOIN ended — a third axis, orthogonal to both status and endedReason. Present only on transports that must be admitted to a meeting (a browser joining a conference); absent on a dialled call, which is answered rather than admitted. Optional and additive: every record written before this field existed remains valid. A failed join emits a record with status \"never_joined\" and the outcome that explains it, so an attempt that never became a meeting is still evidence rather than silence. What each value claims: \"admitted\", the transport was in the meeting. \"denied\", \"not_started\" and \"auth_required\" each mean a terminal pre-join screen was recognised and read, so each is a statement about the room or the account. \"waiting_room_timeout\" means admission could not be CONFIRMED before the deadline — a statement about the producer's own evidence rather than about the room, and on a browser transport it also covers a successful join whose in-call markers went unrecognised (a non-English meeting UI does this). \"join_error\" means the attempt threw and no verdict was ever reached at all: a page that would not open, a locator that timed out, a device whose state could not be established. Do not read it as a refusal, and do not read a waiting_room_timeout as one either. \"join_error\" is additive (v1.x) and was split out of waiting_room_timeout, which had come to mean three different things at once. This field means ONLY what its name says and carries no implication about consent: read transport for that. It was briefly used as a stand-in for \"consent is not spoken here\", which made a telephony record that carried one for any reason silently exempt from the consent rules below."
+        },
+        "consentReceipt": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "requestedAt": {
+                  "type": "string",
+                  "description": "ISO-8601 UTC instant the agent asked for consent."
+                },
+                "grantedAt": {
+                  "type": "string",
+                  "description": "ISO-8601 UTC instant consent was matched — at or after requestedAt."
+                },
+                "phrase": {
+                  "type": "string",
+                  "description": "The consent phrase this call's execution configured as canonical — not necessarily the exact words the room said; see matchedPhrase for what was actually spoken."
+                },
+                "matchedPhrase": {
+                  "type": "string",
+                  "description": "Which declared phrase the room actually said, when it differs from phrase — the room may have used one of the meeting's configured additionalPhrases instead of the canonical one. Absent on a record written before multi-phrase support existed, even though consent was granted."
+                },
+                "utterances": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "speaker": {
+                        "type": "string",
+                        "description": "Who said this utterance: \"model\" for the agent, or the far end's speaker tag (\"participant\" on a meeting)."
+                      },
+                      "text": {
+                        "type": "string",
+                        "description": "The utterance's text, as transcribed."
+                      }
+                    },
+                    "required": ["speaker", "text"],
+                    "additionalProperties": true
+                  },
+                  "description": "The pre-consent exchange only, in time order — what was said before consent was matched. This is NOT the meeting itself: the meeting's own contents live in the file transcriptPath names, not here."
+                }
+              },
+              "required": ["requestedAt", "grantedAt", "phrase", "utterances"],
+              "additionalProperties": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null on any record whose consent was not obtained by speaking: every record whose status is not \"completed\", and every record on a transport with no spoken consent exchange (see transport above, and this schema's own allOf block, which is what enforces this). A completed meeting on a spoken-consent transport must carry the receipt that authorized it. Records how consent was obtained, not what was said afterward: utterances is only the pre-consent exchange, never a transcript of the meeting itself — the meeting's contents live in the file transcriptPath names. matchedPhrase, when present, is the phrase the room actually said and can differ from phrase, the record's own canonical phrase, when the room used an alternate configured phrase instead."
+        },
+        "transcriptPath": {
+          "type": ["string", "null"],
+          "description": "Filesystem path, on the machine that produced this record, to the meeting's transcript — a JSONL file: one header line, then \"utterance\" and \"gap\" rows interleaved in time order, with any untimed utterance appended last. Null whenever status is not \"completed\" (this schema's own invariant forbids naming a transcript without consent). A consumer must tolerate both null and a path that does not resolve from wherever it runs — this names where the file was written, not a live, portable reference. That file has its own committed schema, schema/transcript.schema.json, which is the authority on its rows; the sketch above is orientation, not a substitute."
+        },
+        "brief": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "description": "What the meeting is called, exactly as the caller supplied it — for example a calendar invite's own subject line. Absent when the caller supplied none; do not invent one to fill the gap, and do not read absence as evidence the meeting itself had no name, only that this record was never told one."
+            },
+            "topic": {
+              "type": "string",
+              "minLength": 1,
+              "description": "One line on what the meeting is actually about, distinct from title — a meeting titled \"Weekly Sync\" still needs this to say what today's sync covers. Absent when the caller supplied none."
+            },
+            "role": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The principal's own role in this meeting — for example \"interviewer\" or \"vendor\" — so a readout can be written from the correct participant's point of view instead of guessing it from the transcript. Describes the principal Parley is calling on behalf of, never the calling agent itself, which has no role in the meeting beyond taking notes. Absent when the caller supplied none."
+            },
+            "track": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "description": "A LIST of directives naming how the readout should be shaped for this meeting — for example which template or level of detail to use. A list, not one string: a meeting can belong to several tracks at once, and the caller supplies as many as apply, in no significant order. ADVISORY ONLY: a suggestion to the downstream readout consumer, never an instruction Parley itself reads, enforces, or acts on in any way. Absent when the caller supplied none; an empty list is rejected rather than stored, so a present track is always non-empty."
+            }
+          },
+          "additionalProperties": true,
+          "description": "Context for the meeting's downstream readout (a separate repository, \"A2\", that turns a finished meeting into a written summary) — sourced from the call's own execution.meeting.brief and never read by anything inside Parley itself. Omitted entirely, never emitted as an object of empty strings, when the caller's execution.meeting.brief supplied nothing at all; a record written before this field existed, or for a meeting whose caller supplied no brief, both simply omit this key."
+        },
+        "gapMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Milliseconds, within the listening window only, during which no audio reached the transcriber — a hole in the transcript, not in the call. The window's start depends on the transport: on \"telephony\" it opens the instant consent was granted, and on \"browser\" (which has no spoken consent exchange) the instant audio capture actually began. gapMs + coveredMs spans only that window, not the whole call: it is normally LESS than durationSeconds*1000, because the time before the window opened (ringing, the greeting and the consent ask on a phone call; the waiting room and switching captions on in a browser meeting) is outside it and counted by neither field — that is not a bug to reconcile. A gapMs that is large relative to coveredMs means a real stretch of what the room said may be missing from the transcript, even though a transcript file exists. One case is worth naming: a browser meeting whose capture never started at all reports coveredMs 0 and the WHOLE meeting as gapMs, because there was no window and nothing was recorded — never gapMs 0, which a reader would take for no holes."
+        },
+        "coveredMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Milliseconds of audio actually delivered to the transcriber during the listening window (see gapMs for when that window opens on each transport) — what the transcript can vouch for. See gapMs for the accounting relationship too: together they cover only that window, not durationSeconds, so their sum is normally less than durationSeconds*1000 and that shortfall is expected, not missing data. It measures the DELIVERY window rather than summing frame durations, so a capture device that stayed open while producing silence is counted here as covered; what this field rules out is audio that never reached the transcriber at all, not a room that said nothing."
+        },
+        "answeredBy": {
+          "type": "string",
+          "enum": ["human", "machine", "fax", "unknown"],
+          "description": "Who or what picked up, from the underlying call's own answering-machine detection — passed through verbatim, and independent of the meeting's consent outcome above (a machine-answered dial-in can still be a valid \"completed\" meeting record by this field alone). Absent when the underlying call never determined it."
+        },
+        "outcome": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["completed", "partial", "failed"],
+              "description": "The model's own claim about how the call went — a separate value from this record's own top-level status; do not conflate the two."
+            },
+            "fields": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Only the field names the call's execution declared for record_outcome; any other key is dropped before this record is built."
+            },
+            "recordedAt": {
+              "type": "string",
+              "description": "ISO-8601 UTC instant the model recorded this outcome via record_outcome."
+            }
+          },
+          "required": ["status", "fields", "recordedAt"],
+          "additionalProperties": true,
+          "description": "A structured result the model recorded via the call's record_outcome tool — a general call-completion mechanism most meaningful on an ordinary (non-meeting) call, passed through here verbatim and usually absent on a meeting record."
+        },
+        "dtmf": {
+          "type": "object",
+          "properties": {
+            "pressed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Digits pressed, in order."
+            },
+            "refused": {
+              "type": "number",
+              "description": "How many press attempts were refused (press budget exhausted or a digit not permitted)."
+            }
+          },
+          "required": ["pressed", "refused"],
+          "additionalProperties": true,
+          "description": "Digits pressed while dialing into the meeting's bridge, and how many were refused — passed through verbatim from the underlying call record. Meaningfully populated on a meeting specifically because reaching one means dialing into a bridge (a meeting's press budget is double an ordinary call's), where an ordinary call's dtmf activity would otherwise go unrecorded here."
+        },
+        "modelTurnsCompleted": {
+          "type": "number",
+          "minimum": 0,
+          "description": "How many of the model's turns completed on this call, per the realtime provider's own turn-complete signal — INCLUDING a turn whose only action was a tool call, with no speech at all. A nonzero value proves the agent got a turn, not that the room ever heard it speak: a real call has ended with this at 1 or more because the model called a tool on its very first turn, before saying a word. This is the count classifyMeetingOutcome (commands.ts) uses to tell never_joined (0 turns) apart from consent_refused (1+ turns). Optional: a record written before this field existed has none to report."
+        }
+      },
+      "required": [
+        "version",
+        "kind",
+        "callId",
+        "startedAt",
+        "endedAt",
+        "durationSeconds",
+        "status",
+        "endedReason",
+        "consentReceipt",
+        "transcriptPath",
+        "gapMs",
+        "coveredMs"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "description": "a call that did not obtain consent must not name a transcript — status is the consent outcome, so any value other than \"completed\" means notes were never authorized and there is therefore no transcript to name. A record that names one anyway is either mis-classified or points at a file it had no right to write, and a consumer must not follow the path either way.",
+          "if": {
+            "not": {
+              "properties": {
+                "status": {
+                  "const": "completed"
+                }
+              },
+              "required": ["status"]
+            }
+          },
+          "then": {
+            "properties": {
+              "transcriptPath": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "description": "a completed meeting on a transport whose consent is spoken must carry the receipt that authorized it — a transport whose consent is spoken (currently telephony, and any record with no transport field, which was written before any other transport existed) obtains consent by asking the room aloud, so a completed meeting on one owes the receipt of that exchange. A browser meeting is admitted under a caller-supplied display name, which is the disclosure itself, and has no spoken exchange to receipt — so it is exempt because of what its transport IS, not because of which other fields it happens to carry.",
+          "if": {
+            "properties": {
+              "status": {
+                "const": "completed"
+              },
+              "transport": {
+                "enum": ["telephony"]
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "consentReceipt": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

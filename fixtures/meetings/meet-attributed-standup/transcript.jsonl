@@ -1,0 +1,5 @@
+{"v":1,"callId":"MEETfixture0001","startedAt":"2026-08-27T16:00:00.000Z","diarized":false,"timeBase":"msSinceStartedAt"}
+{"type":"utterance","speaker":"participant","speakerId":"Jordan Rivera","speakerSource":"roster","speakerConfidence":0.6,"startMs":12000,"endMs":18000,"text":"Let's start with the ingest rewrite. The review is done, so that unblocks the next ticket."}
+{"type":"utterance","speaker":"participant","speakerId":"Alex Mercer","speakerSource":"roster","speakerConfidence":0.6,"startMs":31000,"endMs":38000,"text":"Then I'll take the migration this week. I want the backfill finished before the freeze."}
+{"type":"utterance","speaker":"participant","speakerId":null,"speakerSource":null,"speakerConfidence":null,"startMs":58000,"endMs":63000,"text":"One thing we still have not settled is whether the freeze date moves."}
+{"type":"utterance","speaker":"participant","speakerId":"Jordan Rivera","speakerSource":"roster","speakerConfidence":0.6,"startMs":74000,"endMs":81000,"text":"Let's decide the freeze on Thursday once we see where the backfill lands."}

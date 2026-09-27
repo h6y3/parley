@@ -9,7 +9,18 @@ export default tseslint.config(
     // is not part of any package's tsconfig project, so type-aware lint's
     // projectService can't parse it. Excluded rather than wired into the
     // tsconfig, since it is intentionally not meant to be run again.
-    ignores: ["**/dist/**", "**/node_modules/**", "examples/**", "packages/policy/scripts/**"]
+    //
+    // .superpowers/ is git-ignored scratch (see .gitignore) — ad hoc driver
+    // scripts an operator writes for a one-off session, e.g. the CDP scripts
+    // used to drive a real Meet capture. Never committed, never part of any
+    // package's tsconfig project, so lint has nothing to check them against.
+    ignores: [
+      "**/dist/**",
+      "**/node_modules/**",
+      "examples/**",
+      "packages/policy/scripts/**",
+      ".superpowers/**"
+    ]
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

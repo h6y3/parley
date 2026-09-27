@@ -4,5 +4,6 @@ export { muLawDecode, muLawDecodeSample, muLawEncode, muLawEncodeSample } from "
 export { pcm16BufferToSamples, samplesToPcm16Buffer } from "./pcm.js";
 export { decimateBy3, resampleLinear } from "./resample.js";
 export { createAudioCodec } from "./codec.js";
+export { convert } from "./convert.js";
 export { dtmfMuLaw, DTMF_FREQUENCIES } from "./dtmf.js";
 export type { DtmfOptions } from "./dtmf.js";

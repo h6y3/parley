@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "kind": "meeting",
+  "callId": "MEETfixture0001",
+  "startedAt": "2026-08-27T16:00:00.000Z",
+  "endedAt": "2026-08-27T16:04:00.000Z",
+  "durationSeconds": 240,
+  "status": "completed",
+  "endedReason": "far_end",
+  "transport": "browser",
+  "joinOutcome": "admitted",
+  "consentReceipt": null,
+  "transcriptPath": "fixtures/meetings/meet-attributed-standup/transcript.jsonl",
+  "gapMs": 8000,
+  "coveredMs": 232000,
+  "modelTurnsCompleted": 0
+}

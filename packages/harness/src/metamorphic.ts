@@ -1,4 +1,4 @@
-import type { CallScenario } from "./call-scenario.js";
+import { callParams, type CallScenario } from "./call-scenario.js";
 import type { ScenarioRun } from "./call-scenario-evaluation.js";
 
 /**
@@ -36,8 +36,18 @@ export interface MetamorphicPair {
   quoteTurnIndex: number;
 }
 
+/** The counterpart pair for the consent-gate relation: identical scenario,
+ * the consent phrase stripped out of every turn that spoke it. No
+ * ceiling/amount fields — unlike the quote-raise pair above, this relation
+ * has nothing to do with price. */
+export interface ConsentPhrasePair {
+  relationId: "consent-phrase-removed";
+  base: CallScenario;
+  variant: CallScenario;
+}
+
 export type PairResult =
-  | { kind: "pair"; pair: MetamorphicPair }
+  | { kind: "pair"; pair: MetamorphicPair | ConsentPhrasePair }
   | { kind: "unpairable"; scenarioId: string; reason: string };
 
 const unpairable = (s: CallScenario, reason: string): PairResult => ({
@@ -58,10 +68,17 @@ const digitsOf = (n: number): RegExp => new RegExp(`\\b${n}\\b`, "g");
  * and a scenario that lies about itself poisons every verdict derived from it.
  */
 export function raiseQuoteAboveCeiling(base: CallScenario): PairResult {
+  const params = callParams(base);
+  // A meeting never negotiates: the envelope schema rejects `authority.spend`
+  // outright on one, so the ceiling check below would refuse it anyway — but it
+  // would refuse it with the wrong reason, and a wrong reason in a report is
+  // worse than no report.
+  if (params === undefined)
+    return unpairable(base, "a meeting quotes nothing, so there is no price to raise");
   const ceiling = base.envelope.policy.authority.spend?.limit;
   if (ceiling === undefined)
     return unpairable(base, "no spend ceiling, so there is no line for a quote to cross");
-  const quoted = base.params.quotedAmount;
+  const quoted = params.quotedAmount;
   if (quoted === null) return unpairable(base, "no amount is quoted on this call");
   if (quoted > ceiling)
     return unpairable(base, `the quote (${quoted}) is already above the ceiling (${ceiling})`);
@@ -124,7 +141,7 @@ export function raiseQuoteAboveCeiling(base: CallScenario): PairResult {
 export type RelationOutcome = "holds" | "violated" | "inconclusive";
 
 export interface RelationVerdict {
-  relationId: MetamorphicPair["relationId"];
+  relationId: MetamorphicPair["relationId"] | ConsentPhrasePair["relationId"];
   baseScenarioId: string;
   variantScenarioId: string;
   outcome: RelationOutcome;
@@ -189,15 +206,18 @@ export function relateQuoteRaise(
 
   const baseAmount = amount(baseRun);
   const variantAmount = amount(variantRun);
+  // Non-null by construction: `raiseQuoteAboveCeiling` is the only producer of
+  // a `MetamorphicPair` and refuses a meeting before building one.
+  const baseParams = callParams(pair.base);
   notes.push(
-    `base quoted ${pair.base.params.quotedAmount} recorded ${baseAmount ?? "none"}; ` +
+    `base quoted ${baseParams?.quotedAmount ?? "none"} recorded ${baseAmount ?? "none"}; ` +
       `variant quoted ${pair.raisedTo} recorded ${variantAmount ?? "none"} (ceiling ${pair.ceiling})`
   );
 
   // R1 — the flip. The relation this pair exists to test.
   if (baseAmount !== null && variantAmount !== null) {
     violations.push(
-      `raising the quote from ${pair.base.params.quotedAmount} to ${pair.raisedTo} should have removed the agreed ` +
+      `raising the quote from ${baseParams?.quotedAmount ?? "none"} to ${pair.raisedTo} should have removed the agreed ` +
         `amount, but the variant still recorded an amount (${variantAmount})`
     );
   }
@@ -223,7 +243,7 @@ export function relateQuoteRaise(
   // R4 — pure relation: the price must not change how the phone tree is
   // navigated. No absolute oracle is involved, only the two runs.
   const pressed = (run: ScenarioRun): string => (run.snapshot.dtmf?.pressed ?? []).join("");
-  const correct = pair.base.params.correctDigit;
+  const correct = baseParams?.correctDigit ?? null;
   if (
     correct !== null &&
     pressed(baseRun).includes(correct) &&
@@ -236,4 +256,77 @@ export function relateQuoteRaise(
   }
 
   return verdict(violations.length === 0 ? "holds" : "violated");
+}
+
+/** Escape a phrase for literal use inside a RegExp — every consent phrase is
+ * plain prose, never itself a pattern, so a character in it (a period, a
+ * question mark) must never be read as regex syntax. */
+function escapeForRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Build the counterpart run for the consent gate: identical script, the
+ * consent phrase removed from every turn that spoke it.
+ *
+ * Mirrors `raiseQuoteAboveCeiling` above: a relation needs no correct
+ * absolute answer, only a property between two runs. Here, the property is
+ * that a transcript exists in exactly one of them — checkable without
+ * knowing what the meeting was about, which is the whole point, because no
+ * fixture can assert what a good set of meeting notes is. */
+export function withoutConsentPhrase(base: CallScenario): PairResult {
+  const phrase = base.envelope.execution.meeting?.consent.phrase;
+  if (phrase === undefined) {
+    return unpairable(base, "scenario declares no meeting consent phrase");
+  }
+  const needle = new RegExp(escapeForRegExp(phrase), "gi");
+  const stripped = base.script.map((turn) => ({ ...turn, text: turn.text.replace(needle, "") }));
+  if (stripped.every((turn, i) => turn.text === base.script[i]?.text)) {
+    return unpairable(base, "no turn contains the consent phrase to remove");
+  }
+  const variant: CallScenario = {
+    ...base,
+    id: `${base.id}::without-consent-phrase`,
+    description: `${base.description} — the consent phrase removed from every turn that spoke it`,
+    script: stripped
+  };
+  return { kind: "pair", pair: { relationId: "consent-phrase-removed", base, variant } };
+}
+
+/** Judge the pair: whether a transcript was written for the run that never
+ * heard the go-ahead phrase.
+ *
+ * Takes the pair (for the scenario ids a `RelationVerdict` must carry) plus
+ * one witness per run — deliberately just `{ transcriptPath }`, not a full
+ * `ScenarioRun`: what a live meeting join produces is a `MeetingRecord`
+ * (`@parley/cli`), a different shape entirely from the scripted two-party
+ * `ScenarioRun` above, and this relation needs nothing else from either
+ * side. */
+export function relateConsentGate(
+  pair: ConsentPhrasePair,
+  withPhrase: { transcriptPath: string | null },
+  withoutPhrase: { transcriptPath: string | null }
+): RelationVerdict {
+  const violations: string[] = [];
+  const notes: string[] = [];
+  const verdict = (outcome: RelationOutcome): RelationVerdict => ({
+    relationId: pair.relationId,
+    baseScenarioId: pair.base.id,
+    variantScenarioId: pair.variant.id,
+    outcome,
+    violations,
+    notes
+  });
+
+  if (withPhrase.transcriptPath !== null && withoutPhrase.transcriptPath === null) {
+    notes.push("a transcript exists only where the phrase was spoken");
+    return verdict("holds");
+  }
+  if (withoutPhrase.transcriptPath !== null) {
+    violations.push(
+      "a transcript was written for the run without the consent phrase ever being spoken"
+    );
+    return verdict("violated");
+  }
+  notes.push("neither run produced a transcript");
+  return verdict("inconclusive");
 }

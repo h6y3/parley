@@ -129,4 +129,115 @@ describe("TwilioTelephonyProvider.originate — lifecycle wiring", () => {
       (await capturedOriginate({ machineDetection: "DetectMessageEnd" })).get("MachineDetection")
     ).toBe("DetectMessageEnd");
   });
+
+  it("omits SendDigits unless asked for", async () => {
+    expect((await capturedOriginate({})).get("SendDigits")).toBeNull();
+  });
+
+  it("sends SendDigits when asked for", async () => {
+    expect((await capturedOriginate({ sendDigits: "1234w5678#" })).get("SendDigits")).toBe(
+      "1234w5678#"
+    );
+  });
+});
+
+// SendDigits at origination (design: Twilio plays these itself, out-of-band,
+// after the call is answered — before any media stream or TwiML exists, and
+// so incapable of the redirect-a-live-call failure `hangup`'s doc comment
+// above describes for a provider-side sendDtmf). Deterministic entry into a
+// bridge whose prompts are known in advance, as distinct from the model's
+// in-band `press_digits`, which exists for menus the model must listen to and
+// react to live. This does not reverse that decision — it adds a parameter
+// to the ORIGINATION request, before the call is even dialled, not a
+// mid-call REST action against a live call.
+describe("TwilioTelephonyProvider.originate — SendDigits validation", () => {
+  function provider() {
+    return makeProvider(
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ sid: "CA999", status: "queued" }), { status: 201 })
+      ) as unknown as typeof fetch
+    );
+  }
+
+  it("accepts the full alphabet: 0-9, *, #, w, W", async () => {
+    await expect(
+      provider().originate({
+        to: "+1",
+        from: "+1",
+        answerWebhookUrl: "https://h/a",
+        sendDigits: "0123456789*#wW"
+      })
+    ).resolves.toBeDefined();
+  });
+
+  it("rejects an empty sendDigits before ever calling fetch", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const p = makeProvider(fetchImpl);
+    await expect(
+      p.originate({ to: "+1", from: "+1", answerWebhookUrl: "https://h/a", sendDigits: "" })
+    ).rejects.toThrow();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects a character outside the alphabet before ever calling fetch", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const p = makeProvider(fetchImpl);
+    await expect(
+      p.originate({
+        to: "+1",
+        from: "+1",
+        answerWebhookUrl: "https://h/a",
+        sendDigits: "1234x5678"
+      })
+    ).rejects.toThrow();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects sendDigits over the assumed 32-character ceiling before ever calling fetch", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const p = makeProvider(fetchImpl);
+    await expect(
+      p.originate({
+        to: "+1",
+        from: "+1",
+        answerWebhookUrl: "https://h/a",
+        sendDigits: "1".repeat(33)
+      })
+    ).rejects.toThrow();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("accepts sendDigits at exactly the 32-character ceiling", async () => {
+    await expect(
+      provider().originate({
+        to: "+1",
+        from: "+1",
+        answerWebhookUrl: "https://h/a",
+        sendDigits: "1".repeat(32)
+      })
+    ).resolves.toBeDefined();
+  });
+
+  // sendDigits typically carries a bridge passcode (design doc: "Treat it as
+  // a secret"). A thrown validation error is a surface this codebase does not
+  // otherwise guard with redaction — request-handler.ts's catch around
+  // parseCallEnvelope discards the error entirely, but nothing stops a FUTURE
+  // caller of this provider from logging a caught error's `.message` — so the
+  // message itself must never carry the value, not merely rely on nobody
+  // printing it.
+  it("does not echo the invalid value into the thrown error", async () => {
+    const p = makeProvider(vi.fn() as unknown as typeof fetch);
+    try {
+      await p.originate({
+        to: "+1",
+        from: "+1",
+        answerWebhookUrl: "https://h/a",
+        sendDigits: "9999secretpasscode9999"
+      });
+      expect.unreachable("expected originate to reject");
+    } catch (error) {
+      expect(String((error as Error).message)).not.toContain("secretpasscode");
+    }
+  });
 });

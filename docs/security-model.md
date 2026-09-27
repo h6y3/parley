@@ -121,7 +121,8 @@ before anything happens:
   model's ability to navigate;
 - `end_call` can be gated behind `record_outcome`, and that refusal is **one-shot** — a model
   that cannot produce an outcome is never trapped on a live, billing call;
-- `record_outcome` keeps only fields the envelope declared and silently drops the rest.
+- `record_outcome` requires a string value for every field the envelope declared, refuses an
+  incomplete map, and silently drops undeclared extras.
 
 None of these limits is reachable by anything said on the call. A callee who succeeds completely
 in persuading the model gets the declared budget and then refusals.
@@ -198,11 +199,11 @@ template itself stays tracked). `parley doctor` reports presence/absence of each
 
 `@parley/core` exports a redaction utility, `redactSecrets` (`packages/core/src/redaction.ts`),
 that deep-walks an arbitrary value and replaces any object value whose key looks
-secret-shaped (`apiKey`, `token`, `secret`, `password`, `authorization`, etc.) with `[redacted]`,
-plus a companion `redactPhoneNumber` that masks all but the last four digits of an E.164 number.
-Both are unit-tested and exported for any consumer that logs briefs, transcripts, or errors to
-apply before writing. **As built in this milestone, `@parley/server` itself does not emit any
-application log lines containing brief/transcript/secret content** — it has no logging
+secret-shaped (`apiKey`, `token`, `secret`, `password`, `authorization`, `sendDigits`, etc.) with
+`[redacted]`, plus a companion `redactPhoneNumber` that masks all but the last four digits of an
+E.164 number. Both are unit-tested and exported for any consumer that logs briefs, transcripts, or
+errors to apply before writing. **As built in this milestone, `@parley/server` itself does not emit
+any application log lines containing brief/transcript/secret content** — it has no logging
 statements beyond the CLI's own status/usage output (`parley daemon listening on :PORT`, the
 `doctor` presence report), neither of which touches a secret value. There is therefore nothing in
 the shipped daemon today that redaction would need to intercept; the redaction utilities exist
@@ -210,14 +211,32 @@ and are ready for any logging a consumer adds (or a future milestone wires into 
 itself), and the guarantee to rely on for now is the narrower one: **the daemon logs nothing
 containing a secret, because the daemon logs almost nothing at all.**
 
+**`execution.dial.sendDigits`** (carrier-side DTMF played at origination — see
+[`execution.dial`](configuration.md#executiondial--carrier-side-dtmf-at-origination) in the
+configuration guide) typically carries a bridge passcode and gets the same treatment as the
+secrets above, end to end: `redactSecrets`'s key-name pattern matches `sendDigits` specifically
+(narrower than a bare `digits`, so it does not over-match the unrelated `allowedDigits` config or
+the `press_digits` tool's own `digits` argument, neither of which is a secret); the one place a
+malformed value is rejected, `TwilioTelephonyProvider.originate`'s validation
+(`packages/telephony-twilio/src/twilio-telephony-provider.ts`), throws an error that names the
+violated rule and never echoes the value; and `request-handler-call.test.ts` and `provider.test.ts`
+both assert directly that a representative secret-shaped digit string never appears in a response
+body or a `console.error` call along the origination path.
+
 ## No call-audio recording by default
 
 Parley has no recording code path anywhere in `@parley/telephony-twilio` or `@parley/server` —
 there is no Twilio `<Record>` verb generated, no recording REST call, and no audio persisted to
-disk. `TranscriptEvent`s (text, from Gemini's `outputAudioTranscription`) are the only
-call-content artifact `CallSession` produces; raw audio is bridged in memory frame-by-frame and
-never written anywhere. Recording would be a deliberate, explicit addition a consumer would have
-to build, not a default this library ships with or a flag that flips it on.
+disk. `TranscriptEvent`s (text, from Gemini's `outputAudioTranscription`, or from a
+`TranscriptionProvider` on the meeting path) are the only call-content artifact `CallSession`
+produces; raw audio is bridged in memory frame-by-frame and never written anywhere. Recording
+would be a deliberate, explicit addition a consumer would have to build, not a default this
+library ships with or a flag that flips it on.
+
+This section is about audio, and the invariant it states — no waveform is ever written to disk —
+still holds without exception, meeting or not. It is not, on its own, the whole answer to whether
+recording-consent law is engaged: a meeting's transcript is call content too, and captured by a
+third party. See "Meeting notetaking — consent, not absence of capture" below.
 
 ## No global mutable state
 
@@ -261,12 +280,96 @@ assistant:
 - The B.O.T. Act narrowly targets bots used to _incentivize a commercial transaction with, or
   influence the vote of,_ the person being called. A scheduling, reservation, or logistics call
   placed on the operator's behalf is generally not that use case.
-- California's all-party-consent law governs **recording** a call, not merely disclosing that a
-  participant is an AI. Parley records no audio anywhere in `@parley/telephony-twilio` or
-  `@parley/server` (see "No call-audio recording by default" above) — the recording-consent
-  concern this posture would otherwise need to address is moot for Parley as built.
+- California's all-party-consent law (CIPA §632) governs **recording or eavesdropping upon** a
+  confidential communication. For an ordinary two-party call it is not engaged for the reason
+  given above under "No call-audio recording by default": Parley writes no audio, and produces no
+  other call-content artifact either, unless the call is a meeting. For a meeting, it _is_
+  engaged — not because anything is recorded, but because a text transcript is captured by a
+  third party while the call is happening. That case rests on consent, not on absence of capture.
+  See the next section.
 
 A deployer in a different jurisdiction, or with a different risk tolerance, can still tighten this
 (e.g. force a disclosure line into any mode's guardrail set) — the mode/floor split above is
 explicit enough that doing so is a conscious policy choice, not something silently assumed by the
 library.
+
+## Meeting notetaking — consent, not absence of capture
+
+An earlier revision of this document argued that California's recording-consent law was not
+engaged for any Parley call, on the strength of one fact: Parley persists no audio. That was true
+when written, and it still is — "No call-audio recording by default" above is unchanged by
+anything in this section, and there remains no code path anywhere in
+`@parley/telephony-twilio` or `@parley/server` that writes a waveform to disk. But the argument
+that fact supported — "no capture, so the statute has nothing to reach" — no longer covers what
+the system does. A meeting now produces a **text transcript, captured by a third party**
+(the configured `TranscriptionProvider`, e.g. `@parley/transcription-deepgram`'s live connection
+to Deepgram) and written to disk once notetaking begins
+(`packages/cli/src/transcript-writer.ts`'s `transcript.jsonl`, mode `0600` in a mode-`0700`
+directory — see [`docs/configuration.md`](configuration.md#meetings--the-listening-plane) for the
+full layout). A recording-consent statute does not turn on the storage medium; a third party
+transcribing a live conversation as it happens is the kind of interception the statute is aimed
+at, whether or not a single byte of audio is ever written anywhere. The absence-of-capture
+argument stops covering that the instant a transcript exists, so this section replaces it with the
+argument that actually holds: **the control is consent, gated before any note is taken, not the
+fact that nothing is recorded.**
+
+**What the gate actually does.** `execution.meeting.consent` declares a phrase (and, optionally,
+`additionalPhrases` — other utterances that grant consent identically; any one of them heard
+counts), each validated to be at least two words, and a timeout. Nothing reaches the listening
+plane, and nothing reaches disk, until the model calls `begin_notetaking` and the server decides
+it — the same "model proposes, server disposes" split as every other tool in this document.
+`ToolGate.authorizeNotetaking` (`packages/core/src/execution.ts`) refuses unless (a) at least one
+model turn has completed — so the model cannot authorize its own handoff by speaking the phrase
+itself, since only non-model utterances are checked — and (b) one of the declared phrases, after
+normalization, appears in an utterance that arrived **at or after the agent's own request**
+(`findConsentMatch`). That ordering check, not phrase length, is the actual guard
+against an utterance counting as consent by accident: something said in the room before the agent
+had asked anything is heard, kept in the buffer, but can never retroactively answer a question
+that had not been posed yet. The boundary is the agent's most recent utterance **at the instant
+the room answered**, pinned there rather than re-read when the tool call arrives
+(`anchorConsentBoundary`): the agent is instructed to acknowledge the go-ahead and call the tool
+in the same turn, so a re-read boundary has already moved past the answer it is about — which on
+a live call refused a real room's real go-ahead after the room had been told aloud that notes were
+being taken. Only the boundary is pinned; the decision itself is made fresh on every call, so a
+refusal spoken after the go-ahead still overrides it. A live call is why the floor moved off length in the first place — the
+declared phrase was `"go ahead and take notes"`, the principal answered `"go ahead"`, and a
+substring match against a four-word phrase refused a real person doing the obvious thing; two
+words is now enough, because ordering is what closes the actual gap a longer phrase was only
+approximating. Until the gate turns a request into an `ok`, no audio reaches a transcriber at
+all — there is no transcription sink registered until the handoff — and
+the only thing retained is **transcript text**: `{speaker, text, at}` entries in a bounded,
+in-memory pre-consent buffer (`PRE_CONSENT_BUFFER_MAX = 500` entries), which is what the consent
+receipt is later built from. No audio is buffered, and nothing is written past that buffer; if consent times out, the room refuses, or the call ends first, the buffer is discarded and no
+transcript is ever created — the meeting record written in that case names the outcome
+(`consent_timeout`, `consent_refused`, `failed`, `never_joined`) but carries no transcript path,
+because there is nothing to point to. A room that plainly refuses does not merely fail to obtain
+consent — the agent says one short sentence and the call ends (`endedBy: "consentDenied"`), rather
+than a declined notetaker staying silently on the bridge until someone else hangs up. `never_joined` is its own status, not folded into
+`consent_refused`: the latter means the room was reached and never said yes, the former means the
+agent never got far enough to ask at all (no consent receipt and no completed model turn) — a call
+that dies inside a dial-in IVR, for instance. Recording that as a refusal would be a false statement
+about a room's wishes for a room the agent never reached.
+
+**What the gate does not do, stated as plainly as the gate itself is enforced:**
+
+> The consent phrase is a record that the words were spoken before note-taking began. It is not
+> authentication. Parley does not diarize in this release, so nothing distinguishes the
+> principal's voice from that of anyone else who heard the phrase said aloud.
+
+Concretely: anyone on the bridge who repeats the declared phrase authorizes the handoff exactly as
+the principal would — a stranger, a different participant, someone reading it off a shared screen.
+The receipt this produces (`ConsentReceipt`) records that the words were said, by an unattributed
+speaker, at a point in time; it does not and cannot record who said them. It is also a
+**point-in-time** artifact relied on for the meeting's entire remaining duration: it is written at
+(say) minute two and still being relied on at minute forty, on behalf of participants who joined
+at minute twenty and never heard the exchange it records. Slice A accepts this as a known,
+disclosed limit — not an oversight, and not something a reader of this document should mistake for
+authentication. A security control that overstates what it establishes is worse than one that
+plainly says what it doesn't; that is the reasoning this whole section exists to make explicit
+rather than leave implied.
+
+An operator who needs a stronger identity guarantee — verifying the principal specifically granted
+consent, not merely that the phrase was heard — has to build that themselves; diarization and
+speaker verification are out of scope for this release (`SpeakerRole` carries `"participant"` for
+an unattributed far-end voice; `TranscriptEvent.speakerSource` has a `"diarization"` value in its
+type for a future provider to populate, but nothing in this release ever sets it).

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "kind": "meeting",
+  "callId": "CAfixture0002",
+  "startedAt": "2026-08-19T17:10:00.000Z",
+  "endedAt": "2026-08-19T17:10:45.000Z",
+  "durationSeconds": 45,
+  "status": "consent_refused",
+  "endedReason": "far_end",
+  "consentReceipt": null,
+  "transcriptPath": null,
+  "gapMs": 0,
+  "coveredMs": 0,
+  "modelTurnsCompleted": 1
+}

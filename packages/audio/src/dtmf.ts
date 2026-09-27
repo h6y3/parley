@@ -1,4 +1,4 @@
-import type { AudioFrame } from "@parley/core";
+import { MULAW_8K, type AudioFrame } from "@parley/core";
 import { muLawEncode } from "./mulaw.js";
 
 /**
@@ -80,5 +80,5 @@ export function dtmfMuLaw(digits: string, options: DtmfOptions = {}): AudioFrame
     at += toneSamples + gapSamples; // the gap is left as zeros
   }
 
-  return { encoding: "mulaw8k", data: muLawEncode(samples) };
+  return { encoding: MULAW_8K, data: muLawEncode(samples) };
 }

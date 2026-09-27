@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { AudioFrame, RealtimeProvider } from "@parley/core";
+import { PCM_16K, type AudioFrame, type RealtimeProvider } from "@parley/core";
 import type { CallMode } from "@parley/policy";
 import { pcm16BufferToSamples } from "@parley/audio";
 import { runAudioScript as defaultRunAudioScript } from "./audio-runner.js";
@@ -18,7 +18,7 @@ export function loadScenarioAudio(scenarioId: string): AudioFrame[] {
   const data = readFileSync(fileURLToPath(url));
   // Round-trip through the sample view to assert it is valid PCM16 length.
   pcm16BufferToSamples(data);
-  return [{ encoding: "pcm16k", data }];
+  return [{ encoding: PCM_16K, data }];
 }
 
 export interface ReliabilityDeps {

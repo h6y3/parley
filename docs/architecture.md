@@ -76,6 +76,92 @@ being re-instructed, and the answer it reads back is drawn from a fixed union of
 rather than composed from anything said on the call. See `docs/security-model.md` for the gating
 rules and the threat they exist for.
 
+### Two planes, and a handoff between them that only runs once
+
+Everything above is the **speaking plane**: audio flows both ways, and a `RealtimeProvider`
+session is what a caller on the other end hears and is heard by. A call whose `execution` block
+declares `meeting` can additionally reach the **listening plane** — a `TranscriptionProvider`
+session with no way to put audio, or anything else, back onto the call. The two planes are never
+both live: the speaking plane is what a meeting uses to obtain consent, and the moment consent is
+granted, `CallSession.beginNotetaking()` swaps one for the other and does not swap back.
+
+```
+execution.meeting.consent — "model proposes, server disposes" (docs/security-model.md
+#meeting-notetaking--consent-not-absence-of-capture)
+   │
+   │ ToolGate.authorizeNotetaking(): the declared phrase, heard from a NON-model speaker,
+   │ after at least one completed model turn
+   ▼
+CallSession.beginNotetaking()
+   │ 1. build ConsentReceipt from the pre-consent buffer (announcement + request + go-ahead),
+   │    THEN empty the buffer and clear the consent timer — nothing in it survives past this
+   │ 2. connectTranscription(), bounded by TRANSCRIPTION_CONNECT_TIMEOUT_MS (10s) — the provider's
+   │    connect() resolves on `open` and rejects on `error`, but settles on NEITHER if the socket
+   │    just never answers, so beginNotetaking() would otherwise never return
+   ▼                                              ▼ (connect fails or times out)
+listening plane is live              onDiagnostic(...) + endCall("transcriptionLost")
+   │                                  — a live, billing call that can no longer take notes ends
+   │                                    rather than sits open pretending to
+   │
+   │ 3. addSink("transcription") — every inbound frame goes through AudioBridge.adapt(): a
+   │    pass-through if the source already speaks an encoding the provider accepts, one
+   │    convert() call if not (accepts[0] is the target; @parley/audio supplies convert)
+   │ 4. removeSink("realtime"), leavePhase("speaking") → enterPhase("listening")
+   │ 5. the RealtimeSession (speaking plane) is closed — listening comes up BEFORE speaking
+   │    goes down, so no window exists where audio reaches neither plane
+   ▼
+TranscriptionSession.sendAudio(frame) ──► TranscriptEvent (finals only, interims dropped)
+   │
+   ▼
+packages/cli/src/transcript-writer.ts ──► meetings/{YYYY-MM-DD}/{callId}/transcript.jsonl
+                                           (mode 0600, in a mode-0700 directory) — shape and
+                                           consumer contract: docs/configuration.md
+                                           #on-disk-layout-once-a-meeting-completes,
+                                           schema/transcript.schema.json
+                                       + a MeetingRecord (`kind: "meeting"`) appended to
+                                         PARLEY_CALL_RECORDS_PATH — see
+                                         docs/configuration.md#meetings--the-listening-plane
+```
+
+A frame that arrives while `listening.ready` is `false` — most visibly during the connect window
+in step 2 — is **dropped, not buffered**, and the drop is recorded as a `TranscriptGap`
+(`{fromMs, toMs, reason}`) rather than silently absorbed. Buffering would produce an unbounded
+queue against a carrier that delivers 50 frames a second for up to four hours, and a transcript
+that arrives minutes late is worse than one with a recorded hole. A reader of the finished meeting
+sees exactly how much of it was actually covered
+(`CompletedCallRecord.gaps`/`gapMs`/`coveredMs`), never a readout that looks complete over a hole
+it doesn't name.
+
+**Slice A does not reconnect the listening plane, and this section used to imply it did.** There
+is no backoff, no retry and no resume: `TranscriptionConnectParams` deliberately models no resume
+point, no shipped provider retries, and `CallSession` treats the transcriber's `onClose` as
+terminal — it ends the call as `transcriptionLost`, because after the handoff taking notes is the
+call's only remaining purpose and sitting on a live, billing call that is no longer taking any is
+the outcome that must not happen.
+
+Two consequences follow, and a consumer of the artifacts cannot see either one from the artifacts
+themselves:
+
+- **A `transcriber_not_ready` gap is effectively unreachable in production.** The only window it
+  can open in is the handful of frames between a socket close setting `ready` false and `endCall`
+  clearing the sinks. The gap a real meeting records is `transcriber_connecting` — the handoff
+  window, typically a few hundred milliseconds.
+- **So `gapMs` is small on a real meeting**, and a downstream rule of the form "degrade the readout
+  if more than N% of the meeting is missing" will effectively never fire in slice A. The signal
+  that notes stopped is not `gapMs` but `endedReason: "transcription_lost"` on the meeting record.
+  That is the field to branch on. **This is a property of THIS plane, not of the field**: a
+  browser meeting (`transport: "browser"`, `@parley/meeting-browser`) measures its coverage
+  window from the instant its audio capture began, so a capture that died mid-meeting reports the
+  rest of the meeting as gap, and one that never started reports the whole meeting that way. A
+  consumer reading both transports must not carry "gapMs is always small" across.
+
+Implementing the spec's backoff/alert/hangup ladder is a slice-B-or-later change, tracked as a
+divergence rather than silently carried as prose that describes behaviour the code does not have.
+
+A call declaring no `execution.meeting` block never reaches any of this: `beginNotetaking` is
+never called, the listening plane never exists, and the call's only artifact is the ordinary
+`CompletedCallRecord` — byte-identical to a call before the listening plane existed.
+
 ## Call lifecycle & coordination (Milestone 3)
 
 A Twilio outbound call is three asynchronous events — origination, the answer webhook, and the
@@ -108,12 +194,19 @@ Twilio opens the media WS to /media/:callId ──►
      realtime.connect(); the provider parses `start` (captures streamSid), `media` →
      AudioFrame{mulaw8k}; the opening trigger ("Begin the call naturally now.") is sent once
      connect resolves
- 11. `close` on the media socket → the session's stop() runs and pendingSessions evicts the
-     entry (packages/server/src/media-connection.ts)
- 12. If configured, the server calls its `onCallCompleted` hook with `{callId, endedAt,
-     transcript}`. The CLI daemon uses this hook to append a JSONL call record and start an
-     optional post-call command.
+ 11. `close` on the media socket → pendingSessions evicts the entry and the session's stop() runs
+     FIRST — sealing any gap still open and flushing the listening plane, both of which the
+     record has to describe (packages/server/src/media-connection.ts)
+ 12. THEN, if configured, the server calls its `onCallCompleted` hook with the record built from
+     that torn-down session, and awaits it. The CLI daemon uses this hook to write
+     transcript.jsonl and append a JSONL call record before starting an optional post-call
+     command, so nothing races the files that command is handed.
 ```
+
+The order in 11/12 is load-bearing and used to be the other way round. `endCall` seals an open
+gap and flushes the listening plane, and a record built before it ran reported `gaps: []`,
+`gapMs: 0` over a real hole and was missing the meeting's last utterance — while the hook had
+already written both to disk.
 
 **Why URL-path correlation.** Putting the `CallSid` in the media-stream URL path
 (`/media/{CallSid}`) correlates the WebSocket to its `CallSession` at HTTP-upgrade time — before
@@ -190,18 +283,50 @@ being waited for.
 firing is not a goodbye, and a dead transport has nothing left to play; neither
 is worth holding a live, billing call open for.
 
+## The listening plane has no way to talk back — on purpose, and in the type
+
+`TranscriptionSession` (`packages/core/src/transcription.ts`) has `ready`, `sendAudio`, `flush`,
+and `close`. It has no `sendOpeningTrigger`, no method that accepts a `ToolResult`, nothing that
+could put a single byte of outbound audio onto the call. This is the same shape of decision as
+`TelephonyProvider` having no `sendDtmf` above: a capability was left out of an interface rather
+than merely left unused, because leaving it merely unused would not have held.
+
+Consider what "merely unused" would mean here. `beginNotetaking()` closes the speaking plane's
+`RealtimeSession` at the same moment it opens the listening plane — see "Two planes, and a
+handoff between them that only runs once" above — so at runtime there genuinely is no live model
+turn left to speak through once notetaking begins. But that fact holding _today_ is not the same
+guarantee as it being _impossible_. A future change to `beginNotetaking` — a bug, a well-meant
+"let the agent say one more thing before it goes quiet" feature — could reintroduce a path where
+the listening plane is live and something still holds a reference capable of generating outbound
+audio. If `TranscriptionSession` had, say, an unused `sendAudioOut` method sitting beside `ready`
+and `sendAudio`, that path would compile. The type would not object even though the entire reason
+the listening plane exists is that the room was told, out loud, that notetaking had started and
+the agent had gone quiet.
+
+Because the type carries no such method, that mistake cannot compile. `TRANSCRIPTION_PLANE_HAS_NO_OUTBOUND`
+(`packages/core/src/transcription.ts`) is a marker export whose only job is to be a greppable
+anchor for this reasoning — the guarantee itself is enforced by the absence of a method, not by
+the constant, and not by a runtime check anywhere. As the code that performs the handoff puts it
+at the point it removes the speaking-plane sink: "There is no outbound sink on a
+`TranscriptionSession`, so from here the compiler is what keeps the agent quiet." That is the same
+family of argument `docs/security-model.md` makes about `RealtimeProvider` having no
+general-purpose "send a turn" method — a security property stated as an absence in the interface
+lives past the author who reasoned about it once, in a way a comment or a runtime guard does not.
+
 ## Component map
 
-| Layer            | Package                                                                                                             | Depends on                                                                                                                                      |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Orchestration    | `@parley/core` (`CallSession`, prompt rendering, redaction)                                                         | Nothing provider-specific — only its own `TelephonyProvider` / `RealtimeProvider` / `AudioCodec` / `WebSocketLike` interfaces                   |
-| Policy           | `@parley/policy` (`CallPolicy`/`CallEnvelope` schema, `composePolicy` guardrail composition, presets)               | Nothing from `@parley/core` — deliberately decoupled; `CallEnvelope`'s `brief` shape is its own zod schema, not the `@parley/core` `Brief` type |
-| Audio resampling | `@parley/audio` (μ-law ⟷ PCM; inbound 8k→16k linear resample, outbound single ÷3 averaging decimation 24k→8k)       | Nothing (standalone-usable)                                                                                                                     |
-| Telephony        | `@parley/telephony-twilio`                                                                                          | `@parley/core`'s interfaces                                                                                                                     |
-| Realtime         | `@parley/realtime-gemini`                                                                                           | `@parley/core`'s interfaces, `@google/genai`                                                                                                    |
-| Daemon           | `@parley/server` (plain `node:http` + `ws`, no web framework)                                                       | `@parley/core` + `@parley/policy` + the two provider packages                                                                                   |
-| CLI              | `@parley/cli` (`parley serve`, `parley call`, `parley harness …`, `parley doctor`; optional post-call command hook) | all of the above                                                                                                                                |
-| Reliability      | `@parley/harness`                                                                                                   | `@parley/core`, `@parley/policy`, `@parley/realtime-gemini`                                                                                     |
+| Layer                            | Package                                                                                                                                                                                                                        | Depends on                                                                                                                                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Orchestration                    | `@parley/core` (`CallSession`, prompt rendering, redaction)                                                                                                                                                                    | Nothing provider-specific — only its own `TelephonyProvider` / `RealtimeProvider` / `AudioCodec` / `WebSocketLike` interfaces                                                                           |
+| Policy                           | `@parley/policy` (`CallPolicy`/`CallEnvelope` schema, `composePolicy` guardrail composition, presets)                                                                                                                          | Nothing from `@parley/core` — deliberately decoupled; `CallEnvelope`'s `brief` shape is its own zod schema, not the `@parley/core` `Brief` type                                                         |
+| Audio resampling                 | `@parley/audio` (μ-law ⟷ PCM; inbound 8k→16k linear resample, outbound single ÷3 averaging decimation 24k→8k)                                                                                                                  | Nothing (standalone-usable)                                                                                                                                                                             |
+| Telephony                        | `@parley/telephony-twilio`                                                                                                                                                                                                     | `@parley/core`'s interfaces                                                                                                                                                                             |
+| Realtime (speaking plane)        | `@parley/realtime-gemini` (default `RealtimeProvider`)                                                                                                                                                                         | `@parley/core`'s interfaces, `@google/genai`                                                                                                                                                            |
+| Realtime (speaking plane, spike) | `@parley/realtime-deepgram` — a second `RealtimeProvider`, selected by `parley serve --realtime-provider deepgram` (default remains `gemini`); verdict "needs more work", see `docs/decisions/2026-08-19-voice-agent-spike.md` | `@parley/core`'s interfaces                                                                                                                                                                             |
+| Transcription (listening plane)  | `@parley/transcription-deepgram` — a `TranscriptionProvider` over Deepgram's Listen API                                                                                                                                        | `@parley/core`'s interfaces. A dependency of `@parley/cli`, which wires it into `parley serve` via `buildTranscription()` — see "Meetings — the listening plane" in `docs/configuration.md`             |
+| Daemon                           | `@parley/server` (plain `node:http` + `ws`, no web framework)                                                                                                                                                                  | `@parley/core` + `@parley/policy` + the telephony and (speaking-plane) realtime provider packages. `ParleyServerConfig`/`ServerDeps` also accept an optional listening-plane `transcription` dependency |
+| CLI                              | `@parley/cli` (`parley serve`, `parley call`, `parley harness …`, `parley doctor`; optional post-call command hook)                                                                                                            | all of the above, plus `@parley/realtime-deepgram`                                                                                                                                                      |
+| Reliability                      | `@parley/harness`                                                                                                                                                                                                              | `@parley/core`, `@parley/policy`, `@parley/realtime-gemini`                                                                                                                                             |
 
 `CallSession` (built in Milestone 2, unchanged in Milestone 3) depends only on the three injected
 interfaces — `TelephonyProvider`, `RealtimeProvider`, `AudioCodec` — and exposes
@@ -210,3 +335,18 @@ additive: it implements the interfaces (`@parley/telephony-twilio`, already-exis
 `@parley/realtime-gemini`) and wires a daemon (`@parley/server`) and a unified CLI
 (`@parley/cli`) around them. **No changes were made to `@parley/core` in Milestone 3** — a change
 there would have been a design smell to escalate, not something this milestone needed.
+
+The meeting/listening-plane work described above touches `@parley/core` directly (`CallSession`
+gains `transcription` as a fourth optional injected dependency, alongside the original three) and
+ships `@parley/transcription-deepgram` as a standalone, `@parley/core`-only package — same shape
+as every other provider package. `@parley/server`'s `ParleyServerConfig` gains a matching optional
+`transcription` field, threaded through to `CallSession` in `request-handler.ts`; `@parley/cli`'s
+`serve()` builds one from `DEEPGRAM_API_KEY` (`buildTranscription()`, called unconditionally on
+every `serve` run — meeting support stays optional, so this reads the variable directly rather than
+`requireEnv`-ing it) and passes it in. **What is enforced, not merely wired:** `request-handler.ts`'s
+`handleCall` refuses a meeting envelope with `503` at `POST /call` — before origination, before any
+carrier cost — whenever `deps.transcription` is absent, rather than letting `CallSession` discover
+the gap only after `beginNotetaking()` is called and consent has already been granted. A caller who
+embeds `@parley/core` directly (the pattern `examples/express-minimal` demonstrates for the two
+original interfaces) can still supply its own `TranscriptionProvider`; `parley serve` now can too.
+See `docs/configuration.md`.

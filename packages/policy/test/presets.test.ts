@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { principalCall, representedCall, transactionalCall } from "../src/presets.js";
+import { meetingCall, principalCall, representedCall, transactionalCall } from "../src/presets.js";
+import { callPolicySchema } from "../src/schema.js";
 
 describe("presets", () => {
   it("principalCall is a self-call: unlocked, grounded, no deferral", () => {
@@ -77,6 +78,33 @@ describe("transactionalCall extensions", () => {
       ivrGoal: "the service department"
     });
     expect(p.ivr).toEqual({ goal: "the service department" });
+  });
+});
+
+describe("meetingCall", () => {
+  it("produces a policy the envelope schema accepts", () => {
+    const policy = meetingCall({ principalName: "Jordan", purpose: "take notes for Jordan" });
+    expect(() => callPolicySchema.parse(policy)).not.toThrow();
+  });
+
+  it("announces, volunteers disclosure, and locks scope", () => {
+    const policy = meetingCall({ principalName: "Jordan", purpose: "take notes for Jordan" });
+    expect(policy.meeting).toEqual({ announce: true, purpose: "take notes for Jordan" });
+    expect(policy.disclosure).toEqual({ honestIfAsked: true, volunteer: true });
+    expect(policy.scope).toEqual({ lock: true });
+    expect(policy.grounding).toEqual({ antiInvention: true });
+  });
+
+  it("omits wrapUp and voicemail, which a meeting never uses", () => {
+    const policy = meetingCall({ principalName: "Jordan", purpose: "take notes for Jordan" });
+    expect(policy.wrapUp).toBeUndefined();
+    expect(policy.voicemail).toBeUndefined();
+  });
+
+  it("omits pronunciation and extraGuardrails when the caller supplies none", () => {
+    const policy = meetingCall({ principalName: "Jordan", purpose: "take notes for Jordan" });
+    expect("pronunciation" in policy).toBe(false);
+    expect("extraGuardrails" in policy).toBe(false);
   });
 });
 

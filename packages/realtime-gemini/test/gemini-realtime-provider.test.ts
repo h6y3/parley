@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import type { RealtimeConnectParams, RealtimeSessionCallbacks } from "@parley/core";
+import {
+  MULAW_8K,
+  PCM_16K,
+  PCM_24K,
+  type RealtimeConnectParams,
+  type RealtimeSessionCallbacks
+} from "@parley/core";
 import { DEFAULT_GEMINI_MODEL, GeminiRealtimeProvider } from "../src/gemini-realtime-provider.js";
 
 function makeCallbacks(): RealtimeSessionCallbacks & {
@@ -128,7 +134,7 @@ describe("GeminiRealtimeProvider", () => {
       text: "Begin the call naturally now."
     });
 
-    const audioFrame = { encoding: "pcm16k" as const, data: Buffer.from([1, 2, 3]) };
+    const audioFrame = { encoding: PCM_16K, data: Buffer.from([1, 2, 3]) };
     session.sendAudio(audioFrame);
     expect(fakeSession.sendRealtimeInput).toHaveBeenCalledWith({
       audio: { data: Buffer.from([1, 2, 3]).toString("base64"), mimeType: "audio/pcm;rate=16000" }
@@ -159,7 +165,7 @@ describe("GeminiRealtimeProvider", () => {
       isFinal: true
     });
     expect(callbacks.onAudio).toHaveBeenCalledWith({
-      encoding: "pcm24k",
+      encoding: PCM_24K,
       data: Buffer.from("audio-bytes")
     });
     expect(callbacks.onInterrupted).toHaveBeenCalledOnce();
@@ -184,16 +190,16 @@ describe("GeminiRealtimeProvider", () => {
 });
 
 describe("sendAudio input-encoding guard", () => {
-  it("throws on a non-pcm16k frame", async () => {
+  it("throws on a non-pcm@16000 frame", async () => {
     const { session } = await connectWithFakeGenAI();
-    expect(() => session.sendAudio({ encoding: "mulaw8k", data: Buffer.from([0]) })).toThrow(
-      /pcm16k/
+    expect(() => session.sendAudio({ encoding: MULAW_8K, data: Buffer.from([0]) })).toThrow(
+      /pcm@16000/
     );
   });
 
-  it("accepts a pcm16k frame", async () => {
+  it("accepts a pcm@16000 frame", async () => {
     const { session, sendRealtimeInput } = await connectWithFakeGenAI();
-    session.sendAudio({ encoding: "pcm16k", data: Buffer.from([1, 2]) });
+    session.sendAudio({ encoding: PCM_16K, data: Buffer.from([1, 2]) });
     expect(sendRealtimeInput).toHaveBeenCalledWith({
       audio: { data: Buffer.from([1, 2]).toString("base64"), mimeType: "audio/pcm;rate=16000" }
     });
@@ -365,5 +371,29 @@ describe("tool channel", () => {
       automaticActivityDetection: { silenceDurationMs: number };
     };
     expect(rt.automaticActivityDetection.silenceDurationMs).toBe(1800);
+  });
+
+  it("tags the far end 'participant' when speakerRole says so (the meeting path)", async () => {
+    const { callbacks, emitMessage } = await connectForTools({ speakerRole: "participant" });
+    emitMessage({
+      serverContent: { inputTranscription: { text: "far end speaking", finished: true } }
+    });
+    expect(callbacks.onTranscript).toHaveBeenCalledWith({
+      speaker: "participant",
+      text: "far end speaking",
+      isFinal: true
+    });
+  });
+
+  it("defaults the far end to 'caller' when speakerRole is absent (the two-party path)", async () => {
+    const { callbacks, emitMessage } = await connectForTools({});
+    emitMessage({
+      serverContent: { inputTranscription: { text: "far end speaking", finished: true } }
+    });
+    expect(callbacks.onTranscript).toHaveBeenCalledWith({
+      speaker: "caller",
+      text: "far end speaking",
+      isFinal: true
+    });
   });
 });

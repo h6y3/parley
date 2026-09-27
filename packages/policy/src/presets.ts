@@ -141,3 +141,35 @@ export function navigableCall(opts: {
     ...(opts.detectAnsweringMachine ? { detection: { mode: opts.detectAnsweringMachine } } : {})
   };
 }
+
+/** A meeting join: the agent announces itself, asks the room for consent to
+ * take notes, and then goes permanently voiceless. Reproduces the policy that
+ * passed the live meeting gate on 2026-08-20.
+ *
+ * Deliberately omits `wrapUp`, `voicemail`, `callback`, and `authority`
+ * commitments. `composePolicy` suppresses those rails on the meeting path
+ * anyway, so including them would put fields in the envelope that nothing
+ * reads and invite a later reader to think they do something. */
+export function meetingCall(opts: {
+  principalName: string;
+  /** What the agent says it is there to do, in plain prose. Rendered into the
+   * announcement by `meetingAnnounce`. */
+  purpose: string;
+  role?: string;
+  pronunciation?: readonly string[];
+  extraGuardrails?: readonly string[];
+}): CallPolicy {
+  return {
+    principalName: opts.principalName,
+    identity: { style: "onBehalf", role: opts.role ?? "assistant" },
+    disclosure: { honestIfAsked: true, volunteer: true },
+    scope: { lock: true },
+    grounding: { antiInvention: true },
+    deferral: { enabled: true },
+    authority: {},
+    patience: { expectLookupPauses: true },
+    meeting: { announce: true, purpose: opts.purpose },
+    ...(opts.pronunciation ? { pronunciation: [...opts.pronunciation] } : {}),
+    ...(opts.extraGuardrails ? { extraGuardrails: [...opts.extraGuardrails] } : {})
+  };
+}

@@ -15,4 +15,12 @@ export interface Brief {
    * are answered from. Without this, `deferralRule` turns every calibrating
    * question ("so you only wanted X?") into a bail. */
   preferences?: readonly string[];
+  /** Caller-owned lineage for retries of one real-world task. This is
+   * operational metadata: it is recorded and enforced by the server, never
+   * rendered into the model's system instruction. */
+  operation?: {
+    id: string;
+    attempt: number;
+    maxAttempts: number;
+  };
 }

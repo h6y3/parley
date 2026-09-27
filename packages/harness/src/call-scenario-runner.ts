@@ -1,6 +1,8 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 import {
+  anchorConsentBoundary,
   buildToolDeclarations,
+  MEETING_OPENING_TRIGGER,
   OPENING_TRIGGER,
   renderSystemInstruction,
   routeToolCall,
@@ -116,6 +118,28 @@ export async function runCallScenario(params: {
     params.trace?.({ ...event, atMs: Date.now() - startedAt } as ScenarioTraceEvent);
   const toolCalls: ScenarioRun["toolCalls"] = [];
   let transcript = "";
+  /** The same speech as `transcript`, cut at the model's own turn boundaries.
+   *
+   * A meeting verdict needs the cuts and the flat string cannot supply them:
+   * "announced itself exactly once" is a count of turns that introduce the
+   * agent, and "went quiet once note-taking began" is a question about which
+   * side of one boundary the words fell on. Deriving either by re-splitting the
+   * concatenation on punctuation would be inventing turn boundaries the session
+   * already reported. */
+  const modelTurns: string[] = [];
+  let currentTurn = "";
+  /** Index of the model turn that was in flight when `begin_notetaking` was
+   * authorized, or undefined if it never was. `modelTurnsCompleted` counts
+   * turns that have FINISHED, so it is exactly the 0-based index of the one
+   * still open — the turn that carries the acknowledgment. Everything spoken in
+   * a LATER turn is speech after the handoff.
+   *
+   * Cut at a turn boundary rather than at the character position the tool call
+   * landed on, deliberately: output transcription arrives as deltas behind the
+   * audio it describes, so text appended moments after the call can be
+   * transcription of audio generated before it. A turn boundary cannot drift
+   * that way. */
+  let notetakingAuthorizedAtTurn: number | undefined;
   let ended = false;
   let turnsDelivered = 0;
 
@@ -126,8 +150,36 @@ export async function runCallScenario(params: {
     sendDtmf: async () => {},
     endCall: async () => {
       ended = true;
-    }
+    },
+    beginNotetaking: async () => {}
   };
+
+  /** The evidence the consent gate decides on, exactly as `CallSession`
+   * supplies it: the callee lines actually delivered (timestamped, same as
+   * `CallSession.heardBeforeConsentTimed`), when the model last completed a
+   * turn (`requestedAt`, same as `CallSession`'s `lastModelUtteranceAt`),
+   * and how many model turns have completed.
+   *
+   * Passed because `routeToolCall` defaults all three to empty/undefined,
+   * and with the defaults `ToolGate.authorizeNotetaking` refuses EVERY
+   * `begin_notetaking` no matter what the script said — the same defect
+   * that, on the production path, refused every real call's handoff until
+   * `CallSession` started passing them. A scenario scored against a gate
+   * that can only ever refuse measures nothing about consent.
+   *
+   * `consentAnchor` is `CallSession.consentAnchorAt`, kept here for the same
+   * reason and by the same shared function: `requestedAt` advances on every
+   * completed turn, so once the model has acknowledged a go-ahead the boundary
+   * has moved past the answer it is acknowledging. Deriving that here a second
+   * way instead of calling `anchorConsentBoundary` is how the harness stops
+   * measuring the code a real call runs. */
+  const heard: { text: string; at: string }[] = [];
+  let requestedAt: string | undefined;
+  let consentAnchor: string | undefined;
+  let modelTurnsCompleted = 0;
+  const consentPhrases = execution.meeting
+    ? [execution.meeting.consent.phrase, ...(execution.meeting.consent.additionalPhrases ?? [])]
+    : [];
 
   const endedBecause = await new Promise<EndedBecause>((resolve, reject) => {
     let cursor = 0;
@@ -159,12 +211,20 @@ export async function runCallScenario(params: {
       | undefined;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     let settle: ReturnType<typeof setTimeout> | undefined;
+    /** One-shot timer for a line that is not a reply — see
+     * `ScenarioTurn.unpromptedAfterMs`. Armed after each delivery (and at
+     * connect) for the NEXT turn only, cleared the moment that turn goes out by
+     * any route. It is the one timer here that can cause a delivery, which is
+     * why it is armed for exactly one turn at a time and never re-armed for a
+     * turn already sent. */
+    let unprompted: ReturnType<typeof setTimeout> | undefined;
 
     const wallClock = setTimeout(() => finish("wall-clock"), timings.wallClockMs);
 
     const finish = (reason: EndedBecause): void => {
       clearTimeout(watchdog);
       clearTimeout(settle);
+      clearTimeout(unprompted);
       clearTimeout(wallClock);
       try {
         session?.close();
@@ -199,8 +259,19 @@ export async function runCallScenario(params: {
       return turn?.afterPress !== undefined && pressedSoFar().includes(turn.afterPress);
     };
 
+    /** Arm the unprompted timer for whatever turn is next, if that turn
+     * declares one. Idempotent: any previously armed timer is cleared first, so
+     * a turn delivered by an event rather than by its own timer cannot leave a
+     * stale one running into its successor. */
+    const armUnprompted = (): void => {
+      clearTimeout(unprompted);
+      const turn = scenario.script[cursor];
+      if (turn?.unpromptedAfterMs === undefined) return;
+      unprompted = setTimeout(tryAdvance, turn.unpromptedAfterMs);
+    };
+
     /** Deliver the next callee line if — and only if — it is due. Called from
-     * events, never from a timer. */
+     * events, and from the unprompted timer for a line that is not a reply. */
     const tryAdvance = (): void => {
       if (ended) return finish("model-ended");
       if (cursor >= scenario.script.length) {
@@ -229,11 +300,17 @@ export async function runCallScenario(params: {
         heldOn = undefined;
       }
       if (modelTurnOpen) suppressNextCompletion = true;
+      clearTimeout(unprompted);
       cursor += 1;
       turnsDelivered = cursor;
+      heard.push({ text: turn.text, at: new Date().toISOString() });
+      // Pin the boundary on the line itself, before the model's reply to it
+      // can move `requestedAt` past it — see the declaration above.
+      consentAnchor = anchorConsentBoundary(consentAnchor, heard, requestedAt, consentPhrases);
       trace({ type: "turn-sent", label: turn.label });
       session?.sendRealtimeInput({ text: turn.text });
       armWatchdog();
+      armUnprompted();
     };
 
     ai.live
@@ -273,9 +350,15 @@ export async function runCallScenario(params: {
                 gate,
                 carrier,
                 callId: "SCENARIO",
+                heard,
+                requestedAt: consentAnchor ?? requestedAt,
+                modelTurnsCompleted,
                 respond: (result: ToolResult) => {
                   toolCalls.push({ name: call.name, args: call.args, result });
                   trace({ type: "tool-call", name: call.name, result });
+                  if (call.name === "begin_notetaking" && result === "ok") {
+                    notetakingAuthorizedAtTurn ??= modelTurnsCompleted;
+                  }
                   session?.sendToolResponse({
                     functionResponses: [
                       { id: call.id, name: call.name, response: { output: result } }
@@ -294,6 +377,7 @@ export async function runCallScenario(params: {
             const delta = message.serverContent?.outputTranscription?.text;
             if (delta) {
               transcript += delta;
+              currentTurn += delta;
               modelTurnOpen = true;
               // Speech is activity, not completion. Advancing here would let
               // the scripted callee talk over a model mid-sentence.
@@ -303,6 +387,14 @@ export async function runCallScenario(params: {
               trace({ type: "model-turn-complete", textSoFar: transcript.length });
               armWatchdog();
               modelTurnOpen = false;
+              // Pushed even when empty. A turn in which the model said nothing
+              // is a real event and the ordinary correct one in a waiting room,
+              // so dropping it would renumber every turn after it and put the
+              // consent handoff on the wrong side of its own boundary.
+              modelTurns.push(currentTurn);
+              currentTurn = "";
+              modelTurnsCompleted += 1;
+              requestedAt = new Date().toISOString();
               if (suppressNextCompletion) {
                 suppressNextCompletion = false;
                 return;
@@ -326,11 +418,35 @@ export async function runCallScenario(params: {
       })
       .then((s) => {
         session = s as unknown as typeof session;
-        session?.sendRealtimeInput({ text: OPENING_TRIGGER });
+        // Same choice `CallSession.attach` makes, off the same signal, for the
+        // same reason: `OPENING_TRIGGER` sent into a bridge resolves to "keep
+        // waiting" and two live meeting calls sat silent on it. A harness that
+        // kept sending it would REPRODUCE that defect for every meeting
+        // scenario — including any scenario written to check the fix — and
+        // report it as the model's behavior.
+        session?.sendRealtimeInput({
+          text: execution.meeting ? MEETING_OPENING_TRIGGER : OPENING_TRIGGER
+        });
         armWatchdog();
+        // The first line may itself be unprompted — a bridge's hold loop starts
+        // playing whether or not the leg that just joined says anything.
+        armUnprompted();
       })
       .catch(reject);
   });
 
-  return { transcript, toolCalls, snapshot: gate.snapshot(), endedBecause, turnsDelivered };
+  // A run ended by a watchdog or the wall clock can be cut off mid-turn, and
+  // what was said in that turn is still evidence — a model reciting its rails
+  // until the stall timer fires must not be scored as having said nothing.
+  if (currentTurn !== "") modelTurns.push(currentTurn);
+
+  return {
+    transcript,
+    modelTurns,
+    ...(notetakingAuthorizedAtTurn === undefined ? {} : { notetakingAuthorizedAtTurn }),
+    toolCalls,
+    snapshot: gate.snapshot(),
+    endedBecause,
+    turnsDelivered
+  };
 }

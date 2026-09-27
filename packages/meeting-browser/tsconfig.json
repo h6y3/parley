@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    // See packages/cli/tsconfig.json for why both halves of this cycle
+    // resolve each other from source rather than from dist.
+    "paths": {
+      "@parley/cli": ["../cli/src/index.ts"],
+      "@parley/meeting-browser": ["./src/index.ts"]
+    }
+  },
+  "include": ["src", "test", "scripts"]
+}

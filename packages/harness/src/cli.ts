@@ -1,11 +1,11 @@
 import { readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Brief, RealtimeProvider } from "@parley/core";
+import type { Brief, MeetingExecution, RealtimeProvider } from "@parley/core";
 import { representedCall, type CallMode } from "@parley/policy";
 import { DEFAULT_GEMINI_MODEL, GeminiRealtimeProvider } from "@parley/realtime-gemini";
 import { buildPayloadPreview, formatPayloadPreview } from "./payload-preview.js";
 import { runScenarioReliability } from "./reliability-runner.js";
-import { DERAIL_SCENARIOS } from "./scenarios.js";
+import { DERAIL_SCENARIOS, MEETING_SCENARIOS } from "./scenarios.js";
 import { runTextPreview } from "./text-preview-runner.js";
 import { callScenarioSchema, type CallScenario } from "./call-scenario.js";
 import { runCallScenario } from "./call-scenario-runner.js";
@@ -18,7 +18,13 @@ import {
   type AuthoredContent,
   type ScenarioAuthor
 } from "./generate-scenarios.js";
-import { raiseQuoteAboveCeiling, relateQuoteRaise } from "./metamorphic.js";
+import {
+  raiseQuoteAboveCeiling,
+  relateConsentGate,
+  relateQuoteRaise,
+  withoutConsentPhrase
+} from "./metamorphic.js";
+import type { ScenarioRun } from "./call-scenario-evaluation.js";
 
 /** The harness always previews/runs against one fixed represented-mode policy
  * — "calling on Alex Rivera's behalf" — since the harness's job is to exercise
@@ -48,7 +54,21 @@ export interface ParsedCliArgs {
   seedPath?: string;
   outDir?: string;
   only?: string;
+  relation?: MetamorphicRelationId;
 }
+
+/** The metamorphic relations this CLI can run.
+ *
+ * `consent-phrase-removed` had no way in at all: `withoutConsentPhrase` and
+ * `relateConsentGate` existed, were tested, and were absent from `index.ts`,
+ * and `runMetamorphicCommand` threw on any pair that was not the quote raise.
+ * With the live meeting gate not yet run, this apparatus is what stands in for
+ * it, and an apparatus that cannot be invoked stands in for nothing. */
+export const METAMORPHIC_RELATIONS = [
+  "quote-raised-above-ceiling",
+  "consent-phrase-removed"
+] as const;
+export type MetamorphicRelationId = (typeof METAMORPHIC_RELATIONS)[number];
 
 export function parseCliArgs(argv: readonly string[]): ParsedCliArgs {
   const [command, ...rest] = argv;
@@ -110,10 +130,21 @@ export function parseCliArgs(argv: readonly string[]): ParsedCliArgs {
     const runs = Number(rest[runsIdx + 1]);
     if (!Number.isInteger(runs) || runs < 1) throw new Error("--runs must be a positive integer");
     const onlyIdx = rest.indexOf("--only");
+    const relationIdx = rest.indexOf("--relation");
+    // Defaults to the quote raise, which is what this command did before there
+    // was a second relation — a selector that silently changed what an existing
+    // invocation runs would make every recorded result ambiguous.
+    const relation = relationIdx === -1 ? METAMORPHIC_RELATIONS[0] : rest[relationIdx + 1];
+    if (!METAMORPHIC_RELATIONS.includes(relation as MetamorphicRelationId)) {
+      throw new Error(
+        `--relation must be one of ${METAMORPHIC_RELATIONS.join(", ")}, got "${relation}"`
+      );
+    }
     return {
       command: "metamorphic",
       scenarioPath,
       runs,
+      relation: relation as MetamorphicRelationId,
       ...(onlyIdx === -1 ? {} : { only: rest[onlyIdx + 1] })
     };
   }
@@ -163,16 +194,49 @@ export function loadBrief(path: string, readFile: ReadFile = defaultReadFile): B
   return parsed as Brief;
 }
 
+/** The counterpart read `loadBrief` deliberately does not do: pull
+ * `execution.meeting.brief` out of a full call envelope, for `preview` to
+ * show an operator. A bare Brief file (no `execution` at all) and a full
+ * envelope whose meeting declared no brief are indistinguishable here on
+ * purpose — both simply have nothing to show, same as everywhere else this
+ * field passes through undefined rather than an invented placeholder. */
+export function loadMeetingBrief(
+  path: string,
+  readFile: ReadFile = defaultReadFile
+): MeetingExecution["brief"] {
+  const parsed = JSON.parse(readFile(path)) as {
+    execution?: { meeting?: { brief?: MeetingExecution["brief"] } };
+  };
+  return parsed?.execution?.meeting?.brief;
+}
+
 export function runPreviewCommand(
   args: ParsedCliArgs & { command: "preview"; briefPath: string },
   readFile: ReadFile = defaultReadFile
 ): string {
   const brief = loadBrief(args.briefPath, readFile);
-  return formatPayloadPreview(buildPayloadPreview(brief, HARNESS_POLICY));
+  const meetingBrief = loadMeetingBrief(args.briefPath, readFile);
+  return formatPayloadPreview(buildPayloadPreview(brief, HARNESS_POLICY, meetingBrief));
 }
 
+/** Every scenario the harness carries, LISTED — including the meeting set.
+ *
+ * `MEETING_SCENARIOS` had exactly one consumer, its own test: it was absent
+ * from this listing and from `generate-fixtures`, so it could not be reached
+ * through `harness reliability` (which resolves a scenario by id against the
+ * fixtures) and the meeting derails could not be run at all. Grouped rather
+ * than merged, because a meeting derail scored against a two-party call is
+ * noise: they only apply to an envelope declaring `execution.meeting`. */
 export function runScenariosCommand(): string {
-  return DERAIL_SCENARIOS.map((scenario) => `${scenario.id}: ${scenario.description}`).join("\n");
+  const list = (ss: typeof DERAIL_SCENARIOS): string =>
+    ss.map((scenario) => `  ${scenario.id}: ${scenario.description}`).join("\n");
+  return [
+    "derail scenarios (any call):",
+    list(DERAIL_SCENARIOS),
+    "",
+    "meeting scenarios (only an envelope declaring execution.meeting):",
+    list(MEETING_SCENARIOS)
+  ].join("\n");
 }
 
 export async function runTextPreviewCommand(
@@ -363,9 +427,38 @@ export async function runScenarioCommand(
   return collected.join("\n");
 }
 
+/** The witness `relateConsentGate` judges on, derived from a SCRIPTED run.
+ *
+ * That relation asks whether a transcript exists, and a scripted run writes no
+ * files: `runCallScenario` drives Gemini Live against a recording mock carrier
+ * and produces a `ScenarioRun`, not a `MeetingRecord`. What it does carry is
+ * the gate's own answer — and the gate is the only thing between a meeting and
+ * a transcript, so "`begin_notetaking` was admitted" and "a transcript would
+ * exist" are the same fact on this path. It runs the SAME `ToolGate` and
+ * `routeToolCall` a real call runs, which is what makes the substitution legal
+ * rather than convenient.
+ *
+ * The string is deliberately not path-shaped: nothing downstream should be
+ * able to mistake a scripted witness for a file that exists. */
+function consentWitness(run: ScenarioRun): { transcriptPath: string | null } {
+  const admitted = run.toolCalls.some((c) => c.name === "begin_notetaking" && c.result === "ok");
+  return {
+    transcriptPath: admitted ? "<scripted run: the gate admitted begin_notetaking>" : null
+  };
+}
+
 /**
- * Run metamorphic PAIRS: each scenario and a copy of it quoted above the spend
- * ceiling, judged on the property that must hold between the two runs.
+ * Run metamorphic PAIRS: each scenario and a copy of it transformed in exactly
+ * one way, judged on the property that must hold between the two runs.
+ *
+ * Two relations, chosen with `--relation`:
+ *
+ *  - `quote-raised-above-ceiling` — the same call quoted a price the model has
+ *    no authority to accept.
+ *  - `consent-phrase-removed` — the same meeting with the go-ahead phrase
+ *    stripped from every turn that spoke it. A transcript must exist in
+ *    exactly one of the two runs, which is checkable without anyone knowing
+ *    what a good set of meeting notes looks like.
  *
  * This is not the same test as running the `quoteAboveCeiling` cells. Those ask
  * whether the model got an absolute answer right, and that check is only ever
@@ -375,7 +468,13 @@ export async function runScenarioCommand(
  * nobody predicted.
  */
 export async function runMetamorphicCommand(
-  args: { scenarioPath: string; runs: number; only?: string; apiKey: string },
+  args: {
+    scenarioPath: string;
+    runs: number;
+    only?: string;
+    apiKey: string;
+    relation?: MetamorphicRelationId;
+  },
   deps: {
     readFile?: ReadFile;
     readdir?: ReadDir;
@@ -405,20 +504,36 @@ export async function runMetamorphicCommand(
   const unpairable: string[] = [];
   const tally: Record<RelationOutcome, number> = { holds: 0, violated: 0, inconclusive: 0 };
 
+  const relation = args.relation ?? METAMORPHIC_RELATIONS[0];
+  const buildPair =
+    relation === "consent-phrase-removed" ? withoutConsentPhrase : raiseQuoteAboveCeiling;
+
   for (const scenario of selected) {
-    const result = raiseQuoteAboveCeiling(scenario);
+    const result = buildPair(scenario);
     if (result.kind === "unpairable") {
       unpairable.push(`  ${result.scenarioId}: ${result.reason}`);
       continue;
     }
     const { pair } = result;
+    // Each transform produces exactly one pair shape; narrow PairResult's
+    // shared `pair` field back down before reading a shape-specific field.
+    if (pair.relationId !== relation) {
+      throw new Error(`expected the ${relation} pair, got ${pair.relationId}`);
+    }
     for (let i = 0; i < args.runs; i++) {
       const baseRun = await doRun({ apiKey: args.apiKey, scenario: pair.base });
       const variantRun = await doRun({ apiKey: args.apiKey, scenario: pair.variant });
-      const verdict = relateQuoteRaise(pair, baseRun, variantRun);
+      const verdict =
+        pair.relationId === "consent-phrase-removed"
+          ? relateConsentGate(pair, consentWitness(baseRun), consentWitness(variantRun))
+          : relateQuoteRaise(pair, baseRun, variantRun);
       tally[verdict.outcome] += 1;
+      const what =
+        pair.relationId === "consent-phrase-removed"
+          ? "consent phrase removed"
+          : `-> ${pair.raisedTo}`;
       lines.push(
-        `${verdict.outcome.toUpperCase().padEnd(12)} ${pair.base.id} -> ${pair.raisedTo} ` +
+        `${verdict.outcome.toUpperCase().padEnd(12)} ${pair.base.id} ${what} ` +
           `(run ${i + 1}/${args.runs}; base ended ${baseRun.endedBecause}, variant ended ${variantRun.endedBecause})`
       );
       for (const v of verdict.violations) lines.push(`     ! ${v}`);
@@ -605,7 +720,8 @@ function printHelp(): void {
       "    run is a billed Gemini Live session. --concurrency defaults to 1;",
       "    raising it cuts wall-clock, which is what makes more runs per cell",
       "    practical, and does not change the per-run cost.",
-      "  parley-harness metamorphic --file <path|dir> --runs <n> [--only <id>]",
+      "  parley-harness metamorphic --file <path|dir> --runs <n> [--only <id>] " +
+        "[--relation quote-raised-above-ceiling|consent-phrase-removed]",
       "    Requires the GEMINI_API_KEY environment variable. Runs each scenario",
       "    PAIRED with a copy quoted above the spend ceiling, and checks the",
       "    property that must hold BETWEEN the two runs. One run is TWO billed",
@@ -658,6 +774,13 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       {
         scenarioPath: args.scenarioPath,
         runs: args.runs,
+        // Parsed, validated, documented in `--help` — and, until now, dropped
+        // on the floor here, so every invocation ran sequentially whatever it
+        // asked for. The flag was not decorative: twenty billed sessions at up
+        // to three minutes each is an hour of wall clock, and the difference
+        // between measuring a prompt change in six minutes and in half an hour
+        // is the difference between iterating on it and not.
+        ...(args.concurrency === undefined ? {} : { concurrency: args.concurrency }),
         ...(args.only ? { only: args.only } : {}),
         apiKey
       },
@@ -675,6 +798,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         scenarioPath: args.scenarioPath,
         runs: args.runs,
         ...(args.only ? { only: args.only } : {}),
+        ...(args.relation ? { relation: args.relation } : {}),
         apiKey
       },
       { onProgress: (line) => console.log(line) }

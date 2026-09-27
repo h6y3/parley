@@ -1,3 +1,24 @@
+import type { MeetingExecution } from "./meeting.js";
+import type { SpeakerRole } from "./types.js";
+
+/** Twilio's accepted alphabet for `SendDigits`: keypad characters plus `w`
+ * (half-second pause) and `W` (one-second pause) — the two are how a fixed
+ * script can wait out a bridge's own prompt without any feedback to time
+ * against. Shared by the envelope schema (`@parley/policy`'s
+ * `callExecutionSchema`) and the provider boundary
+ * (`@parley/telephony-twilio`'s `TwilioTelephonyProvider.originate`) so the
+ * two validations cannot drift apart. */
+export const SEND_DIGITS_PATTERN = /^[0-9*#wW]+$/;
+
+/** Assumed ceiling on `SendDigits`' length. Twilio's docs were not consulted
+ * over the network while this was built (no network call was available), and
+ * do not appear to state a hard limit for this field the way they do for,
+ * say, an E.164 number — so this assumes 32 characters is a safe ceiling for
+ * a meeting ID plus a passcode plus a few pause characters, rather than quote
+ * a figure never verified against the live API. Revisit if Twilio's docs are
+ * checked directly. */
+export const SEND_DIGITS_MAX_LENGTH = 32;
+
 /** The BINDING half of a call envelope. Everything here is enforced by the
  * server; nothing said on the call can reach it. Contrast `Brief` and the
  * composed policy guardrails, which become prose and are therefore advisory.
@@ -14,6 +35,12 @@ export interface CallExecution {
     allowedDigits: string;
     onUnrecognized: "zeroOut" | "waitForHuman" | "hangUp";
   };
+  /** Declares the call is a conference-bridge join rather than a two-party
+   * call, and raises the ceilings `limits.maxDurationSeconds` and
+   * `ivr.maxPresses` may carry — see `MEETING_MAX_DURATION_SECONDS` and
+   * `MEETING_MAX_PRESSES` in `./meeting.js`. Absent, those ceilings stay at
+   * the ordinary-call maxima. */
+  meeting?: MeetingExecution;
   /** Declares `end_call`. `requireOutcomeBeforeEnd` makes the first hangup
    * attempt refuse until an outcome is recorded — once only, so a model that
    * cannot produce one is never trapped on a live, billing call. */
@@ -37,9 +64,41 @@ export interface CallExecution {
   /** Twilio answering-machine detection. Opt-in because it costs answer latency
    * and a per-call fee on every call, answered by a machine or not. */
   detection?: { mode: "enable" | "detectMessageEnd" };
+  /** Carrier-side DTMF played automatically once the carrier answers the
+   * call — Twilio's `SendDigits`, set at origination, before the model, the
+   * media stream, or anything on our end of the call exists. For
+   * deterministic entry into a bridge whose prompts are known in advance (a
+   * conference ID and passcode, said in a fixed order at a fixed pace), as
+   * distinct from `ivr`/`press_digits` above, which exists for menus the
+   * model must listen to and react to live. Both are legitimate and serve
+   * different callees: a scripted bridge join has no menu to listen for, and
+   * a live IVR has no fixed script to play.
+   *
+   * Lives here, not nested under `meeting` — any bridge or predictable IVR
+   * can use it, not only a meeting join, so it is not meeting-specific.
+   *
+   * Declares NO tool, and deliberately carries no `policy` pairing, unlike
+   * `ivr` (paired with `policy.ivr`) and `meeting` (paired with
+   * `policy.meeting.announce`, see `MeetingExecution` above). Those pairings
+   * exist because the model must be told, in prose, what it is permitted to
+   * do with a tool the envelope declares. `SendDigits` is played by the
+   * carrier before the model is ever connected to the call — there is
+   * nothing for the model to be told, so there is nothing to pair.
+   *
+   * `sendDigits` typically carries a bridge passcode and MUST be treated as a
+   * secret end to end — see `OriginateParams.sendDigits`. */
+  dial?: {
+    /** Twilio's `SendDigits` alphabet and length ceiling — see
+     * `SEND_DIGITS_PATTERN` / `SEND_DIGITS_MAX_LENGTH` above, which this
+     * field's envelope-schema validation (`@parley/policy`) and the provider
+     * boundary (`@parley/telephony-twilio`) both enforce independently, so a
+     * malformed envelope is rejected before a call is ever originated rather
+     * than only at the provider. */
+    sendDigits: string;
+  };
 }
 
-export type ToolName = "press_digits" | "end_call" | "record_outcome";
+export type ToolName = "press_digits" | "end_call" | "record_outcome" | "begin_notetaking";
 
 /** THE COMPLETE SET of strings the server may ever hand back to the model from a
  * tool call.
@@ -58,8 +117,17 @@ export type ToolResult =
   | "refused: digit not permitted"
   | "refused: could not send"
   | "refused: record the outcome first"
+  | "refused: incomplete outcome"
   | "refused: invalid arguments"
-  | "refused: that amount is above the limit for this call";
+  | "refused: that amount is above the limit for this call"
+  /** Nobody has answered a question, because none has been asked: the model
+   * has not completed a turn, or has said nothing at all. Distinct from the
+   * refusal below, which means the room DID speak and none of it was a
+   * go-ahead. Those two returned the identical string until 2026-08-21, so
+   * the one line a live failure left on disk could not say which had
+   * happened — part of why it took a live call to find. */
+  | "refused: the agent has not asked for consent yet"
+  | "refused: the go-ahead phrase has not been spoken";
 
 export const TOOL_RESULTS: readonly ToolResult[] = Object.freeze([
   "ok",
@@ -69,8 +137,11 @@ export const TOOL_RESULTS: readonly ToolResult[] = Object.freeze([
   "refused: digit not permitted",
   "refused: could not send",
   "refused: record the outcome first",
+  "refused: incomplete outcome",
   "refused: invalid arguments",
-  "refused: that amount is above the limit for this call"
+  "refused: that amount is above the limit for this call",
+  "refused: the agent has not asked for consent yet",
+  "refused: the go-ahead phrase has not been spoken"
 ] as const);
 
 export interface RecordedOutcome {
@@ -272,6 +343,28 @@ export function buildToolDeclarations(execution: CallExecution): ToolDeclaration
       }
     });
   }
+  if (execution.meeting) {
+    // The ONLY place "do not call before asking" and "the server can refuse
+    // and you may ask again" are stated. `meetingConsentRequest`
+    // (`@parley/policy`) used to repeat both, in harsher terms — "ends your
+    // turn immediately... has nowhere to go" — and a model reading both this
+    // description and that instruction in the same prompt got two
+    // independent warnings about the same irreversible loss and no
+    // instruction to actually act: two live calls in a row never called this
+    // tool at all. Do not put either warning back into the instruction —
+    // that duplication is the defect that shipped, not a coincidence to fix
+    // twice.
+    decls.push({
+      name: "begin_notetaking",
+      description:
+        "Call this ONCE, after you have announced yourself and asked whether anyone objects to " +
+        "note-taking, at the moment you hear the go-ahead. It starts note-taking and ends your " +
+        "ability to speak for the rest of the meeting, so do not call it before you have asked. " +
+        "The server independently checks that the go-ahead was spoken; if it was not, this is " +
+        "refused and you may ask again.",
+      parametersJsonSchema: { type: "object", properties: {}, additionalProperties: false }
+    });
+  }
   return decls;
 }
 
@@ -285,6 +378,7 @@ export class ToolGate {
   private refusedPresses = 0;
   private outcome?: RecordedOutcome;
   private endRefusedOnce = false;
+  private notetakingBegan = false;
 
   constructor(
     private readonly execution: CallExecution,
@@ -339,6 +433,20 @@ export class ToolGate {
   recordOutcome(status: RecordedOutcome["status"], fields: Record<string, unknown>): ToolResult {
     const declared = this.execution.outcome;
     if (!declared) return "refused: tool not available";
+    // Provider-side function schemas improve model behaviour, but tool
+    // arguments are still untrusted input at this binding gate. Require every
+    // declared field independently here; otherwise a provider that skips JSON
+    // schema validation can write a partial record that downstream mistakes
+    // for a complete one. Empty strings are valid and deliberately mean "the
+    // call did not establish this value".
+    for (const field of declared.fields) {
+      if (!Object.prototype.hasOwnProperty.call(fields, field.name)) {
+        return "refused: incomplete outcome";
+      }
+      if (typeof fields[field.name] !== "string") {
+        return "refused: incomplete outcome";
+      }
+    }
     const allowed = new Set(declared.fields.map((f) => f.name));
     const kept: Record<string, string> = {};
     for (const [key, value] of Object.entries(fields)) {
@@ -357,6 +465,74 @@ export class ToolGate {
 
     this.outcome = { status, fields: kept, recordedAt: this.now() };
     return "recorded";
+  }
+
+  /** Decide whether note-taking may begin.
+   *
+   * The MODEL requests the handoff; the SERVER decides it. Which words were
+   * said, by whom, and in what order is otherwise model judgment — the same
+   * class as policy.authority.spend, which was talked around on three of four
+   * measured cells and was answered with execution.spendCeiling rather than a
+   * better sentence. This is that answer for consent.
+   *
+   * `heard` is the pre-consent buffer's caller-side utterances, timestamped;
+   * the caller already holds them in memory. `requestedAt` is the boundary
+   * `findConsentMatch` enforces: an utterance only counts if it arrived at or
+   * after that instant, because consent follows a request and an utterance
+   * said earlier is an answer to nothing. Pass the boundary that was in force
+   * when the room ANSWERED, not the agent's latest utterance —
+   * `anchorConsentBoundary` below, and the live failure in its doc.
+   * `modelTurnsCompleted` guards the other direction: firing EARLY is the
+   * dangerous mode, because after the handoff there is no speaking plane left
+   * to correct or apologise with.
+   *
+   * The two refusals are DIFFERENT FACTS and say so. "The agent has not asked
+   * for consent yet" is about our own side of the call — no completed turn, or
+   * nothing said in it. "The go-ahead phrase has not been spoken" is about the
+   * room's: it was asked and what came back was not a yes. Both returned the
+   * second string until 2026-08-21, so a live refusal's one line on disk could
+   * not distinguish "we never asked" from "they never agreed", which is part of
+   * why the boundary defect above needed a live call to surface.
+   *
+   * What this does NOT establish is WHO spoke. Slice A does not diarize, so a
+   * stranger who heard the phrase said aloud satisfies it exactly as the
+   * principal would. It is a record that the words were spoken before
+   * note-taking began, and any stronger claim about it is false. */
+  authorizeNotetaking(
+    heard: readonly HeardUtterance[],
+    requestedAt: string | undefined,
+    modelTurnsCompleted: number
+  ): ToolResult {
+    const meeting = this.execution.meeting;
+    if (!meeting) return "refused: tool not available";
+    if (modelTurnsCompleted < 1) return "refused: the agent has not asked for consent yet";
+    // A turn can complete carrying no words at all, so a completed turn is not
+    // proof the agent spoke. With no utterance of ours there is no boundary,
+    // nothing can be an answer, and saying so is more accurate than reporting
+    // the room's silence for our own.
+    if (requestedAt === undefined) return "refused: the agent has not asked for consent yet";
+    const match = findConsentMatch(heard, requestedAt, this.consentPhrases);
+    if (!match) return "refused: the go-ahead phrase has not been spoken";
+    this.notetakingBegan = true;
+    return "ok";
+  }
+
+  /** The declared consent phrases, primary first, exactly as
+   * `authorizeNotetaking` matches them. Empty when no meeting is declared.
+   *
+   * Exists for the debug dump in `routeToolCall`, which is off unless
+   * `PARLEY_DEBUG_CONSENT` is set. Nothing on a normal-operation path may read
+   * this into anything that gets written down: an accepted phrase is exactly
+   * what someone reading a log would want, and every ordinary diagnostic in
+   * this file is built to be incapable of carrying one. */
+  get consentPhrases(): readonly string[] {
+    const meeting = this.execution.meeting;
+    if (!meeting) return [];
+    return [meeting.consent.phrase, ...(meeting.consent.additionalPhrases ?? [])];
+  }
+
+  get notetakingAuthorized(): boolean {
+    return this.notetakingBegan;
   }
 
   snapshot(): { outcome?: RecordedOutcome; dtmf?: { pressed: string[]; refused: number } } {
@@ -389,12 +565,378 @@ function readAmount(raw: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Lowercase and collapse every run of whitespace to one space. Speech
+ * transcripts arrive with inconsistent casing and line breaks, and a phrase
+ * split across two lines is the same phrase.
+ *
+ * Exported so `CallSession.buildConsentReceipt` normalizes against the exact
+ * same rule this gate does — two independently maintained copies agreed
+ * today and would have silently drifted apart the next time either changed
+ * (punctuation stripping being the obvious next rule), landing the gate and
+ * the receipt on different readings of the same phrase. */
+export function normalizePhrase(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/** One heard utterance, timestamped. `at` is an ISO-8601 instant — every
+ * producer in this codebase stamps it from the same clock (`CallSession`'s
+ * injectable `now`, or the harness's wall clock), so plain string comparison
+ * orders correctly. Deliberately minimal: this is everything `findConsentMatch`
+ * needs to decide, not everything a caller may know about the utterance —
+ * `CallSession` passes richer objects (carrying `speaker` too) and they satisfy
+ * this structurally. */
+export interface HeardUtterance {
+  text: string;
+  at: string;
+  /** Who said it, when the caller happens to know — `CallSession` tags the far
+   * end at source (`RealtimeConnectParams.speakerRole`), the scenario harness
+   * has only scripted lines and carries none.
+   *
+   * Read by NO decision in this file. It is here for the consent debug dump
+   * alone, which reports it because "who said the thing the gate rejected" is
+   * the first question anyone asks of one, and reaching it through a cast
+   * would be reading a field the type says does not exist. Any rule that ever
+   * decided on this would be claiming diarization Parley does not have — see
+   * `authorizeNotetaking`'s closing paragraph. */
+  speaker?: SpeakerRole;
+}
+
+/** Negation vocabulary `findConsentMatch` checks for OUTSIDE a matched
+ * phrase's span (see `hasNegationOutsideSpan` below). This is the layer the
+ * previous fix (`e29165f`, `@parley/policy`'s `schema.ts`) could not reach:
+ * that commit rejects a configured PHRASE whose own negated form collides
+ * with it ("please do" / "please dont"). It has nothing to say about a
+ * phrase like "go ahead" — a perfectly good phrase — appearing inside a
+ * sentence that refuses it ("don't go ahead"). Measured directly against
+ * `ToolGate.authorizeNotetaking`, that gap let four real refusals through as
+ * grants; see `consent-negation-outside-span.test.ts`.
+ *
+ * Matched on WORD BOUNDARIES ONLY. Substring presence is exactly the bug
+ * this rule exists to fix in the phrase layer — reusing it here would
+ * reintroduce the identical error one level down: "notes" contains "no" and
+ * "cannot" contains "not", and neither word refuses anything.
+ *
+ * Curated to entries this codebase has direct evidence for, not padded to
+ * "every English negation":
+ *   - "no", "not", "never", "nope", "nah" — the plain refusal words a room
+ *     actually says.
+ *   - "rather not" — a common polite refusal shape; kept as its own entry
+ *     even though the bare "not" token already covers it, because a reader
+ *     auditing this list for "is a polite refusal handled" should find it
+ *     named, not have to prove it's subsumed.
+ *   - the "n't" contractions a bare "not" cannot reach: "don't"/"doesn't"/
+ *     "didn't"/"won't"/"can't"/"isn't"/"wouldn't" — each listed WITH and
+ *     WITHOUT the apostrophe, because the one real refusal on record in this
+ *     codebase (call `CA0573ebc91a165c9c0230f8890915f87b`, see `e29165f`)
+ *     was transcribed "dont", no apostrophe. Speech-to-text is not obliged
+ *     to punctuate a contraction correctly, and a list that only matched the
+ *     punctuated spelling would miss the exact shape that motivated this
+ *     file's sibling fix.
+ *   - "object", "objection" — a direct verbal objection. Still governed by
+ *     the outside-the-span rule below, which is exactly what keeps "no
+ *     objection" granting when it is the configured phrase itself: both
+ *     words land INSIDE that phrase's own matched span.
+ *   - "unhappy", "uncomfortable" — the two words the policy layer's own
+ *     consent question (`@parley/policy`'s `constants.ts`) is written to
+ *     invite as an answer; a check on consent language should recognize the
+ *     words that language is designed to prompt. */
+const NEGATION_TOKENS: readonly string[] = [
+  "no",
+  "not",
+  "rather not",
+  "never",
+  "nope",
+  "nah",
+  "don't",
+  "dont",
+  "doesn't",
+  "doesnt",
+  "didn't",
+  "didnt",
+  "won't",
+  "wont",
+  "can't",
+  "cant",
+  "isn't",
+  "isnt",
+  "wouldn't",
+  "wouldnt",
+  "object",
+  "objection",
+  "unhappy",
+  "uncomfortable"
+];
+
+/** `\b` on both sides of every token, so e.g. "not" only matches the standalone
+ * word — never the tail of "cannot" or the head of "notable". Built once at
+ * module load: it is immutable and only ever consumed through `matchAll`,
+ * which clones the regex internally, so a single shared instance carries no
+ * `lastIndex` state between calls. Special regex characters are escaped
+ * defensively even though the current token list needs none, so adding a
+ * token later cannot silently change what this matches. */
+const NEGATION_PATTERN = new RegExp(
+  `\\b(?:${NEGATION_TOKENS.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`,
+  "g"
+);
+
+/** Every negation-token match in `normalized`, with its character span.
+ * `matchAll` requires the `g` flag `NEGATION_PATTERN` carries and does not
+ * mutate it, so this is safe to call repeatedly on different strings. */
+function negationMatches(normalized: string): { start: number; end: number }[] {
+  return [...normalized.matchAll(NEGATION_PATTERN)].map((m) => ({
+    start: m.index,
+    end: m.index + m[0].length
+  }));
+}
+
+/** `true` if `normalized` contains a negation token whose span is not fully
+ * contained within `[spanStart, spanEnd)` — the matched phrase's own span.
+ * A token entirely INSIDE the span is part of the phrase that was agreed to
+ * ("no problem", "no objection"); a token anywhere else is someone negating
+ * that agreement. Partial overlap (which the token list's shapes cannot
+ * actually produce, since both phrases and tokens split on word boundaries)
+ * is treated as OUTSIDE — fail closed, not fail lenient, on an edge case
+ * that should not occur. */
+function hasNegationOutsideSpan(normalized: string, spanStart: number, spanEnd: number): boolean {
+  return negationMatches(normalized).some((m) => !(m.start >= spanStart && m.end <= spanEnd));
+}
+
+/** Find the newest heard utterance that (a) arrived AT OR AFTER `requestedAt`,
+ * (b) contains one of `phrases` as a normalized substring, and (c) is not
+ * itself a refusal — see `hasNegationOutsideSpan` above. Returns which
+ * phrase matched and the utterance that matched it, or `undefined` if none
+ * qualify.
+ *
+ * ORDERING is the actual guard, not phrase length. A live call found the
+ * length-only version of this wrong: the declared phrase was "go ahead and
+ * take notes", the principal said "go ahead" — a normal, short, human
+ * reply — several times, and a substring match against a four-word phrase
+ * refused every one of them. The risk a length floor was standing in for is
+ * narrower than length: an utterance that arrives BEFORE the agent has asked
+ * anything (someone says "go ahead" to a colleague about something else, and
+ * it later counts as permission for a question nobody had posed yet). That
+ * risk has a precise shape — arrival order — so this checks order instead of
+ * demanding a phrase long enough that nobody says it by accident.
+ *
+ * `at >= requestedAt`, not `>`: two utterances recorded in the same
+ * synchronous tick (the common case in a test, and possible in production if
+ * a transcript event and the request land in the same event-loop turn) get
+ * the same clock reading. That is a recording-granularity tie, not evidence
+ * the utterance preceded the request — a genuinely prior utterance in a real
+ * meeting is seconds or minutes earlier, never tied to the millisecond.
+ * Requiring strict `>` would manufacture false refusals for an immediate
+ * reply without closing any real gap.
+ *
+ * `requestedAt` is `undefined` when the agent has never spoken — nothing
+ * qualifies as an answer to a question that was never asked, so every
+ * utterance is filtered out.
+ *
+ * Phrases that normalize to the empty string (misconfigured — an empty or
+ * whitespace-only entry) are skipped rather than treated as a wildcard: an
+ * empty needle is a substring of everything, which would turn a
+ * misconfiguration into "anything anyone says authorizes the handoff".
+ *
+ * Newest-first, so the LATEST qualifying utterance wins if more than one
+ * matches — the go-ahead is the most recent thing said, the same rule the
+ * pre-consent buffer itself keeps (see `PRE_CONSENT_BUFFER_MAX`).
+ *
+ * An earlier grant does NOT survive a later refusal. A room that says "go
+ * ahead" and is then contradicted by someone else has not reached consent —
+ * so while scanning newest-first, an utterance that carries a negation token
+ * ANYWHERE (whether or not it also matches a phrase — a bare "no, I've
+ * changed my mind" matches no configured phrase at all, and must still
+ * count) stops the scan outright rather than being skipped in favour of an
+ * older match. This is deliberately scoped to the SAME qualifying window
+ * `findConsentMatch` already restricts itself to — utterances at or after
+ * `requestedAt` — which is the room actively responding to the specific
+ * question the agent just asked, not an unbounded scan of the whole call.
+ * An unrelated later utterance with no negation token in it at all ("can you
+ * email me a copy afterward?") is silence on the question, not a refusal of
+ * it, and does not disturb an earlier grant. This fails closed exactly as
+ * the span rule above does: a room that must say "go ahead" once more after
+ * a stray "no" is a nuisance; a refusal that an earlier grant papered over
+ * is the failure this system exists to prevent. */
+export function findConsentMatch<T extends HeardUtterance>(
+  heard: readonly T[],
+  requestedAt: string | undefined,
+  phrases: readonly string[]
+): { phrase: string; utterance: T } | undefined {
+  if (requestedAt === undefined) return undefined;
+  const needles = phrases
+    .map((raw) => ({ raw, needle: normalizePhrase(raw) }))
+    .filter((p) => p.needle !== "");
+  if (needles.length === 0) return undefined;
+  for (let i = heard.length - 1; i >= 0; i -= 1) {
+    const utterance = heard[i];
+    if (utterance.at < requestedAt) continue;
+    const normalized = normalizePhrase(utterance.text);
+    const hit = needles.find((n) => {
+      const idx = normalized.indexOf(n.needle);
+      return idx !== -1 && !hasNegationOutsideSpan(normalized, idx, idx + n.needle.length);
+    });
+    if (hit) return { phrase: hit.raw, utterance };
+    // No un-negated phrase matched THIS utterance. If it carries a negation
+    // token at all, it is a refusal (of a phrase, or of nothing named
+    // in particular — "no" on its own is still a "no") and it overrides
+    // every older utterance in the window: stop here rather than falling
+    // through to an earlier "go ahead". An utterance with neither a phrase
+    // match nor a negation token is simply unrelated to consent and is
+    // skipped, same as before this fix.
+    if (negationMatches(normalized).length > 0) return undefined;
+  }
+  return undefined;
+}
+
+/** Whether one utterance is an UNAMBIGUOUS refusal of the consent request —
+ * the trigger for a denied meeting leaving the bridge rather than sitting on
+ * it mute. Callers supply only utterances inside the consent window; this
+ * judges the words.
+ *
+ * Deliberately NARROWER than "`findConsentMatch` refused it", and the gap is
+ * the whole design. Consent fails closed one way: a negation anywhere outside
+ * a matched phrase's span refuses the grant, so "oh no, sorry — go ahead"
+ * takes no notes and the agent asks again. Leaving fails closed the OTHER
+ * way, because a hangup is just as irreversible as a handoff and nobody can
+ * recall it: it requires a negation token AND no accepted phrase anywhere in
+ * the same breath. So that same sentence refuses consent and does not end the
+ * meeting, which is the outcome a room saying it would want. A room that
+ * plainly says "no", "please don't", or "I'd rather not" gets a goodbye and
+ * an empty bridge.
+ *
+ * Uses the same normalization and the same word-boundary negation vocabulary
+ * the gate does (`NEGATION_TOKENS`), so "refusal" means one thing in this
+ * file and widening it widens both decisions together. The bound on that
+ * vocabulary is real and worth stating: it is curated to shapes this codebase
+ * has direct evidence for, so a refusal phrased outside it ("I'd rather
+ * nothing was recorded") reads here as neither a grant nor a denial — no
+ * notes, and the agent stays until the consent window times out. */
+export function isConsentDenial(text: string, phrases: readonly string[]): boolean {
+  const normalized = normalizePhrase(text);
+  if (negationMatches(normalized).length === 0) return false;
+  return !phrases.some((raw) => {
+    const needle = normalizePhrase(raw);
+    return needle !== "" && normalized.includes(needle);
+  });
+}
+
+/** The ordering boundary a consent decision must be judged against: the one
+ * that was in force when a go-ahead was FIRST heard, not the one in force
+ * whenever `begin_notetaking` happens to arrive.
+ *
+ * Call this on every caller-side utterance, passing back the value it last
+ * returned. It moves exactly once — from `undefined` to the `requestedAt` a
+ * match was first seen against — and never again.
+ *
+ * It exists because on a live call the boundary outran the answer. The
+ * boundary is the agent's most recent utterance, and the composed policy rail
+ * (`meetingConsentRequest`, @parley/policy) requires the model to acknowledge
+ * the go-ahead and call the tool in the SAME turn — so by the time the call is
+ * routed, the acknowledgment is itself the most recent model utterance and the
+ * go-ahead that prompted it sits BEFORE the boundary. `findConsentMatch` skips
+ * it, and the gate refuses a phrase it would have accepted one instant
+ * earlier. The room was told notes were being taken and none were.
+ *
+ * WHAT IS PINNED IS THE BOUNDARY, NEVER THE VERDICT, and that distinction is
+ * the whole safety argument. Storing the match itself would be a latch that
+ * never expires, which is precisely how the withdrawal defect
+ * `findConsentMatch`'s newest-first walk was written to prevent comes back: a
+ * room that says "go ahead" and then "actually, no" would have its earlier
+ * grant replayed at tool-call time. Pinning only the boundary leaves that walk
+ * running in full over the CURRENT buffer on every decision, so a later
+ * negation still stops it, and a later go-ahead after that negation still
+ * grants — the room can change its mind in both directions.
+ *
+ * Nor does this loosen the guard the boundary exists for. The anchor can only
+ * ever be a `requestedAt` the agent actually reached — an utterance said
+ * before the agent asked anything never sets it, because `findConsentMatch`
+ * would not have matched then either. It widens the eligible window by exactly
+ * the model speech that arrived AFTER the answer, which is the speech that
+ * cannot have been what the room was answering. */
+export function anchorConsentBoundary<T extends HeardUtterance>(
+  anchored: string | undefined,
+  heard: readonly T[],
+  requestedAt: string | undefined,
+  phrases: readonly string[]
+): string | undefined {
+  if (anchored !== undefined) return anchored;
+  if (findConsentMatch(heard, requestedAt, phrases) === undefined) return undefined;
+  return requestedAt;
+}
+
+/** Name of the environment variable that turns the consent debug dump below
+ * on. Off unless it is set to something other than `""`, `"0"` or `"false"`.
+ *
+ * Read on every call rather than captured once at module load: a debug switch
+ * that only works if it was set before the process started is a switch you
+ * cannot use on the process that is already misbehaving. */
+export const CONSENT_DEBUG_ENV_VAR = "PARLEY_DEBUG_CONSENT";
+
+function consentDebugEnabled(): boolean {
+  const raw = typeof process === "undefined" ? undefined : process.env?.[CONSENT_DEBUG_ENV_VAR];
+  return raw !== undefined && raw !== "" && raw !== "0" && raw !== "false";
+}
+
+/** EVERYTHING the consent gate saw, as one diagnostic line group.
+ *
+ * ⚠️ A DEBUGGING AID. IT MUST NOT BE ENABLED IN NORMAL OPERATION. Every other
+ * diagnostic in this file is built so it CANNOT carry an accepted phrase or a
+ * word anyone said — see `routeToolCall`'s `onDiagnostic` doc. This one
+ * deliberately carries both, which is the opposite of the design's standing
+ * promise: on a call whose consent is refused nothing said before the gate is
+ * persisted at all (`consentReceipt: null`, and `CallSession.endCall` drops
+ * the buffer), and this writes exactly that speech into a log. So it is
+ * opt-in, off by default, and never a default path.
+ *
+ * What it exists to catch: a refusal whose cause cannot be read off the one
+ * line a refusal normally leaves. The live failure this shipped with left
+ * `heard=2 eligible=1 requested=true` and nothing else, and the cause — a
+ * boundary that had moved past the go-ahead — was invisible in it, because
+ * the go-ahead WAS counted as eligible against the boundary the line reported
+ * and refused against a different one. The next such refusal should be
+ * diagnosable from a log rather than from another live call.
+ *
+ * Each eligible utterance is annotated by the REAL rule, not a paraphrase of
+ * it: `match` is `findConsentMatch` run over that utterance alone, `negation`
+ * is the same token scan the newest-first walk stops on. Between them they
+ * name which check rejected the utterance, and the walk's rule (newest first,
+ * stop on a negation) says which utterance decided the call. */
+function emitConsentDebugDump(params: {
+  heard: readonly HeardUtterance[];
+  requestedAt: string | undefined;
+  phrases: readonly string[];
+  modelTurnsCompleted: number;
+  decision: ToolResult;
+  emit?: (message: string) => void;
+}): void {
+  const { emit, requestedAt, phrases } = params;
+  if (!emit || !consentDebugEnabled()) return;
+  const eligible = params.heard.filter((u) => requestedAt !== undefined && u.at >= requestedAt);
+  const lines = [
+    `begin_notetaking ${CONSENT_DEBUG_ENV_VAR} dump — decision=${params.decision} ` +
+      `boundary=${requestedAt ?? "none"} turnsCompleted=${params.modelTurnsCompleted} ` +
+      `heard=${params.heard.length} eligible=${eligible.length}`,
+    `  phrases=${JSON.stringify(phrases)}`,
+    ...eligible.map((u) => {
+      const match = findConsentMatch([u], requestedAt, phrases) !== undefined;
+      const negation = negationMatches(normalizePhrase(u.text)).length > 0;
+      return (
+        `  heard speaker=${u.speaker ?? "unknown"} at=${u.at} match=${match} ` +
+        `negation=${negation} text=${JSON.stringify(u.text)}`
+      );
+    })
+  ];
+  emit(lines.join("\n"));
+}
+
 /** Minimal carrier surface routeToolCall needs. Narrower than TelephonyProvider
  * on purpose, so the scenario harness can supply a recording mock without
  * implementing origination or webhooks. */
 export interface ToolCarrier {
   sendDtmf(callId: string, digits: string): Promise<void>;
   endCall(reason: string): Promise<void>;
+  /** Perform the plane handoff. Answered by CallSession; the harness supplies a
+   * recording mock. */
+  beginNotetaking(): Promise<void>;
 }
 
 /** Route ONE model-requested tool call through the gate to the carrier.
@@ -412,8 +954,49 @@ export async function routeToolCall(params: {
   carrier: ToolCarrier;
   callId: string;
   respond: (result: ToolResult) => void;
+  heard?: readonly HeardUtterance[];
+  /** The timestamp of the agent's own most recent utterance before this call
+   * was routed — see `ToolGate.authorizeNotetaking`'s doc for what it
+   * bounds. `undefined` (the default) means nothing qualifies, matching
+   * `heard`'s empty default: a caller that supplies neither gets the same
+   * all-refusing gate a caller who supplies real evidence does not. */
+  requestedAt?: string;
+  modelTurnsCompleted?: number;
+  /** Same seam `CallSession` already reports the handoff and the drain
+   * through — see `CallSessionParams.onDiagnostic`. Before this, a refused
+   * `begin_notetaking` answered the model and told nobody else: call
+   * `CA0573ebc91a165c9c0230f8890915f87b` (2026-08-20) looped on refusal for
+   * a minute — the operator experienced it as "connection issues" — and the
+   * only surviving evidence was `modelTurnsCompleted: 7`, from which the
+   * cause had to be guessed.
+   *
+   * Widened to EVERY call this function routes, not only a refused
+   * `begin_notetaking`: two live calls in a row (2026-08-20) ended
+   * `consent_refused` with `modelTurnsCompleted: 4` and nothing here at all,
+   * because a model that never calls the tool never reaches the branch that
+   * used to log. A model that never calls, one whose call is malformed, and
+   * one whose call is accepted were indistinguishable on disk; only an
+   * accepted-vs-refused diagnostic on every call makes the next silence
+   * explain itself. Never carries the accepted phrases or any caller
+   * utterance verbatim: this is written to disk, and the phrases are exactly
+   * what an attacker reading that disk would want. Safe by construction, not
+   * by care taken at each call site — see the wrapped `respond` below. */
+  onDiagnostic?: (message: string) => void;
 }): Promise<void> {
-  const { call, gate, carrier, callId, respond } = params;
+  const { call, gate, carrier, callId } = params;
+
+  // One diagnostic line per call, whatever the outcome — wrapping the
+  // response sink rather than logging at each `respond(...)` call site means
+  // no branch, present or future, can forget to. `detail` is for the one tool
+  // whose outcome needs more than the ToolResult itself to explain
+  // (begin_notetaking, below); both `result` and `detail` are built only from
+  // closed ToolResult literals and utterance COUNTS, never from `call.args`
+  // or utterance text, so this can never carry what reaches this function on
+  // the other end of a phone line.
+  const respond = (result: ToolResult, detail?: string): void => {
+    params.onDiagnostic?.(`${call.name} ${result}${detail ? ` — ${detail}` : ""}`);
+    params.respond(result);
+  };
 
   switch (call.name) {
     case "press_digits": {
@@ -449,6 +1032,45 @@ export async function routeToolCall(params: {
       const validFields = typeof fields === "object" && fields !== null && !Array.isArray(fields);
       if (!validStatus || !validFields) return respond("refused: invalid arguments");
       return respond(gate.recordOutcome(status, fields as Record<string, unknown>));
+    }
+
+    case "begin_notetaking": {
+      const heard = params.heard ?? [];
+      const decision = gate.authorizeNotetaking(
+        heard,
+        params.requestedAt,
+        params.modelTurnsCompleted ?? 0
+      );
+      // Shape, not content: a count of what was in the pre-consent buffer and
+      // whether any of it was even eligible (arrived at or after the request
+      // `findConsentMatch` orders against) — never the utterance text or
+      // which phrases would have matched it. Attached whether this call is
+      // accepted or refused: an ACCEPTED call with `eligible=0` would itself
+      // be a bug worth seeing on disk, and the two outcomes sharing one
+      // detail format is what makes them comparable at all.
+      const eligible =
+        params.requestedAt === undefined
+          ? 0
+          : heard.filter((u) => u.at >= (params.requestedAt as string)).length;
+      const detail = `heard=${heard.length} eligible=${eligible} requested=${params.requestedAt !== undefined}`;
+      emitConsentDebugDump({
+        heard,
+        requestedAt: params.requestedAt,
+        phrases: gate.consentPhrases,
+        modelTurnsCompleted: params.modelTurnsCompleted ?? 0,
+        decision,
+        emit: params.onDiagnostic
+      });
+      if (decision !== "ok") {
+        respond(decision, detail);
+        return;
+      }
+      // Answer BEFORE the handoff. The handoff closes the realtime session, and a
+      // tool response written to a closed session is a stalled turn, which on a
+      // live call is dead air.
+      respond("ok", detail);
+      await carrier.beginNotetaking();
+      return;
     }
 
     default:

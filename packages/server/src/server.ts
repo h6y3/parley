@@ -1,6 +1,12 @@
 import { createServer, type Server } from "node:http";
 import { WebSocketServer, type WebSocket as WsSocket } from "ws";
-import type { AudioCodec, RealtimeProvider, TelephonyProvider } from "@parley/core";
+import type {
+  AudioCodec,
+  FrameConverter,
+  RealtimeProvider,
+  TelephonyProvider,
+  TranscriptionProvider
+} from "@parley/core";
 import type { NumberAllowlist, HostAllowlist } from "./allowlist.js";
 import { handleMediaConnection, type CompletedCallRecord } from "./media-connection.js";
 import { PendingSessions } from "./pending-sessions.js";
@@ -29,7 +35,13 @@ export interface ParleyServerConfig {
    * choosing who may originate a call is not a field anyone should be able to
    * forget; empty or absent makes the daemon refuse every call. */
   callToken: string | undefined;
-  onCallCompleted?: (record: CompletedCallRecord) => void;
+  /** The listening plane. Optional — absent means this daemon cannot honor
+   * a meeting envelope, and `request-handler.ts`'s `handleCall` refuses one
+   * at POST /call rather than let CallSession discover the gap after
+   * consent is granted. Passed straight through to `ServerDeps` via the
+   * `{ ...config, pending }` spread below — no separate wiring needed here. */
+  transcription?: { provider: TranscriptionProvider; convert: FrameConverter };
+  onCallCompleted?: (record: CompletedCallRecord) => void | Promise<void>;
 }
 
 export function createParleyServer(config: ParleyServerConfig): {
@@ -38,7 +50,17 @@ export function createParleyServer(config: ParleyServerConfig): {
   close: () => Promise<void>;
 } {
   const pending = new PendingSessions();
-  const deps: ServerDeps = { ...config, pending };
+  const deps: ServerDeps = {
+    ...config,
+    pending,
+    // `onCallCompleted` IS the artifact sink — it is what writes
+    // transcript.jsonl and the meeting record and spawns the post-call hook
+    // (see @parley/cli's `runCompletedCallPostCall`). Without one, a meeting
+    // produces nothing a reader can consume, so `handleCall` refuses the
+    // envelope rather than let the agent promise a room notes it will then
+    // throw away.
+    meetingArtifactsConfigured: config.onCallCompleted !== undefined
+  };
 
   const server = createServer((req, res) => {
     const chunks: Buffer[] = [];

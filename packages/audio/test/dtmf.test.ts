@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MULAW_8K } from "@parley/core";
 import { muLawDecode } from "../src/mulaw.js";
 import { DTMF_FREQUENCIES, dtmfMuLaw } from "../src/dtmf.js";
 
@@ -27,7 +28,7 @@ function samplesOf(frame: { data: Buffer }): Int16Array {
 
 describe("dtmfMuLaw", () => {
   it("emits 8kHz mu-law, the encoding the carrier stream speaks", () => {
-    expect(dtmfMuLaw("1").encoding).toBe("mulaw8k");
+    expect(dtmfMuLaw("1").encoding).toEqual(MULAW_8K);
   });
 
   it("carries both tones of the digit and neither of another", () => {

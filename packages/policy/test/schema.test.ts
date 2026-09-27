@@ -47,6 +47,30 @@ describe("parseCallEnvelope", () => {
     const env = parseCallEnvelope({ version: WIRE_VERSION, brief, policy: valid });
     expect(env.brief.to).toBe("+15551234567");
   });
+  it("accepts well-formed retry lineage and preserves it", () => {
+    const env = parseCallEnvelope({
+      version: WIRE_VERSION,
+      brief: { ...brief, operation: { id: "order-AB123", attempt: 2, maxAttempts: 3 } },
+      policy: valid
+    });
+    expect(env.brief.operation).toEqual({ id: "order-AB123", attempt: 2, maxAttempts: 3 });
+  });
+  it("rejects malformed or over-budget retry lineage", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: WIRE_VERSION,
+        brief: { ...brief, operation: { id: "bad id", attempt: 1, maxAttempts: 3 } },
+        policy: valid
+      })
+    ).toThrow();
+    expect(() =>
+      parseCallEnvelope({
+        version: WIRE_VERSION,
+        brief: { ...brief, operation: { id: "order-AB123", attempt: 4, maxAttempts: 3 } },
+        policy: valid
+      })
+    ).toThrow();
+  });
   it("rejects an unsupported wire version", () => {
     expect(() =>
       parseCallEnvelope({
@@ -154,6 +178,161 @@ describe("execution plane", () => {
     ).toThrow();
   });
 
+  /** Same shape as the policy.ivr/execution.ivr pairing above, and the same
+   * reason: composePolicy composes the meeting rails (announce, ask for
+   * objections, notetaker scope) off policy.meeting.announce alone — see
+   * compose.ts's order:15 meeting rail. Declared apart, a room can be told an
+   * AI will take notes while no execution.meeting tool exists to take any. */
+  it("rejects policy.meeting.announce:true without execution.meeting", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: { ...execPolicy, meeting: { announce: true } }
+      })
+    ).toThrow();
+  });
+
+  it("rejects execution.meeting without policy.meeting.announce:true", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: execPolicy,
+        execution: {
+          meeting: {
+            consent: {
+              phrase: "go ahead and take notes",
+              timeoutSeconds: 180,
+              onTimeout: "hangUp"
+            }
+          }
+        }
+      })
+    ).toThrow();
+  });
+
+  it("accepts policy.meeting.announce:true PAIRED with execution.meeting", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: { ...execPolicy, meeting: { announce: true } },
+        execution: {
+          meeting: {
+            consent: {
+              phrase: "go ahead and take notes",
+              timeoutSeconds: 180,
+              onTimeout: "hangUp"
+            }
+          },
+          limits: { maxDurationSeconds: 14400 }
+        }
+      })
+    ).not.toThrow();
+  });
+
+  it("accepts policy.meeting.announce:false with no execution.meeting — announce:false composes no rail, so nothing to pair", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: { ...execPolicy, meeting: { announce: false } }
+      })
+    ).not.toThrow();
+  });
+
+  /** The five OPTIONAL policy fields meaningless for a meeting notetaker,
+   * REJECTED outright rather than silently composing no rail for them — see
+   * the `rejectedForMeeting` block in schema.ts, right after the
+   * policy.meeting/execution.meeting pairing above. Each envelope below is
+   * otherwise complete and correctly paired (a real execution.meeting with a
+   * valid consent phrase), so the only thing under test is the meeting-field
+   * rejection — not some other, unrelated validation failure. */
+  describe("meeting envelopes reject fields meaningless for a notetaker", () => {
+    const meetingExecution = {
+      meeting: {
+        consent: {
+          phrase: "go ahead and take notes",
+          timeoutSeconds: 180,
+          onTimeout: "hangUp" as const
+        }
+      }
+    };
+
+    function parseWithMeetingField(extra: Record<string, unknown>): unknown {
+      return parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: { ...execPolicy, meeting: { announce: true }, ...extra },
+        execution: meetingExecution
+      });
+    }
+
+    function messageFor(extra: Record<string, unknown>): string {
+      try {
+        parseWithMeetingField(extra);
+        expect.unreachable("expected parseCallEnvelope to throw");
+      } catch (error) {
+        return String((error as Error).message);
+      }
+    }
+
+    it("rejects authority.spend, naming the field and why", () => {
+      const message = messageFor({
+        authority: { spend: { limit: 250, currency: "USD", basis: "for this visit" } }
+      });
+      expect(message).toContain("policy.authority.spend");
+      expect(message).toMatch(/meaningless for a meeting notetaker/);
+    });
+
+    it("rejects authority.authorizedCommitments, naming the field and why", () => {
+      const message = messageFor({
+        authority: { authorizedCommitments: ["Confirm the roadmap date."] }
+      });
+      expect(message).toContain("policy.authority.authorizedCommitments");
+      expect(message).toMatch(/meaningless for a meeting notetaker/);
+    });
+
+    it("rejects callback, naming the field and why", () => {
+      const message = messageFor({ callback: { number: "+15555550142" } });
+      expect(message).toContain("policy.callback");
+      expect(message).toMatch(/meaningless for a meeting notetaker/);
+    });
+
+    it("rejects wrapUp, naming the field and why", () => {
+      const message = messageFor({ wrapUp: { enabled: true } });
+      expect(message).toContain("policy.wrapUp");
+      expect(message).toMatch(/meaningless for a meeting notetaker/);
+    });
+
+    it("rejects voicemail, naming the field and why", () => {
+      const message = messageFor({ voicemail: { onMachine: "leaveMessage" } });
+      expect(message).toContain("policy.voicemail");
+      expect(message).toMatch(/meaningless for a meeting notetaker/);
+    });
+
+    it("accepts the same meeting envelope carrying none of the five fields", () => {
+      expect(() => parseWithMeetingField({})).not.toThrow();
+    });
+
+    it("does NOT reject these same five fields on an ordinary (non-meeting) envelope", () => {
+      expect(() =>
+        parseCallEnvelope({
+          version: 2,
+          brief: execBrief,
+          policy: {
+            ...execPolicy,
+            authority: { spend: { limit: 250, currency: "USD", basis: "for this visit" } },
+            callback: { number: "+15555550142" },
+            wrapUp: { enabled: true },
+            voicemail: { onMachine: "leaveMessage" }
+          }
+        })
+      ).not.toThrow();
+    });
+  });
+
   it("rejects a non-keypad character in allowedDigits", () => {
     expect(() =>
       parseCallEnvelope({
@@ -198,6 +377,125 @@ describe("execution plane", () => {
         execution: { limits: { maxDurationSeconds: 300 } }
       })
     ).not.toThrow();
+  });
+});
+
+/**
+ * `execution.dial.sendDigits` is Twilio's `SendDigits`: carrier-played DTMF
+ * fired at origination, before any media stream — or the model — exists. It
+ * is unlike every other block in `execution` in one respect worth testing
+ * for directly: it needs no `policy` pairing. `ivr` pairs with `policy.ivr`
+ * and `meeting` pairs with `policy.meeting.announce` because both of those
+ * tell the model, in prose, what it may do with a tool. There is nothing to
+ * tell the model here — the carrier has already played the tones by the time
+ * the model is on the line — so an envelope may declare `execution.dial`
+ * with no matching `policy` field at all, alongside either a typed `policy`
+ * or raw `guardrails[]`.
+ */
+describe("execution.dial — carrier-side DTMF at origination", () => {
+  it("accepts a well-formed sendDigits alongside a typed policy, with no pairing required", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: execPolicy,
+        execution: { dial: { sendDigits: "1234567890#" } }
+      })
+    ).not.toThrow();
+  });
+
+  it("accepts sendDigits alongside raw guardrails (no policy object)", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        guardrails: ["Be brief."],
+        execution: { dial: { sendDigits: "1234w5678" } }
+      })
+    ).not.toThrow();
+  });
+
+  it("accepts the full Twilio SendDigits alphabet: 0-9, *, #, w, W", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: execPolicy,
+        execution: { dial: { sendDigits: "0123456789*#wW" } }
+      })
+    ).not.toThrow();
+  });
+
+  it("rejects an empty sendDigits", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: execPolicy,
+        execution: { dial: { sendDigits: "" } }
+      })
+    ).toThrow();
+  });
+
+  it("rejects a character outside the SendDigits alphabet", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: execPolicy,
+        execution: { dial: { sendDigits: "1234a5678" } }
+      })
+    ).toThrow();
+  });
+
+  it("rejects sendDigits over the length ceiling", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: execPolicy,
+        execution: { dial: { sendDigits: "1".repeat(33) } }
+      })
+    ).toThrow();
+  });
+
+  it("accepts sendDigits at exactly the length ceiling", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: execPolicy,
+        execution: { dial: { sendDigits: "1".repeat(32) } }
+      })
+    ).not.toThrow();
+  });
+
+  it("rejects an unknown field inside execution.dial", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: execPolicy,
+        execution: { dial: { sendDigits: "123", extra: "nope" } }
+      })
+    ).toThrow();
+  });
+
+  it("does not echo the invalid value into the thrown error (sendDigits is a secret)", () => {
+    // The digit string typically carries a bridge passcode. Zod's default
+    // regex/length failure messages describe the RULE, not the value — this
+    // asserts that stays true rather than trusting it silently.
+    try {
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: execPolicy,
+        execution: { dial: { sendDigits: "9999secretpasscode9999" } }
+      });
+      expect.unreachable("expected parseCallEnvelope to throw");
+    } catch (error) {
+      expect(String((error as Error).message)).not.toContain("secretpasscode");
+    }
   });
 });
 

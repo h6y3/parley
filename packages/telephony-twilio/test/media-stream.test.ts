@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AudioFrame, CallLifecycleEvent, WebSocketLike } from "@parley/core";
+import {
+  MULAW_8K,
+  PCM_16K,
+  type AudioFrame,
+  type AudioSource,
+  type CallLifecycleEvent,
+  type WebSocketLike
+} from "@parley/core";
 import { attachTwilioMediaStream, outboundFramesDue } from "../src/media-stream.js";
 
 /** A fake WebSocketLike that lets a test push inbound messages and capture
@@ -61,7 +68,7 @@ describe("attachTwilioMediaStream", () => {
       JSON.stringify({ event: "media", media: { track: "inbound", payload }, streamSid: "MZ123" })
     );
     expect(frames).toHaveLength(1);
-    expect(frames[0].encoding).toBe("mulaw8k");
+    expect(frames[0].encoding).toEqual(MULAW_8K);
     expect([...frames[0].data]).toEqual([0xff, 0x7f, 0x00]);
   });
 
@@ -74,7 +81,7 @@ describe("attachTwilioMediaStream", () => {
       onCallEvent: () => {}
     });
     emit("message", START);
-    handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.from([0x01, 0x02]) });
+    handle.sendOutboundAudio({ encoding: MULAW_8K, data: Buffer.from([0x01, 0x02]) });
     vi.advanceTimersByTime(20); // one pacer tick
     const msg = JSON.parse(sent[0]);
     expect(msg.event).toBe("media");
@@ -94,7 +101,7 @@ describe("attachTwilioMediaStream", () => {
       onCallEvent: () => {}
     });
     emit("message", START);
-    handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.alloc(400, 0x10) }); // 2 full frames + an 80-byte tail
+    handle.sendOutboundAudio({ encoding: MULAW_8K, data: Buffer.alloc(400, 0x10) }); // 2 full frames + an 80-byte tail
     vi.advanceTimersByTime(20);
     expect(decodePayload(sent[0]).length).toBe(160);
     vi.advanceTimersByTime(20);
@@ -130,7 +137,7 @@ describe("attachTwilioMediaStream", () => {
       onCallEvent: () => {}
     });
     emit("message", START);
-    handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.alloc(320, 0x10) });
+    handle.sendOutboundAudio({ encoding: MULAW_8K, data: Buffer.alloc(320, 0x10) });
     handle.clearOutboundBuffer();
     expect(JSON.parse(sent[0])).toEqual({ event: "clear", streamSid: "MZ123" });
     // The queued audio was dropped: the next tick yields silence, not 0x10 audio.
@@ -146,7 +153,7 @@ describe("attachTwilioMediaStream", () => {
       onInboundAudio: () => {},
       onCallEvent: () => {}
     });
-    handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.from([0x01]) });
+    handle.sendOutboundAudio({ encoding: MULAW_8K, data: Buffer.from([0x01]) });
     vi.advanceTimersByTime(60); // several ticks — pacer stays quiet until streamSid is known
     expect(sent).toHaveLength(0);
   });
@@ -164,7 +171,7 @@ describe("attachTwilioMediaStream", () => {
       "message",
       JSON.stringify({ event: "media", media: { payload: "AA==" }, streamSid: "MZ999" })
     );
-    handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.from([0x01, 0x02]) });
+    handle.sendOutboundAudio({ encoding: MULAW_8K, data: Buffer.from([0x01, 0x02]) });
     vi.advanceTimersByTime(20);
     expect(JSON.parse(sent[0]).streamSid).toBe("MZ999");
   });
@@ -179,12 +186,12 @@ describe("attachTwilioMediaStream", () => {
     });
     emit("message", START);
     // A single frame larger than the ~60s cap is dropped, not buffered.
-    handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.alloc(60 * 8000 + 1, 0x10) });
+    handle.sendOutboundAudio({ encoding: MULAW_8K, data: Buffer.alloc(60 * 8000 + 1, 0x10) });
     vi.advanceTimersByTime(20);
     expect([...decodePayload(sent[0])].every((b) => b === 0xff)).toBe(true); // silence — the frame was dropped
   });
 
-  it("rejects a non-mulaw8k outbound frame (encoding contract)", () => {
+  it("rejects a non-mulaw@8000 outbound frame (encoding contract)", () => {
     const { socket, emit } = makeFakeSocket();
     const handle = attachTwilioMediaStream({
       callId: "CA123",
@@ -194,8 +201,8 @@ describe("attachTwilioMediaStream", () => {
     });
     emit("message", START);
     expect(() =>
-      handle.sendOutboundAudio({ encoding: "pcm16k", data: Buffer.from([0x01]) })
-    ).toThrow(/mulaw8k/);
+      handle.sendOutboundAudio({ encoding: PCM_16K, data: Buffer.from([0x01]) })
+    ).toThrow(/mulaw@8000/);
   });
 
   it("maps start→answered and stop→completed lifecycle events", () => {
@@ -218,7 +225,27 @@ describe("attachTwilioMediaStream", () => {
     );
     emit("message", JSON.stringify({ event: "stop", streamSid: "MZ123" }));
     expect(events[0]).toEqual({ type: "answered" });
-    expect(events[1]).toEqual({ type: "completed", durationSeconds: 2 });
+    expect(events[1]).toEqual({ type: "admitted" });
+    expect(events[2]).toEqual({ type: "completed", durationSeconds: 2 });
+  });
+
+  it("tags every inbound frame with the mixed source, and admits on start", async () => {
+    const frames: { source: AudioSource }[] = [];
+    const events: CallLifecycleEvent[] = [];
+    const { socket, emit } = makeFakeSocket();
+    attachTwilioMediaStream({
+      callId: "CA1",
+      socket,
+      onInboundAudio: (_frame, source) => frames.push({ source }),
+      onCallEvent: (e) => events.push(e)
+    });
+    emit("message", JSON.stringify({ event: "start", start: { streamSid: "MZ1" } }));
+    emit(
+      "message",
+      JSON.stringify({ event: "media", media: { payload: Buffer.from([0xff]).toString("base64") } })
+    );
+    expect(frames[0]?.source).toEqual({ streamId: "mixed" });
+    expect(events).toContainEqual({ type: "admitted" });
   });
 
   it("ignores malformed JSON frames without throwing", () => {
@@ -249,7 +276,7 @@ describe("attachTwilioMediaStream", () => {
         onCallEvent: () => {}
       });
       emit("message", START);
-      handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.alloc(800, 0x10) }); // 5 frames' worth
+      handle.sendOutboundAudio({ encoding: MULAW_8K, data: Buffer.alloc(800, 0x10) }); // 5 frames' worth
       // First tick establishes the epoch (elapsed 0) and sends frame #1.
       vi.advanceTimersByTime(20);
       expect(sent).toHaveLength(1);
@@ -278,6 +305,19 @@ describe("attachTwilioMediaStream", () => {
     const before = sent.length;
     vi.advanceTimersByTime(100); // no more frames after close
     expect(sent.length).toBe(before);
+  });
+
+  it("emits removed with by:unknown exactly once when the socket closes", () => {
+    const { socket, emit } = makeFakeSocket();
+    const events: CallLifecycleEvent[] = [];
+    attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: (e) => events.push(e)
+    });
+    emit("close", undefined);
+    expect(events).toEqual([{ type: "removed", by: "unknown" }]);
   });
 });
 
@@ -366,7 +406,7 @@ describe("drainOutbound", () => {
 
   it("resolves only once Twilio confirms it played to the mark", async () => {
     const { handle, parsed, echoMark } = connected();
-    handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.alloc(320, 0x7f) });
+    handle.sendOutboundAudio({ encoding: MULAW_8K, data: Buffer.alloc(320, 0x7f) });
     let done = false;
     const drain = handle.drainOutbound(1_000).then(() => {
       done = true;
@@ -383,7 +423,7 @@ describe("drainOutbound", () => {
     // A mark that never comes back must not strand a billing call. The cap is
     // the honest failure, not the mechanism.
     const { handle } = connected();
-    handle.sendOutboundAudio({ encoding: "mulaw8k", data: Buffer.alloc(160, 0x7f) });
+    handle.sendOutboundAudio({ encoding: MULAW_8K, data: Buffer.alloc(160, 0x7f) });
     const started = Date.now();
     await handle.drainOutbound(120);
     expect(Date.now() - started).toBeGreaterThanOrEqual(100);

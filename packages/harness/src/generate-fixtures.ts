@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { GoogleGenAI } from "@google/genai";
 import { pcm16BufferToSamples, resampleLinear, samplesToPcm16Buffer } from "@parley/audio";
-import { DERAIL_SCENARIOS } from "./scenarios.js";
+import { DERAIL_SCENARIOS, MEETING_SCENARIOS } from "./scenarios.js";
 
 const TARGET_RATE = 16000; // Gemini Live input rate
 const GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts";
@@ -20,9 +20,15 @@ export interface GenerateFixturesDeps {
   writeFile?: (path: string, data: Buffer) => void;
 }
 
-/** Render each derail scenario's callee line to a 16kHz PCM16 fixture. Skips the
- * `silence` scenario (no spoken line). Returns the paths written. The live TTS
- * client is injected; see fixtures/README.md for the manual generation command. */
+/** Render every scenario's callee line to a 16kHz PCM16 fixture — the derail
+ * set AND the meeting set. Skips scenarios with no spoken line (`silence`,
+ * `hold-music`). Returns the paths written. The live TTS client is injected;
+ * see fixtures/README.md for the manual generation command.
+ *
+ * The meeting set was omitted, which is what made it unreachable: `harness
+ * reliability` resolves a scenario by id against these fixtures, so a scenario
+ * with no rendered audio cannot be run at all. Its ids are disjoint from the
+ * derail set's, so one flat output directory stays unambiguous. */
 export async function generateFixtures(
   params: { outDir: string },
   deps: GenerateFixturesDeps
@@ -35,7 +41,7 @@ export async function generateFixtures(
     });
   const written: string[] = [];
 
-  for (const scenario of DERAIL_SCENARIOS) {
+  for (const scenario of [...DERAIL_SCENARIOS, ...MEETING_SCENARIOS]) {
     if (!scenario.calleeLine) continue; // silence
     const { sampleRate, pcm } = await deps.synthesize(scenario.calleeLine);
     const samples = pcm16BufferToSamples(pcm);

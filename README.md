@@ -40,18 +40,41 @@ See [`docs/configuration.md`](docs/configuration.md#execution--the-binding-plane
 format and [`docs/security-model.md`](docs/security-model.md#the-tool-channel--bounded-capability-constant-only-results)
 for why the gate holds.
 
+## Sitting in on a meeting
+
+A call can also be a **meeting**: Parley dials into a conference bridge, announces itself, and —
+only once someone says a declared consent phrase on the record — hands off from a speaking plane
+to a silent, transcript-only listening plane that can never put audio back onto the call, a
+guarantee enforced by the shape of its interface rather than by convention. Nothing is written to
+disk before that handoff, and no audio ever is, meeting or not — but a meeting's transcript is
+still text captured by a third party while the call happens, and the security argument for it
+rests on the consent gate, not on the absence of a recording.
+
+`parley serve` wires the whole thing, and it needs **two** things set: `DEEPGRAM_API_KEY` builds
+the listening plane, and `PARLEY_CALL_RECORDS_PATH` is where a finished meeting's transcript and
+record are written. Missing either, `POST /call` refuses every `execution.meeting` envelope with
+`503` before a call is ever placed — a caller finds out before dialing, not after a room has been
+told an AI will start taking notes and then had nowhere for the notes to go. `parley doctor` says
+which: `meetings: ready`, or `meetings: not configured (needs …)`. See
+[`docs/configuration.md`](docs/configuration.md#meetings--the-listening-plane) for the full setup,
+and [`docs/security-model.md`](docs/security-model.md#meeting-notetaking--consent-not-absence-of-capture)
+for the consent control's own stated limit — wiring the plane in makes meetings _reachable_
+through the daemon; it does not and cannot make the consent phrase into authentication.
+
 ## Packages
 
-| Package                                                 | Responsibility                                                                                                                                                                                                                                                                                                            |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`@parley/core`](packages/core)                         | `TelephonyProvider`/`RealtimeProvider` interfaces, the `CallSession` orchestrator, the pure-caller-content `Brief` type, generic `systemInstruction` rendering, redaction, and the `ToolGate` that decides what a model's tool call is actually allowed to do. Policy-agnostic — knows nothing about modes or disclosure. |
-| [`@parley/policy`](packages/policy)                     | The `CallPolicy`/`CallEnvelope`/`CallExecution` schema (zod-validated), guardrail composition (`composePolicy`), and the `principalCall`/`representedCall`/`transactionalCall`/`navigableCall` presets.                                                                                                                   |
-| [`@parley/audio`](packages/audio)                       | μ-law ⟷ PCM resampling, frame handling, barge-in buffer management, and DTMF tone synthesis. Usable standalone.                                                                                                                                                                                                           |
-| [`@parley/telephony-twilio`](packages/telephony-twilio) | `TelephonyProvider` implementation for Twilio: origination, TwiML, fail-closed signature verification, Media Streams, carrier-confirmed outbound drain, hangup.                                                                                                                                                           |
-| [`@parley/realtime-gemini`](packages/realtime-gemini)   | `RealtimeProvider` implementation for Gemini Live via the official `@google/genai` SDK.                                                                                                                                                                                                                                   |
-| [`@parley/server`](packages/server)                     | The daemon: `POST /call`, the Twilio answer webhook, and the media-stream WebSocket endpoint — wires `@parley/core` and `@parley/policy` to the two provider packages over plain `node:http` + `ws`.                                                                                                                      |
-| [`@parley/cli`](packages/cli)                           | The unified `parley` binary: `serve`, `call`, `harness …`, `doctor`.                                                                                                                                                                                                                                                      |
-| [`@parley/harness`](packages/harness)                   | Offline prompt/reliability tester: text and audio turns, multi-turn derail scripts, generated multi-turn call scenarios with derived expectations, metamorphic pairs, failure-rate reporting, payload preview.                                                                                                            |
+| Package                                                             | Responsibility                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`@parley/core`](packages/core)                                     | `TelephonyProvider`/`RealtimeProvider` interfaces, the `CallSession` orchestrator, the pure-caller-content `Brief` type, generic `systemInstruction` rendering, redaction, and the `ToolGate` that decides what a model's tool call is actually allowed to do. Policy-agnostic — knows nothing about modes or disclosure. |
+| [`@parley/policy`](packages/policy)                                 | The `CallPolicy`/`CallEnvelope`/`CallExecution` schema (zod-validated), guardrail composition (`composePolicy`), and the `principalCall`/`representedCall`/`transactionalCall`/`navigableCall` presets.                                                                                                                   |
+| [`@parley/audio`](packages/audio)                                   | μ-law ⟷ PCM resampling, frame handling, barge-in buffer management, and DTMF tone synthesis. Usable standalone.                                                                                                                                                                                                           |
+| [`@parley/telephony-twilio`](packages/telephony-twilio)             | `TelephonyProvider` implementation for Twilio: origination, TwiML, fail-closed signature verification, Media Streams, carrier-confirmed outbound drain, hangup.                                                                                                                                                           |
+| [`@parley/realtime-gemini`](packages/realtime-gemini)               | `RealtimeProvider` implementation for Gemini Live via the official `@google/genai` SDK. The default speaking-plane provider.                                                                                                                                                                                              |
+| [`@parley/realtime-deepgram`](packages/realtime-deepgram)           | A second `RealtimeProvider`, selected with `parley serve --realtime-provider deepgram`. A spike, not a default — see [`docs/decisions/2026-08-19-voice-agent-spike.md`](docs/decisions/2026-08-19-voice-agent-spike.md).                                                                                                  |
+| [`@parley/transcription-deepgram`](packages/transcription-deepgram) | `TranscriptionProvider` implementation for the **listening plane** — the silent, transcript-only side of a meeting — over Deepgram's Listen API. A dependency of `@parley/cli`, which wires it into `parley serve`; see [`docs/configuration.md`](docs/configuration.md#meetings--the-listening-plane).                   |
+| [`@parley/server`](packages/server)                                 | The daemon: `POST /call`, the Twilio answer webhook, and the media-stream WebSocket endpoint — wires `@parley/core` and `@parley/policy` to the provider packages over plain `node:http` + `ws`.                                                                                                                          |
+| [`@parley/cli`](packages/cli)                                       | The unified `parley` binary: `serve`, `call`, `harness …`, `doctor`.                                                                                                                                                                                                                                                      |
+| [`@parley/harness`](packages/harness)                               | Offline prompt/reliability tester: text and audio turns, multi-turn derail scripts, generated multi-turn call scenarios with derived expectations, metamorphic pairs, failure-rate reporting, payload preview.                                                                                                            |
 
 `examples/agent-integration`, `examples/express-minimal`, and `examples/briefs` (below) round out the
 repo; they are reference material, not packages in the pnpm workspace.
@@ -106,7 +129,7 @@ produce before it goes anywhere near a live call.
 | [Security Model](docs/security-model.md)               | Fail-closed guarantees                             |
 | [Provider Authoring](docs/provider-authoring-guide.md) | Adding a telephony/realtime provider               |
 | [Scenario Authoring](docs/scenario-authoring.md)       | Seeding, generating and measuring call scenarios   |
-| [Examples](examples/scenarios/README.md)               | 12 ready-to-run call scenarios                     |
+| [Examples](examples/scenarios/README.md)               | 13 ready-to-run call scenarios                     |
 
 ## Examples
 
@@ -165,7 +188,13 @@ responsibility, not the library's. Before you dial a real number, understand the
 to you, including at least:
 
 - **Consent and recording.** Many jurisdictions are all-party-consent for recording or monitoring
-  a call. (Parley itself does **not** record calls.)
+  a call. Parley itself does **not** record audio, on any call. A call configured as a **meeting**
+  is different: once consent is obtained on the record, it produces a **text transcript**,
+  captured live by a third-party transcription service — which is the kind of thing all-party-consent
+  law is aimed at, independent of whether any audio is ever written to disk. See
+  [`docs/security-model.md`](docs/security-model.md#meeting-notetaking--consent-not-absence-of-capture)
+  for the control this rests on, and its stated limit: the consent phrase records that the words
+  were spoken, not who spoke them.
 - **AI / automated-caller disclosure.** A growing number of jurisdictions require that the person
   on the line be told they are speaking with an AI or automated system. Parley's `onBehalf` and
   `silent` identity styles are designed to support honest disclosure; use them accordingly.

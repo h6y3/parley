@@ -1,0 +1,4 @@
+{"v":1,"callId":"CAfixture0003","startedAt":"2026-08-19T17:20:00.000Z","diarized":false,"timeBase":"msSinceStartedAt"}
+{"type":"utterance","speaker":"participant","speakerId":null,"speakerSource":null,"speakerConfidence":null,"startMs":20000,"endMs":26000,"text":"Quick round — what's everyone blocked on today?"}
+{"type":"utterance","speaker":"participant","speakerId":null,"speakerSource":null,"speakerConfidence":null,"startMs":50000,"endMs":58000,"text":"I'm still waiting on the ingest rewrite review before I can pick up the next ticket."}
+{"type":"utterance","speaker":"model","speakerId":null,"speakerSource":null,"speakerConfidence":null,"startMs":null,"endMs":null,"text":"Thanks — starting notes now."}

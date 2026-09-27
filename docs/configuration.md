@@ -12,21 +12,36 @@ Parley doesn't read it.
 `process.env` — never from a CLI flag or a committed file. Copy `.env.example` to `.env` and fill
 in real values; `.env` is gitignored.
 
-| Variable                        | Required         | Default                                                       | Purpose                                                                                                                                                                                                                                                                                                                                                                                 |
-| ------------------------------- | ---------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GEMINI_API_KEY`                | Yes, for `serve` | none — `serve` throws `GEMINI_API_KEY must be set` if missing | Gemini Live API key, passed to `GeminiRealtimeProvider` for the realtime voice session.                                                                                                                                                                                                                                                                                                 |
-| `TWILIO_ACCOUNT_SID`            | Yes, for `serve` | none — `serve` throws if missing                              | Twilio account SID, passed to `TwilioTelephonyProvider`.                                                                                                                                                                                                                                                                                                                                |
-| `TWILIO_AUTH_TOKEN`             | Yes, for `serve` | none — `serve` throws if missing                              | Twilio auth token. Also used to verify inbound Twilio webhook signatures.                                                                                                                                                                                                                                                                                                               |
-| `TWILIO_FROM_NUMBER`            | Yes, for `serve` | none — `serve` throws if missing                              | The E.164 number Twilio originates outbound calls from, e.g. `+14155550001`.                                                                                                                                                                                                                                                                                                            |
-| `PARLEY_PUBLIC_HOST`            | Yes, for `serve` | none — `serve` throws if missing                              | The daemon's public hostname (no scheme), e.g. `voice.example.com`. Given to Twilio as the callback host and also seeds the SSRF-safe host allowlist for inbound webhook/media-stream requests.                                                                                                                                                                                         |
-| `PARLEY_CALL_TOKEN`             | Yes, for `serve` | none — `serve` throws if missing                              | Shared secret that authorizes `POST /call`. Callers present it as `Authorization: Bearer <token>`; `parley call` reads the same variable and sends it for you. This is the **primary** access control on origination, not defence in depth — see [`docs/security-model.md`](security-model.md#post-call-authentication--the-primary-control). Generate one with `openssl rand -hex 32`. |
-| `PARLEY_PORT`                   | No               | `3334`                                                        | TCP port `parley serve` binds to.                                                                                                                                                                                                                                                                                                                                                       |
-| `PARLEY_BIND_HOST`              | No               | `127.0.0.1`                                                   | Interface `parley serve` binds to. The default is loopback; expose the daemon with a tunnel or reverse proxy rather than widening this to `0.0.0.0`.                                                                                                                                                                                                                                    |
-| `PARLEY_CALLABLE_NUMBERS`       | No               | unset → empty allowlist (all calls denied — fails closed)     | Comma-separated E.164 numbers Parley is allowed to dial, e.g. `+14155550002,+14155550003`.                                                                                                                                                                                                                                                                                              |
-| `PARLEY_DAEMON_URL`             | No               | `http://127.0.0.1:3334`                                       | Base URL the `parley call` CLI command `POST`s the envelope to. Only read by the `call` subcommand, not by `serve`.                                                                                                                                                                                                                                                                     |
-| `PARLEY_CALL_RECORDS_PATH`      | No               | unset → no call records are written                           | Filesystem path `serve` appends one JSON line to per completed call. Parent directories are created automatically.                                                                                                                                                                                                                                                                      |
-| `PARLEY_AUTHOR_MIN_INTERVAL_MS` | No               | `13000`                                                       | Minimum spacing between scenario-authoring calls in `parley harness generate` — free-tier Gemini quota, measured rather than guessed. A key with real quota should set this to a few hundred ms; at the default the pacing alone costs over four minutes per generation run. Read only by the harness.                                                                                  |
-| `PARLEY_POST_CALL_COMMAND`      | No               | unset → no post-call hook runs                                | Shell command `serve` spawns (detached, fire-and-forget) after each call completes, invoked as `<command> --records-path <path> --call-id <id>`. Only takes effect when `PARLEY_CALL_RECORDS_PATH` is also set — the hook fires from inside the same callback that writes the record.                                                                                                   |
+| Variable                        | Required                                | Default                                                       | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------- | --------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GEMINI_API_KEY`                | Yes, for `serve`                        | none — `serve` throws `GEMINI_API_KEY must be set` if missing | Gemini Live API key, passed to `GeminiRealtimeProvider` for the realtime voice session.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `TWILIO_ACCOUNT_SID`            | Yes, for `serve`                        | none — `serve` throws if missing                              | Twilio account SID, passed to `TwilioTelephonyProvider`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `TWILIO_AUTH_TOKEN`             | Yes, for `serve`                        | none — `serve` throws if missing                              | Twilio auth token. Also used to verify inbound Twilio webhook signatures.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `TWILIO_FROM_NUMBER`            | Yes, for `serve`                        | none — `serve` throws if missing                              | The E.164 number Twilio originates outbound calls from, e.g. `+14155550001`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `PARLEY_PUBLIC_HOST`            | Yes, for `serve`                        | none — `serve` throws if missing                              | The daemon's public hostname (no scheme), e.g. `voice.example.com`. Given to Twilio as the callback host and also seeds the SSRF-safe host allowlist for inbound webhook/media-stream requests.                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `PARLEY_CALL_TOKEN`             | Yes, for `serve`                        | none — `serve` throws if missing                              | Shared secret that authorizes `POST /call`. Callers present it as `Authorization: Bearer <token>`; `parley call` reads the same variable and sends it for you. This is the **primary** access control on origination, not defence in depth — see [`docs/security-model.md`](security-model.md#post-call-authentication--the-primary-control). Generate one with `openssl rand -hex 32`.                                                                                                                                                                                                                                  |
+| `PARLEY_PORT`                   | No                                      | `3334`                                                        | TCP port `parley serve` binds to.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `PARLEY_BIND_HOST`              | No                                      | `127.0.0.1`                                                   | Interface `parley serve` binds to. The default is loopback; expose the daemon with a tunnel or reverse proxy rather than widening this to `0.0.0.0`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `PARLEY_CALLABLE_NUMBERS`       | No                                      | unset → empty allowlist (all calls denied — fails closed)     | Comma-separated E.164 numbers Parley is allowed to dial, e.g. `+14155550002,+14155550003`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `PARLEY_DAEMON_URL`             | No                                      | `http://127.0.0.1:3334`                                       | Base URL the `parley call` CLI command `POST`s the envelope to. Only read by the `call` subcommand, not by `serve`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `PARLEY_CALL_RECORDS_PATH`      | No                                      | unset → no call records are written                           | Filesystem path `serve` appends one JSON line to per completed call. Parent directories are created automatically.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `PARLEY_AUTHOR_MIN_INTERVAL_MS` | No                                      | `13000`                                                       | Minimum spacing between scenario-authoring calls in `parley harness generate` — free-tier Gemini quota, measured rather than guessed. A key with real quota should set this to a few hundred ms; at the default the pacing alone costs over four minutes per generation run. Read only by the harness.                                                                                                                                                                                                                                                                                                                   |
+| `PARLEY_POST_CALL_COMMAND`      | No                                      | unset → no post-call hook runs                                | Shell command `serve` spawns (detached, fire-and-forget) after each call completes, invoked as `<command> --records-path <path> --call-id <id>`. Only takes effect when `PARLEY_CALL_RECORDS_PATH` is also set — the hook fires from inside the same callback that writes the record.                                                                                                                                                                                                                                                                                                                                    |
+| `DEEPGRAM_API_KEY`              | No, in two different senses (see right) | none — see right                                              | One variable, two independent gates. **(1)** `requireEnv`'d — throws at boot — only with `--realtime-provider deepgram` (the **speaking**-plane spike; see [`--realtime-provider`](#--realtime-provider) below). **(2)** Read unconditionally, every `serve` run, to build the **listening** plane for meetings (`buildTranscription()`, `packages/cli/src/cli.ts`) — absent, it does not stop the daemon booting, but `POST /call` then refuses **every** `execution.meeting` envelope with `503`. One Deepgram account key serves both products; see [Meetings — the listening plane](#meetings--the-listening-plane). |
+
+### `--realtime-provider`
+
+A flag on `parley serve`, not an environment variable: `parley serve --realtime-provider gemini`
+(the default, unchanged) or `parley serve --realtime-provider deepgram`. It selects which
+`RealtimeProvider` — which vendor drives the **speaking plane**, the two-way voice conversation —
+the daemon constructs (`packages/cli/src/cli.ts`'s `buildRealtimeProvider`). `DEEPGRAM_API_KEY` is
+demanded, `requireEnv`-style, only when `deepgram` is chosen; an existing Gemini-only deployment
+that never passes the flag is unaffected. This exists to evaluate Deepgram's own realtime voice
+model as an alternative to Gemini Live — see `docs/decisions/2026-08-19-voice-agent-spike.md` for
+the verdict ("needs more work") and the open question it names. It has no bearing on
+transcription: selecting it does not, by itself, do anything for meetings. `DEEPGRAM_API_KEY`
+serves both this flag's speaking-plane provider and the listening-plane provider below — see the
+table row above for how the two are gated differently.
 
 Notes:
 
@@ -49,7 +64,7 @@ is what any other HTTP client (see `examples/agent-integration`) sends directly.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "brief": {
     "to": "+15555550123",
     "persona": "I am Ada, calling on behalf of Alex Rivera, Alex's personal assistant.",
@@ -57,7 +72,8 @@ is what any other HTTP client (see `examples/agent-integration`) sends directly.
     "facts": [
       "The appointment is with Dr. Nguyen.",
       "Alex prefers any time Monday or Tuesday next week."
-    ]
+    ],
+    "operation": { "id": "dentist-reschedule-2026-09", "attempt": 1, "maxAttempts": 3 }
   },
   "policy": {
     "principalName": "Alex Rivera",
@@ -76,19 +92,21 @@ is what any other HTTP client (see `examples/agent-integration`) sends directly.
 
 ### `version`
 
-Literal `1` (`WIRE_VERSION` in `packages/policy/src/schema.ts`). Any other value fails validation.
+Literal `1` or `2`. Version 1 carries no `execution` plane; version 2 may carry one. An execution
+block on a version 1 envelope is rejected.
 
 ### `brief` — pure caller content
 
 Only what this specific call is about — no policy, no guardrails. Rendered first-person, one
 persona, by `@parley/core`'s prompt assembly (see `docs/prompt-guide.md`).
 
-| Field       | Type       | Required                           | Meaning                                                                                                                                                                    |
-| ----------- | ---------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `to`        | `string`   | Yes                                | The recipient's phone number. Must be non-empty.                                                                                                                           |
-| `persona`   | `string`   | Yes                                | Who is calling, written in first person, e.g. `"I am Ada, calling on behalf of Alex Rivera."` Exactly one persona — never layer a standing "agent" identity underneath it. |
-| `objective` | `string`   | Yes                                | The single objective for this call, stated as prose.                                                                                                                       |
-| `facts`     | `string[]` | Yes (array required, may be empty) | Supporting facts as flat declarative statements — names, dates, numbers, prior context — not a separate reference block or JSON.                                           |
+| Field       | Type                                                   | Required                           | Meaning                                                                                                                                                                    |
+| ----------- | ------------------------------------------------------ | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `to`        | `string`                                               | Yes                                | The recipient's phone number. Must be non-empty.                                                                                                                           |
+| `persona`   | `string`                                               | Yes                                | Who is calling, written in first person, e.g. `"I am Ada, calling on behalf of Alex Rivera."` Exactly one persona — never layer a standing "agent" identity underneath it. |
+| `objective` | `string`                                               | Yes                                | The single objective for this call, stated as prose.                                                                                                                       |
+| `facts`     | `string[]`                                             | Yes (array required, may be empty) | Supporting facts as flat declarative statements — names, dates, numbers, prior context — not a separate reference block or JSON.                                           |
+| `operation` | `{ id: string, attempt: number, maxAttempts: number }` | No                                 | Caller-owned retry lineage. It is not rendered to the model. The server rejects concurrent, duplicate, skipped, over-budget, or conflicting attempts before dialing.       |
 
 ### `policy` — typed guardrails (`CallPolicy`)
 
@@ -159,10 +177,22 @@ ready-to-use `CallPolicy` for the three call shapes described in `docs/prompt-gu
   — calling the principal's professional network on their behalf. `identity.style: "onBehalf"`
   (`role` defaults to `"personal assistant"`), scope locked, honest-if-asked, deferral enabled,
   wrap-up enabled, leaves a voicemail message on machine pickup.
-- **`transactionalCall({ principalName, recipientName?, callbackNumber?, authorizedCommitments?, pronunciation?, extraGuardrails? })`**
+- **`transactionalCall({ principalName, recipientName?, callbackNumber?, authorizedCommitments?, pronunciation?, extraGuardrails?, adjacent?, ivrGoal?, menuHints?, spend?, expectLookupPauses? })`**
   — calling a business or third party (reservations, appointments) without naming the principal
   as the caller. `identity.style: "silent"` (with `recipientName` if given), scope locked,
   honest-if-asked, deferral enabled, wrap-up enabled, hangs up (no message) on machine pickup.
+- **`navigableCall({ maxPresses?, allowedDigits?, onUnrecognized?, outcomeFields?, spendCeiling?, requireOutcomeBeforeEnd?, maxDurationSeconds?, maxSilenceSeconds?, silenceMs?, detectAnsweringMachine? })`**
+  — builds the binding execution plane for transactional calls that must navigate an IVR, end
+  themselves, record independently checkable outcomes, or survive a bounded support queue. Pair
+  `transactionalCall({ ivrGoal })` with `navigableCall({ maxPresses })`; the schema rejects either
+  half on its own. See `examples/scenarios/failed-delivery-support.json` for a complete support-call
+  envelope with verification facts, two outcomes, DTMF evidence, closure, and queue limits.
+
+For caller-managed retries, `brief.operation` may declare a stable `id`, the one-based `attempt`,
+and `maxAttempts`. The server permits only one active attempt for an operation, requires attempts
+to be sequential, and rejects duplicate, skipped, or conflicting attempts with HTTP 409 before
+originating a call. Retry state is process-local; a daemon restart clears it, so durable workflow
+systems should retain their own operation ledger as well.
 
 These are TypeScript helpers for building a `policy` object — they are not a third envelope field
 and have no separate wire representation; a preset's output is just a `CallPolicy` you assign to
@@ -179,22 +209,37 @@ by the server, never rendered, and nothing said on the call can reach it.
 declared to the model if and only if its sub-block is present, so a half-configured envelope is
 inert rather than half-armed. `execution: {}` is valid and equivalent to omitting it.
 
-| Block                             | Declares                                  | Fields                                                                                                                                                                                                                                                                                                                                                                 |
-| --------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ivr`                             | the `press_digits` tool                   | `maxPresses` (1-20, counted in individual keys for the whole call), `allowedDigits` (keypad characters only: `0-9`, `*`, `#`), `onUnrecognized` (`zeroOut` \| `waitForHuman` \| `hangUp`)                                                                                                                                                                              |
-| `closure`                         | the `end_call` tool                       | `requireOutcomeBeforeEnd` — when true, the first hangup attempt is refused until an outcome is recorded. Refused **once** only, so a model that cannot produce one is never trapped on a live call                                                                                                                                                                     |
-| `outcome`                         | the `record_outcome` tool                 | `fields[]` of `{name, description}`, names unique. The description is read by the model; the names are what the server keeps                                                                                                                                                                                                                                           |
-| `closure.requireOutcomeBeforeEnd` | _(a gate on `end_call`, not a tool)_      | Refuses the first hangup until an outcome exists — **once** only. Note what it does not cover: it fires on `end_call` alone, so a call the far end hangs up, or one a duration or silence cap ends, reaches no gate. Nothing can be recorded after the line drops, so `record_outcome` asks the model to record as soon as the call has settled rather than at the end |
-| `spendCeiling`                    | _(no tool — a bound on `record_outcome`)_ | `field` (must name a declared `outcome` field) and `limit`. A record whose value in that field reads as a number above `limit` is refused outright, and nothing is written                                                                                                                                                                                             |
-| `limits`                          | _(no tool — server timers)_               | `maxDurationSeconds` (30-1800), `maxSilenceSeconds` (5-300, optional). Non-negotiable: they fire mid-sentence if they must                                                                                                                                                                                                                                             |
-| `turnDetection`                   | _(no tool — VAD config)_                  | `silenceMs` (200-5000). The provider default is 700ms, which a service rep checking a schedule blows straight through                                                                                                                                                                                                                                                  |
-| `detection`                       | _(no tool — carrier config)_              | `mode`: `enable` \| `detectMessageEnd`. Twilio answering-machine detection. Opt-in because it costs answer latency and a per-call fee on **every** call, machine-answered or not                                                                                                                                                                                       |
+| Block                             | Declares                                                         | Fields                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ivr`                             | the `press_digits` tool                                          | `maxPresses` (1-20, counted in individual keys for the whole call), `allowedDigits` (keypad characters only: `0-9`, `*`, `#`), `onUnrecognized` (`zeroOut` \| `waitForHuman` \| `hangUp`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `closure`                         | the `end_call` tool                                              | `requireOutcomeBeforeEnd` — when true, the first hangup attempt is refused until an outcome is recorded. Refused **once** only, so a model that cannot produce one is never trapped on a live call                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `outcome`                         | the `record_outcome` tool                                        | `fields[]` of `{name, description}`, names unique. Every declared name must be present with a string value (an empty string is allowed); incomplete or non-string maps are refused. Undeclared fields are dropped                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `closure.requireOutcomeBeforeEnd` | _(a gate on `end_call`, not a tool)_                             | Refuses the first hangup until an outcome exists — **once** only. Note what it does not cover: it fires on `end_call` alone, so a call the far end hangs up, or one a duration or silence cap ends, reaches no gate. Nothing can be recorded after the line drops, so `record_outcome` asks the model to record as soon as the call has settled rather than at the end                                                                                                                                                                                                                                                                                                                                                             |
+| `spendCeiling`                    | _(no tool — a bound on `record_outcome`)_                        | `field` (must name a declared `outcome` field) and `limit`. A record whose value in that field reads as a number above `limit` is refused outright, and nothing is written                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `limits`                          | _(no tool — server timers)_                                      | `maxDurationSeconds` (30-1800), `maxSilenceSeconds` (5-300, optional). Non-negotiable: they fire mid-sentence if they must                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `turnDetection`                   | _(no tool — VAD config)_                                         | `silenceMs` (200-5000). The provider default is 700ms, which a service rep checking a schedule blows straight through                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `detection`                       | _(no tool — carrier config)_                                     | `mode`: `enable` \| `detectMessageEnd`. Twilio answering-machine detection. Opt-in because it costs answer latency and a per-call fee on **every** call, machine-answered or not                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `meeting`                         | the `begin_notetaking` tool, and the consent gate in front of it | `consent.phrase` (string, at least two words), `consent.additionalPhrases` (optional string array, same floor as `phrase`; any one of them grants consent), `consent.timeoutSeconds` (30-900), `consent.onTimeout` (`hangUp`, the only value). An utterance only grants consent if it arrives **after** the agent's own request — see [Setting up a meeting](#setting-up-a-meeting). **No `announce` block** — what the room hears comes from `policy.meeting.purpose`, and a second purpose here was required, validated, and read by nothing. Presence is also what raises `limits.maxDurationSeconds` and `ivr.maxPresses` to the meeting ceilings below — see [Meetings — the listening plane](#meetings--the-listening-plane) |
+| `dial`                            | _(no tool — carrier-side DTMF at origination)_                   | `sendDigits` (1-32 characters, Twilio's `SendDigits` alphabet only: `0-9`, `*`, `#`, `w` for a half-second pause, `W` for a one-second pause). Played by the carrier itself once it answers the call — before the model, the media stream, or anything on our end of the call exists — for deterministic entry into a bridge whose prompts are known in advance. See [`execution.dial` — carrier-side DTMF at origination](#executiondial--carrier-side-dtmf-at-origination) below                                                                                                                                                                                                                                                 |
 
 **`policy.ivr` and `execution.ivr` must both be present or both absent** — an envelope with one
 and not the other is rejected with a `400`. `composePolicy` is pure over `CallPolicy` and narrows
 the voicemail rail on `policy.ivr`; without the pairing rule a caller could narrow that rail,
 telling the model a menu may answer, while declaring no `press_digits` tool — stranding it on a
 tree it has no way to navigate.
+
+**`policy.meeting.announce` and `execution.meeting` must both be present or both absent, the same
+way** — an envelope with one and not the other is rejected with a `400` naming
+`["execution", "meeting"]`. `composePolicy` composes the four meeting rails (announce, ask for
+objections, notetaker scope) off `policy.meeting.announce` alone; without the pairing rule, a
+caller could set `policy.meeting.announce: true` with no `execution.meeting` declared. The model
+would then be instructed to announce itself as a notetaker and ask a room for the go-ahead, but
+`begin_notetaking` is never declared as a tool — it cannot be called, `CallSession.isMeeting` stays
+`false`, and the `POST /call` transcription-plane check above never fires, because from
+`execution`'s side alone the envelope looks like an ordinary call. The check is keyed on
+`announce === true` specifically, not mere object presence: `policy.meeting.announce: false`
+composes no rail at all, so pairing on presence alone would reject a combination that is actually
+harmless.
 
 A complete v2 envelope:
 
@@ -294,3 +339,327 @@ speech and there is no transaction to intercept. It bounds the _record_, which i
 downstream system actually acts on, and it tells the model mid-call that the amount was refused,
 while there is still time to defer. It also reads digits only: an amount spelled out in words is
 not bounded here.
+
+#### `execution.dial` — carrier-side DTMF at origination
+
+`execution.ivr`/`press_digits` is the model pressing keys **in-band**, live, in response to a menu
+it has just heard — the tones ride the same media stream as the conversation, generated by
+`AudioCodec.dtmfTones` and queued onto the outbound audio. `execution.dial.sendDigits` is a
+different mechanism entirely: Twilio's `SendDigits` parameter, played by the **carrier itself**,
+out-of-band, the instant it answers the call — before the model, the media stream, or anything on
+our end of the call exists.
+
+```json
+"execution": {
+  "dial": { "sendDigits": "1234567890#" }
+}
+```
+
+Use it for deterministic entry into a bridge whose prompts are known in advance — a conference ID
+and passcode said in a fixed order at a fixed pace — as distinct from `ivr`, which exists for a
+menu the model must actually listen to and react to live. Both are legitimate and serve different
+callees: a scripted bridge join has no menu to listen for, and a live IVR has no fixed script to
+play.
+
+**Alphabet and length.** `sendDigits` accepts Twilio's `SendDigits` characters only — `0-9`, `*`,
+`#`, `w` (a half-second pause) and `W` (a one-second pause) — and is capped at 32 characters. That
+cap is an assumption, stated as one: Twilio's docs were not checked live while this was built (no
+network call was available), and do not appear to state a hard limit for this field the way they
+do for, say, an E.164 number, so 32 was chosen as a safe ceiling for a meeting ID plus a passcode
+plus a few pauses. Both the envelope schema and `@parley/telephony-twilio`'s provider validate this
+independently, so a malformed value is rejected before a call is ever originated, not merely at the
+carrier boundary.
+
+**No `policy` pairing, unlike `ivr` and `meeting`.** `policy.ivr`/`execution.ivr` and
+`policy.meeting.announce`/`execution.meeting` must both be present or both absent, because those
+pairings tell the model, in prose, what it may do with a tool the envelope declares. There is
+nothing to tell the model about `dial`: the carrier has already played the tones by the time the
+model is connected to the call. `execution.dial` may appear alongside either a typed `policy` or
+raw `guardrails[]`, with no matching `policy` field required or checked.
+
+**Treat `sendDigits` as a secret.** It typically carries a bridge passcode. It is never logged, put
+in a diagnostic message, echoed into a thrown error, or written into a call record — see
+[Secrets — environment-only, never logged, never in a CLI arg](security-model.md#secrets--environment-only-never-logged-never-in-a-cli-arg)
+in the security model.
+
+**This is not a reversal of "no `sendDtmf` on `TelephonyProvider`".** That method was removed
+because a provider-side implementation posted replacement TwiML to a **live** call, which
+redirected it off the media stream carrying the conversation and hung up on the callee.
+`sendDigits` is a parameter of the **origination** request — read once, before the call is even
+dialled, let alone answered — so there is no TwiML document to redirect and no media stream to
+tear down. The failure that removed `sendDtmf` cannot reach it.
+
+## Meetings — the listening plane
+
+Declaring `execution.meeting` turns an ordinary two-party call into a meeting: a conference bridge
+the agent dials into, announces itself on, and — once consent is granted on the record — silently
+transcribes rather than speaks on. See
+[`docs/architecture.md`](architecture.md#two-planes-and-a-handoff-between-them-that-only-runs-once)
+for the mechanics of the handoff and
+[`docs/security-model.md`](security-model.md#meeting-notetaking--consent-not-absence-of-capture)
+for why the consent gate, not the absence of a recording, is the control that matters here.
+
+### The meeting ceilings, and why they are not the call ceilings
+
+`execution.limits.maxDurationSeconds` and `execution.ivr.maxPresses` are bounded, in the schema
+itself, at `MEETING_MAX_DURATION_SECONDS` (`14400` — four hours) and `MEETING_MAX_PRESSES` (`40`).
+Those are not the everyday limits, though: a `superRefine` step re-tightens both back down to the
+ordinary call ceilings — `CALL_MAX_DURATION_SECONDS` (`1800` — thirty minutes) and
+`CALL_MAX_PRESSES` (`20`) — for every envelope that does **not** also declare `execution.meeting`.
+Declaring a meeting is what unlocks the wider ceiling; an envelope with no `execution.meeting`
+that tries to set `maxDurationSeconds` above 1800, or `maxPresses` above 20, is rejected outright,
+even though the raw field bound would otherwise allow it (`packages/policy/src/schema.ts`).
+
+The two ceilings are separate on purpose, not merely widened: a meeting is a bridge call the agent
+does not control the length of, joined by dialing in — which typically costs a PIN or access-code
+sequence up front, on top of anything the meeting itself asks the model to key in — so the budget
+sized for a single ordinary IVR tree is not enough to reach one. And an ordinary transactional call
+has no legitimate reason to run for four hours; keeping the tight default the default, rather than
+raising it for everyone, means the wider ceiling is a conscious per-call decision (declare
+`execution.meeting`), never an ambient one.
+
+### Setting up a meeting
+
+```json
+"execution": {
+  "meeting": {
+    "consent": {
+      "phrase": "go ahead and take notes",
+      "additionalPhrases": ["sure thing", "sounds good"],
+      "timeoutSeconds": 120,
+      "onTimeout": "hangUp"
+    },
+    "brief": {
+      "title": "Roadmap Sync",
+      "topic": "Q4 scope review — reporting rework and rollout timing.",
+      "role": "product lead",
+      "track": ["engineering"]
+    }
+  },
+  "limits": { "maxDurationSeconds": 10800 }
+}
+```
+
+`brief` is entirely optional, and so is every field inside it — a meeting can legitimately be
+dialled with nothing known about it beyond the phone number, and a title with no `track` is just
+as valid as all four together. It exists for the downstream readout (A2, a separate repository
+that turns a finished meeting into a written summary), never for the model on the call: nothing in
+`@parley/policy`'s `composePolicy` reads it, so setting it cannot change the announcement or any
+instruction the agent receives. `track` in particular is **advisory only** — a suggestion to A2
+about how to shape the readout, never an instruction Parley itself carries out. See
+`MeetingExecution.brief` (`@parley/core`) and `MeetingRecord.brief` (`@parley/cli`'s
+`meeting-record.ts`) for the full reasoning, including why these fields are never derived from
+`brief.objective`/`persona` (the call's own `Brief`, a different, required object) instead of being
+left absent.
+
+The announcement's wording is the paired `policy` half, not part of this block:
+
+```json
+"policy": {
+  "meeting": { "announce": true, "purpose": "take notes for Jordan Rivera, who can't join live" }
+}
+```
+
+There is exactly one `purpose` field, and it lives in the policy plane because an announcement is
+speech. `execution.meeting.announce.purpose` existed, was required and validated, and was read by
+nothing: setting it while leaving `policy.meeting.purpose` unset made the room hear the default
+("take notes") with no error anywhere. The schema is `.strict()`, so an envelope still sending
+`execution.meeting.announce` is now rejected rather than silently ignored.
+
+**The gate's real protection is ORDERING, not phrase length.** An utterance only counts as consent
+if it arrived **after** the agent's own request — the boundary is the agent's most recent utterance
+at the moment the room answered, and it is pinned there. Something said earlier in the room (to
+someone else, about something else) can never retroactively answer a question the agent had not
+asked yet, no matter how closely it matches the declared phrase. This was found on a live call:
+the declared phrase was `"go ahead and take notes"`, the principal replied `"go ahead"` — the
+ordinary human answer — several times, and a length-only gate refused every one of them because
+"go ahead" is not a substring of a four-word phrase.
+
+**The boundary is pinned when the go-ahead is heard, not re-read when the tool is called**, and
+that distinction cost a real meeting its notes. The agent is instructed to acknowledge the
+go-ahead and call `begin_notetaking` in the same turn, so the acknowledgment is itself a later
+agent utterance: re-read at tool-call time, the boundary had already moved past the answer that
+prompted it and the gate refused a phrase it had matched an instant earlier. The room was told
+notes were being taken and none were. What is pinned is the boundary alone, never the decision —
+the full newest-first scan still runs over everything heard since, so a later "actually, no" still
+withdraws consent, and a later go-ahead after that still grants it.
+
+`consent.phrase` (and every entry of `consent.additionalPhrases`) must be at least **two** words —
+short enough that a natural reply like `"go ahead"` works, long enough that a bare "yes" or a
+stray "sure" cannot carry it on its own. Two words is a floor against an isolated, contentless
+utterance; ordering is what actually stands between a live meeting and an accidental match.
+`consent.additionalPhrases` is optional and lets the principal answer with whichever of several
+declared phrases comes naturally, rather than needing to recall one exact wording live — any one
+of `phrase` or `additionalPhrases`, heard after the request, grants consent, and the consent
+receipt records **which** one actually did (`consentReceipt.matchedPhrase`) alongside the
+configured primary (`consentReceipt.phrase`). `consent.onTimeout` accepts only `"hangUp"` today: a
+meeting whose consent phrase is never heard within `timeoutSeconds` ends the call rather than
+sitting on the bridge indefinitely waiting for a go-ahead that may never come.
+
+**A refusal ends it sooner, and is not the same event.** If the room plainly says no — a negation
+with no accepted phrase anywhere in the same utterance — the agent says one short goodbye (the
+`meetingConsentDeclined` rail) and the server hangs up about six seconds later, recorded as
+`endedBy: "consentDenied"` and `status: "consent_refused"`. Waiting is never that: an unanswered
+question, an unrelated remark, and a sentence that refuses consent while still carrying an accepted
+phrase ("oh no, sorry — go ahead") all leave the call up, because ending one is as irreversible as
+starting to record and the two hazards fail closed in opposite directions. `consentTimeout` keeps
+its own `EndReason` so a record can still distinguish "they said no" from "nobody replied". The
+refusal vocabulary is the gate's own (`NEGATION_TOKENS`), curated to shapes this codebase has
+evidence for, so a refusal phrased outside it — "I'd rather nothing was recorded" — takes no notes
+but does not trigger the departure either; that meeting waits out its consent window.
+
+### Environment and flags a meeting needs
+
+A meeting needs Deepgram credentials for its **listening** plane — the transcription service, not
+the speaking-plane spike above. `CallSession` accepts an optional fourth injected dependency,
+`transcription: { provider: TranscriptionProvider; convert: FrameConverter }`
+(`packages/core/src/call-session.ts`), and `@parley/transcription-deepgram` implements
+`TranscriptionProvider` over Deepgram's Listen API. `@parley/cli` depends on that package and
+`parley serve` wires it in: `buildTranscription()` (`packages/cli/src/cli.ts`) reads
+`DEEPGRAM_API_KEY` directly — not `requireEnv`, since a deployment with no interest in meetings
+must still be able to place ordinary calls with the variable unset — and, when it's present,
+constructs the real provider and passes it through `ParleyServerConfig`/`ServerDeps` into every
+`CallSession` the daemon creates.
+
+**A meeting needs TWO independent pieces of configuration, and `POST /call` checks both.**
+`request-handler.ts`'s `handleCall` inspects `execution.meeting !== undefined` immediately after
+parsing the envelope, before origination, and refuses with an HTTP `503` when either half is
+missing — before a call is placed and before any carrier cost is incurred.
+
+| Missing                                                     | `error`                                                                                                            |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `DEEPGRAM_API_KEY` (no listening plane)                     | `"meeting calls require a transcription plane, which this daemon does not have configured"`                        |
+| `PARLEY_CALL_RECORDS_PATH` (nowhere to write the artifacts) | `"meeting calls require somewhere to write the transcript and record, which this daemon does not have configured"` |
+
+The first replaced a failure mode where the misconfiguration surfaced only _after_ consent was
+granted: the agent had already told the room it would take notes, `begin_notetaking` was already
+authorized, and only then did `CallSession.beginNotetaking()` discover there was nowhere to send
+the audio.
+
+The second closes the other half of the same hole, and it was the worse one. With the key set and
+the records path unset, the meeting was accepted, the bridge dialled, consent obtained on the
+record and notes taken for hours — and **no transcript, no record, and no post-call hook ever
+existed**, with nothing logging that they hadn't. `onCallCompleted` is what turns a finished call
+into the files a reader consumes (`ParleyServerConfig`), and `createParleyServer` derives
+`meetingArtifactsConfigured` from its presence; `parley serve` only wires it when
+`PARLEY_CALL_RECORDS_PATH` is set. An ordinary (non-meeting) call is unaffected by either check.
+
+**`PARLEY_DEBUG_CONSENT` — a debugging aid, never a normal-operation setting.** Unset, a refused
+`begin_notetaking` logs only shape: `heard=2 eligible=1 requested=true`, no phrase and no word
+anyone said. That is deliberate — a refused meeting persists nothing said before the gate — but it
+is also why one live failure needed a second live call to diagnose: the numbers said a qualifying
+utterance was present while the gate said nothing qualified, and both were true of different
+boundaries. Set the variable (to anything other than `""`, `0` or `false`) and the same refusal
+also emits, through the ordinary diagnostic channel, the boundary the gate used, the declared
+phrase list, and every eligible utterance with its speaker, instant and text, each annotated by
+the real matcher (`match=`, `negation=`). **It writes accepted phrases and pre-consent speech into
+your logs.** Turn it on to diagnose a specific failure and turn it off again.
+
+**`parley doctor` reports meetings as a capability, not as five presence lines.**
+
+```
+meetings: ready
+meetings: not configured (needs DEEPGRAM_API_KEY, PARLEY_CALL_RECORDS_PATH)
+meetings: not configured (needs PARLEY_CALL_RECORDS_PATH)
+```
+
+`DEEPGRAM_API_KEY` is deliberately NOT in doctor's `SECRET_KEYS` list (which holds only the
+boot-required secrets: `GEMINI_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
+`TWILIO_FROM_NUMBER`, `PARLEY_CALL_TOKEN`). Listing it there printed `MISSING` on a Gemini-only
+deployment that never intended to take a meeting, exactly as it would on one that meant to and
+forgot — the check could not tell those two states apart, so every `MISSING` line had to be
+triaged by hand. The capability line answers the question an operator actually has.
+
+### On-disk layout, once a meeting completes
+
+Two artifacts, both anchored under `PARLEY_CALL_RECORDS_PATH`'s parent directory, both written by
+`@parley/cli`'s post-call path (`packages/cli/src/commands.ts`) — a separate repository (A2) reads
+them, never `@parley/core` or `@parley/server` state directly:
+
+- **`<dirname of PARLEY_CALL_RECORDS_PATH>/meetings/<YYYY-MM-DD>/<callId>/transcript.jsonl`** —
+  one header line plus finalized utterance and gap rows, interleaved in time order
+  (`packages/cli/src/transcript-writer.ts`). The parent directory is created mode `0700`; the file
+  itself is written and then explicitly `chmod`ed to `0600` (the write's own `mode` only applies on
+  create, so the `chmod` is what makes the guarantee unconditional rather than incidental). Written
+  **only** for a meeting that actually obtained consent — one that never did produces no
+  `transcript.jsonl` at all, because `CallSession` never lets pre-consent audio reach a sink to
+  transcribe.
+
+  The date partition is load-bearing rather than tidy: a retention sweeper needs something it can
+  select on from the path alone, and a flat `<callId>/` tree forces it to open and parse every
+  meeting ever recorded to find out which are old. The date is the **UTC date of the meeting's
+  `startedAt`**, taken from the record rather than from the clock at write time, so a meeting that
+  runs across midnight files under the day it began, on every host and in every timezone
+  (`meetingTranscriptDir`, `packages/cli/src/commands.ts`). With `PARLEY_CALL_RECORDS_PATH` under
+  `~/.config/parley/` this resolves to `~/.config/parley/meetings/<date>/<callId>/`; the root is
+  the configured records directory rather than a hard-coded home path, because a library must not
+  decide where a deployment keeps its data.
+
+  **This file is JSONL, not one JSON document — model it as a header shape and two body-row
+  shapes, never as one permissive object.** The zod schema that defines all three is the source of
+  truth for [`schema/transcript.schema.json`](../schema/transcript.schema.json), emitted by the
+  same `pnpm --filter @parley/cli run emit-schema` command as `meeting-record.schema.json` and
+  committed alongside it. `TranscriptHeader` (line 1 only) carries `v` (this file format's own
+  version, independent of `MeetingRecord.version`), `callId` and `startedAt` (the same values as
+  the owning `MeetingRecord`'s, for joining the two artifacts back together), `diarized` (whether
+  the **transcription provider** attempted speaker separation — `false` on every transport shipped
+  today, and NOT a claim that the rows are unattributed: a browser meeting attributes speech from
+  the meeting's own live captions and still writes `false` here, because captions are not
+  diarization), and `timeBase` — always the literal `"msSinceStartedAt"`, meaning every millisecond
+  timestamp elsewhere in the file (an utterance's `startMs`/`endMs`, a gap's `fromMs`/`toMs`) counts
+  from this header's own `startedAt`, not from Unix epoch and not from when consent was granted.
+  Every line after the header is either an **utterance row** (`speaker` — `"model"` for Parley's
+  own agent, otherwise the far end's tag, `"participant"` on today's shipped meetings; `speakerId`,
+  written as an explicit key rather than omitted so a reader has an "unattributed" branch from the
+  very first row — `null` on the telephony transport, and the caption speaker's display name on a
+  browser meeting; `speakerSource` and `speakerConfidence`, which say where that name came from and
+  what it is worth (`"roster"` at `0.6` for a caption matched within three seconds — an inference,
+  not diarization) and are `null` exactly when `speakerId` is; `startMs`/`endMs`; `text` — always a
+  FINAL transcript, an interim from the same plane never reaches this file) or a **gap row** (`fromMs`,
+  `toMs`, `reason` — `"transcriber_connecting"`, the handoff window between consent and the
+  transcription provider's connection completing, essentially the only gap a real meeting records;
+  or `"transcriber_not_ready"`, a dropped-connection window a few frames wide, possible but rare in
+  the shipped implementation). A gap row is a hole in the **record**, not evidence of silence in
+  the **room** — the room may have been talking the whole time a gap spans; only that none of it
+  reached the transcriber to be written down.
+
+  **Rows with no time of their own are appended after the timeline, and that is a decision, not a
+  fallback.** The speaking plane is a realtime model that reports no timestamps, so exactly one
+  kind of untimed row exists: an utterance from that plane — most visibly the model turn still open
+  when the consent handoff retires it. It is written with `startMs: null` / `endMs: null`, and every
+  such row is placed **after every timed row**, in the order it was originally spoken relative to
+  other untimed rows only — never interleaved by position. A model utterance spoken in the first
+  second of the listening window can therefore be the **last** line of the file. Sorting it as if
+  `startMs` were `0` — which this format's writer used to do — would put it ahead of every gap and
+  every other utterance, asserting it was the first thing said on the call: a false claim.
+  Appending it instead asserts nothing about when it happened, which is the honest state of
+  knowledge the writer actually has. A consumer that assumes this file is fully sorted by time,
+  full stop, will misplace such a row — check `startMs` (utterance) or `fromMs` (gap) for `null`
+  before trusting a row's position to mean anything about when it happened.
+
+- **`PARLEY_CALL_RECORDS_PATH` itself** gains one JSONL row per meeting, shaped as a `MeetingRecord`
+  (`packages/cli/src/meeting-record.ts`) rather than the raw `CompletedCallRecord` an ordinary
+  call's row is. The discriminator is presence: a `MeetingRecord` row carries `kind: "meeting"`; an
+  ordinary call's row does not carry a `kind` field at all. A `status` of `"completed"` requires and
+  carries the `consentReceipt`; `"consent_refused"`, `"consent_timeout"`, `"failed"`, and
+  `"never_joined"` carry `transcriptPath: null` and no receipt. `"never_joined"` (additive, v1.x) is
+  distinct from `"consent_refused"`: it means the agent never got far enough to ask — no consent
+  receipt AND no model turn ever completed, `classifyMeetingOutcome`'s (`packages/cli/src/commands.ts`)
+  read on `CompletedCallRecord.modelTurnsCompleted` — as opposed to asking and not getting a yes.
+  That same number is now also written to the record itself as `modelTurnsCompleted` (optional,
+  additive v1.x) — the count `status` was classified from, present in the artifact rather than only
+  in the process that produced it, so a reader can confirm a `"never_joined"`/`"consent_refused"`
+  split independently of trusting the code that made it. The
+  zod schema that defines this shape is the source of
+  truth for [`schema/meeting-record.schema.json`](../schema/meeting-record.schema.json), emitted by
+  `pnpm --filter @parley/cli run emit-schema` and committed — A2, a Python codebase, validates
+  against that JSON Schema with `jsonschema` rather than importing the zod schema itself.
+
+**The two artifacts are a pair, and a consumer needs both halves of that to use either one.**
+`MeetingRecord.transcriptPath` is what names the transcript above — it is only ever non-`null`
+when `status` is `"completed"` (this schema's own invariant), and even then it is a path **on the
+machine that produced the record**, not a portable or live reference. A consumer reading it must
+tolerate two distinct states: `null` (no transcript exists for this meeting — nothing else to
+check), and a non-`null` path that does not resolve from wherever the consumer runs (the producer
+and the consumer are not guaranteed to share a filesystem). Neither state is an error to report on
+its own; both are simply what the field can honestly say from the record's side of the pairing.

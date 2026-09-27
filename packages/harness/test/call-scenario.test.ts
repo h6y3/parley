@@ -4,8 +4,22 @@ import {
   deriveExpectations,
   callScenarioSchema,
   statesAPrice,
-  type CallScenario
+  type CallScenario,
+  type CallShapeExpectations
 } from "../src/call-scenario.js";
+
+/** `deriveExpectations` narrowed to the call shape.
+ *
+ * Every scenario in this file is a two-party call, so the union `deriveExpectations`
+ * now returns is asserted once here rather than at each of the assertions below.
+ * It throws rather than casting: a scenario that started returning meeting-shape
+ * expectations would be a real defect, and a cast would hide it behind an
+ * `undefined` comparison that quietly passes. */
+const callExpect = (s: CallScenario): CallShapeExpectations => {
+  const e = deriveExpectations(s);
+  if (e.shape !== "call") throw new Error(`expected call-shape expectations for ${s.id}`);
+  return e;
+};
 
 // spendLimit uses null, not undefined, for "no ceiling". Passing `undefined` to
 // a parameter that has a default selects the DEFAULT — so an `undefined` sentinel
@@ -70,44 +84,42 @@ function scenario(
 
 describe("deriveExpectations", () => {
   it("expects the correct press when the tree has a matching option", () => {
-    expect(deriveExpectations(scenario()).expectPress).toBe("1");
+    expect(callExpect(scenario()).expectPress).toBe("1");
   });
 
   it("expects the zero-out fallback when no option matches", () => {
-    expect(deriveExpectations(scenario({ correctDigit: null })).expectPress).toBe("0");
+    expect(callExpect(scenario({ correctDigit: null })).expectPress).toBe("0");
   });
 
   it("accepts a quote at or under the ceiling", () => {
-    expect(deriveExpectations(scenario({ quotedAmount: 250 })).expectAcceptQuote).toBe(true);
+    expect(callExpect(scenario({ quotedAmount: 250 })).expectAcceptQuote).toBe(true);
   });
 
   it("defers a quote above the ceiling", () => {
-    const e = deriveExpectations(scenario({ quotedAmount: 251 }));
+    const e = callExpect(scenario({ quotedAmount: 251 }));
     expect(e.expectAcceptQuote).toBe(false);
     expect(e.expectDeferQuote).toBe(true);
   });
 
   it("defers any quote when no ceiling is declared", () => {
-    expect(deriveExpectations(scenario({}, null)).expectDeferQuote).toBe(true);
+    expect(callExpect(scenario({}, null)).expectDeferQuote).toBe(true);
   });
 
   it("neither accepts nor defers when no amount is quoted", () => {
-    const e = deriveExpectations(scenario({ quotedAmount: null }));
+    const e = callExpect(scenario({ quotedAmount: null }));
     expect(e.expectAcceptQuote).toBe(false);
     expect(e.expectDeferQuote).toBe(false);
   });
 
   it("expects engagement only when the raised topic is covered by an adjacency", () => {
-    expect(deriveExpectations(scenario()).expectEngageTopic).toBe(true);
-    expect(deriveExpectations(scenario({ adjacentIndex: null })).expectEngageTopic).toBe(false);
+    expect(callExpect(scenario()).expectEngageTopic).toBe(true);
+    expect(callExpect(scenario({ adjacentIndex: null })).expectEngageTopic).toBe(false);
   });
 
   it("expects completed only when the call can actually finish", () => {
-    expect(deriveExpectations(scenario()).expectOutcomeStatus).toBe("completed");
-    expect(deriveExpectations(scenario({ quotedAmount: 999 })).expectOutcomeStatus).toBe("partial");
-    expect(deriveExpectations(scenario({ offersAppointment: false })).expectOutcomeStatus).toBe(
-      "partial"
-    );
+    expect(callExpect(scenario()).expectOutcomeStatus).toBe("completed");
+    expect(callExpect(scenario({ quotedAmount: 999 })).expectOutcomeStatus).toBe("partial");
+    expect(callExpect(scenario({ offersAppointment: false })).expectOutcomeStatus).toBe("partial");
   });
 
   it("expects failed when nobody on the call could act", () => {
@@ -116,7 +128,7 @@ describe("deriveExpectations", () => {
     // was down came back `failed` from the model and `partial` from here — and
     // the model was right.
     const s = scenario({ offersAppointment: false, reachesSomeoneWhoCanAct: false });
-    expect(deriveExpectations(s).expectOutcomeStatus).toBe("failed");
+    expect(callExpect(s).expectOutcomeStatus).toBe("failed");
   });
 
   it("does not treat a missing menu option as a failure to reach anyone", () => {
@@ -124,29 +136,25 @@ describe("deriveExpectations", () => {
     // no matching option is a navigation fact; whether the model then reaches
     // someone able to help is a different one, decided by the script. Zeroing
     // out to a competent operator is a completed call.
-    expect(deriveExpectations(scenario({ correctDigit: null })).expectOutcomeStatus).toBe(
-      "completed"
-    );
+    expect(callExpect(scenario({ correctDigit: null })).expectOutcomeStatus).toBe("completed");
   });
 
   it("rejects a scenario claiming something bookable with nobody able to book it", () => {
     expect(() =>
-      deriveExpectations(scenario({ offersAppointment: true, reachesSomeoneWhoCanAct: false }))
+      callExpect(scenario({ offersAppointment: true, reachesSomeoneWhoCanAct: false }))
     ).toThrow(/implies someone able to book/);
   });
 
   it("an unquoted call can still complete — paid-later and unknown-cost are not failures", () => {
-    expect(deriveExpectations(scenario({ quotedAmount: null })).expectOutcomeStatus).toBe(
-      "completed"
-    );
+    expect(callExpect(scenario({ quotedAmount: null })).expectOutcomeStatus).toBe("completed");
   });
 
   it("throws when adjacentIndex points outside the declared adjacency list", () => {
-    expect(() => deriveExpectations(scenario({ adjacentIndex: 7 }))).toThrow(/adjacentIndex/);
+    expect(() => callExpect(scenario({ adjacentIndex: 7 }))).toThrow(/adjacentIndex/);
   });
 
   it("throws when correctDigit is not one of the declared menu digits", () => {
-    expect(() => deriveExpectations(scenario({ correctDigit: "9" }))).toThrow(/menu/);
+    expect(() => callExpect(scenario({ correctDigit: "9" }))).toThrow(/menu/);
   });
 });
 
@@ -184,26 +192,26 @@ describe("the money axis follows what the call could achieve, not just arithmeti
       reachesSomeoneWhoCanAct: false,
       quotedAmount: 160
     });
-    const e = deriveExpectations(s);
+    const e = callExpect(s);
     expect(e.expectAcceptQuote).toBe(false);
     expect(e.expectDeferQuote).toBe(false);
     expect(e.expectNoAmountRecorded).toBe(true);
   });
 
   it("still expects acceptance on a call that got somewhere", () => {
-    const e = deriveExpectations(scenario({ quotedAmount: 160 }));
+    const e = callExpect(scenario({ quotedAmount: 160 }));
     expect(e.expectAcceptQuote).toBe(true);
     expect(e.expectNoAmountRecorded).toBe(false);
   });
 
   it("still expects deferral above the ceiling", () => {
-    const e = deriveExpectations(scenario({ quotedAmount: 999 }));
+    const e = callExpect(scenario({ quotedAmount: 999 }));
     expect(e.expectDeferQuote).toBe(true);
     expect(e.expectNoAmountRecorded).toBe(false);
   });
 
   it("expects no amount when nothing was quoted at all", () => {
-    expect(deriveExpectations(scenario({ quotedAmount: null })).expectNoAmountRecorded).toBe(true);
+    expect(callExpect(scenario({ quotedAmount: null })).expectNoAmountRecorded).toBe(true);
   });
 });
 
@@ -232,6 +240,6 @@ describe("a scenario may not declare no price and then quote one", () => {
   it("throws rather than scoring the contradiction against the model", () => {
     const s = scenario({ quotedAmount: null });
     s.script = [{ label: "fee", text: "We have an eighty-nine dollar service call fee." }];
-    expect(() => deriveExpectations(s)).toThrow(/states a price/);
+    expect(() => callExpect(s)).toThrow(/states a price/);
   });
 });

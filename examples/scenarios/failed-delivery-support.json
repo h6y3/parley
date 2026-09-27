@@ -1,0 +1,59 @@
+{
+  "version": 2,
+  "brief": {
+    "to": "+15555550152",
+    "persona": "I am calling Harbor Hardware about an online order delivery.",
+    "objective": "Learn why the original delivery failed and reschedule the missed items for any no-fee delivery slot this week.",
+    "facts": [
+      "The customer is Alex Rivera, phone +15555550123, email alex@example.com, delivery ZIP 94107.",
+      "The online order number is HH-12345.",
+      "The missed delivery contains three bags of water-softener salt; a separately shipped drain auger must not be changed.",
+      "Leave the salt outside on the porch or driveway.",
+      "If the associate cannot provide the original failure reason, record it as unavailable rather than dropping that objective.",
+      "Do not accept a fee, substitute an item, cancel anything, or schedule outside this week."
+    ],
+    "operation": { "id": "failed-delivery-HH-12345", "attempt": 1, "maxAttempts": 3 }
+  },
+  "policy": {
+    "principalName": "Alex Rivera",
+    "identity": { "style": "silent", "recipientName": "Harbor Hardware" },
+    "disclosure": { "honestIfAsked": true, "volunteer": false },
+    "scope": { "lock": true },
+    "grounding": { "antiInvention": false },
+    "deferral": { "enabled": true },
+    "authority": {
+      "authorizedCommitments": [
+        "Reschedule the three salt bags to any no-fee delivery slot this week at the same address."
+      ]
+    },
+    "patience": { "expectLookupPauses": true },
+    "ivr": {
+      "goal": "Reach online order delivery support.",
+      "menuHints": ["Choose order status before delivery support."]
+    },
+    "callback": { "number": "+15555550123" },
+    "wrapUp": { "enabled": true },
+    "voicemail": { "onMachine": "hangUp" }
+  },
+  "execution": {
+    "ivr": {
+      "maxPresses": 12,
+      "allowedDigits": "0123456789#",
+      "onUnrecognized": "waitForHuman"
+    },
+    "closure": { "requireOutcomeBeforeEnd": true },
+    "outcome": {
+      "fields": [
+        {
+          "name": "failureReason",
+          "description": "Why the original delivery failed, or unavailable if the associate cannot provide it."
+        },
+        {
+          "name": "rescheduledDelivery",
+          "description": "The confirmed replacement delivery date and fee, or unavailable if not rescheduled."
+        }
+      ]
+    },
+    "limits": { "maxDurationSeconds": 1200, "maxSilenceSeconds": 300 }
+  }
+}

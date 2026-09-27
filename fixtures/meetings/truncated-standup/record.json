@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "kind": "meeting",
+  "callId": "CAfixture0003",
+  "startedAt": "2026-08-19T17:20:00.000Z",
+  "endedAt": "2026-08-19T17:21:30.000Z",
+  "durationSeconds": 90,
+  "status": "completed",
+  "endedReason": "duration_cap",
+  "consentReceipt": {
+    "requestedAt": "2026-08-19T17:20:07.000Z",
+    "grantedAt": "2026-08-19T17:20:13.000Z",
+    "phrase": "go ahead and take notes",
+    "matchedPhrase": "go ahead and take notes",
+    "utterances": [
+      {
+        "speaker": "model",
+        "text": "Hi everyone — I'm an AI assistant on the line for Jordan Rivera, here to take notes for the standup. Any objection to my doing that?"
+      },
+      {
+        "speaker": "participant",
+        "text": "Sure, go ahead and take notes."
+      }
+    ]
+  },
+  "transcriptPath": "fixtures/meetings/truncated-standup/transcript.jsonl",
+  "brief": {
+    "title": "Engineering Standup",
+    "topic": "Daily standup; blockers on the ingest rewrite.",
+    "role": "engineering lead",
+    "track": ["engineering"]
+  },
+  "gapMs": 0,
+  "coveredMs": 76000,
+  "modelTurnsCompleted": 2
+}

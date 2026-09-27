@@ -114,6 +114,32 @@ describe("outcome recording", () => {
     expect(g.snapshot().outcome?.status).toBe("completed");
     expect(g.snapshot().outcome?.fields.appointmentStart).toBe("B");
   });
+
+  it("refuses a missing declared field at the binding gate", () => {
+    const g = new ToolGate({
+      outcome: {
+        fields: [
+          { name: "failureReason", description: "reason" },
+          { name: "rescheduledDelivery", description: "date" }
+        ]
+      }
+    });
+    expect(g.recordOutcome("completed", { rescheduledDelivery: "Monday" })).toBe(
+      "refused: incomplete outcome"
+    );
+    expect(g.snapshot().outcome).toBeUndefined();
+  });
+
+  it("refuses a non-string declared field but accepts an explicit empty string", () => {
+    const execution: CallExecution = {
+      outcome: { fields: [{ name: "failureReason", description: "reason" }] }
+    };
+    const g = new ToolGate(execution);
+    expect(g.recordOutcome("completed", { failureReason: null })).toBe(
+      "refused: incomplete outcome"
+    );
+    expect(g.recordOutcome("completed", { failureReason: "" })).toBe("recorded");
+  });
 });
 
 describe("snapshot", () => {

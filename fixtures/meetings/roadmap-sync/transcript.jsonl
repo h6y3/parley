@@ -1,0 +1,5 @@
+{"v":1,"callId":"CAfixture0001","startedAt":"2026-08-19T17:00:00.000Z","diarized":false,"timeBase":"msSinceStartedAt"}
+{"type":"utterance","speaker":"participant","speakerId":null,"speakerSource":null,"speakerConfidence":null,"startMs":21000,"endMs":27000,"text":"So we agreed last week that the Q4 scope drops the reporting rework."}
+{"type":"gap","fromMs":180000,"toMs":214000,"reason":"transcriber_not_ready"}
+{"type":"utterance","speaker":"participant","speakerId":null,"speakerSource":null,"speakerConfidence":null,"startMs":214500,"endMs":222000,"text":"Ava will send the revised scope doc by Friday and Jordan signs off Monday."}
+{"type":"utterance","speaker":"model","speakerId":null,"speakerSource":null,"speakerConfidence":null,"startMs":null,"endMs":null,"text":"Thanks — starting notes now."}

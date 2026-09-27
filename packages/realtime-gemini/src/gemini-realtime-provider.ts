@@ -1,11 +1,15 @@
 import { GoogleGenAI, Modality, TurnCoverage } from "@google/genai";
-import type {
-  AudioFrame,
-  RealtimeConnectParams,
-  RealtimeProvider,
-  RealtimeSession,
-  ToolCallRequest,
-  ToolResult
+import {
+  encodingEquals,
+  formatEncoding,
+  PCM_16K,
+  PCM_24K,
+  type AudioFrame,
+  type RealtimeConnectParams,
+  type RealtimeProvider,
+  type RealtimeSession,
+  type ToolCallRequest,
+  type ToolResult
 } from "@parley/core";
 
 /** Parley's V1 fixed model (design spec §4.5). Exported so callers building a
@@ -122,7 +126,7 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
 
           if (serverContent.inputTranscription?.text) {
             params.callbacks.onTranscript({
-              speaker: "caller",
+              speaker: params.speakerRole ?? "caller",
               text: serverContent.inputTranscription.text,
               isFinal: Boolean(serverContent.inputTranscription.finished)
             });
@@ -131,7 +135,7 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
           for (const part of serverContent.modelTurn?.parts ?? []) {
             if (part.inlineData?.data) {
               params.callbacks.onAudio({
-                encoding: "pcm24k",
+                encoding: PCM_24K,
                 data: Buffer.from(part.inlineData.data, "base64")
               });
             }
@@ -167,9 +171,9 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
         genAISession.sendRealtimeInput({ text });
       },
       sendAudio(frame: AudioFrame) {
-        if (frame.encoding !== "pcm16k") {
+        if (!encodingEquals(frame.encoding, PCM_16K)) {
           throw new Error(
-            `GeminiRealtimeProvider.sendAudio requires pcm16k frames; received ${frame.encoding}`
+            `GeminiRealtimeProvider.sendAudio requires pcm@16000 frames; received ${formatEncoding(frame.encoding)}`
           );
         }
         genAISession.sendRealtimeInput({

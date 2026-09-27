@@ -1,4 +1,12 @@
-import type { AttachMediaStreamParams, AudioFrame, MediaStreamHandle } from "@parley/core";
+import {
+  encodingEquals,
+  formatEncoding,
+  MIXED_SOURCE,
+  MULAW_8K,
+  type AttachMediaStreamParams,
+  type AudioFrame,
+  type MediaStreamHandle
+} from "@parley/core";
 
 interface TwilioInbound {
   event: string;
@@ -63,6 +71,7 @@ export function attachTwilioMediaStream(params: AttachMediaStreamParams): MediaS
   /** Marks we are waiting for Twilio to play past, by name. */
   const pendingMarks = new Map<string, () => void>();
   let markSeq = 0;
+  let admitted = false;
   const silenceFrame = Buffer.alloc(OUTBOUND_FRAME_BYTES, MULAW_SILENCE_BYTE);
 
   const sendMedia = (payload: Buffer): void => {
@@ -128,6 +137,10 @@ export function attachTwilioMediaStream(params: AttachMediaStreamParams): MediaS
       case "start":
         streamSid = msg.start?.streamSid ?? msg.streamSid;
         onCallEvent({ type: "answered" });
+        if (!admitted) {
+          admitted = true;
+          onCallEvent({ type: "admitted" });
+        }
         break;
       case "media":
         // Fallback: every media frame also carries streamSid, so capture it here
@@ -135,7 +148,10 @@ export function attachTwilioMediaStream(params: AttachMediaStreamParams): MediaS
         streamSid ??= msg.streamSid;
         if (msg.media?.timestamp) lastTimestampMs = Number(msg.media.timestamp) || lastTimestampMs;
         if (msg.media?.payload) {
-          onInboundAudio({ encoding: "mulaw8k", data: Buffer.from(msg.media.payload, "base64") });
+          onInboundAudio(
+            { encoding: MULAW_8K, data: Buffer.from(msg.media.payload, "base64") },
+            MIXED_SOURCE
+          );
         }
         break;
       case "stop":
@@ -159,11 +175,18 @@ export function attachTwilioMediaStream(params: AttachMediaStreamParams): MediaS
     }
   });
 
+  // Twilio cannot distinguish a host removing us from a normal call end — the
+  // socket just closes either way — so this reports "unknown" rather than
+  // guessing at a host action it cannot see.
+  socket.on("close", () => {
+    onCallEvent({ type: "removed", by: "unknown" });
+  });
+
   return {
     sendOutboundAudio(frame: AudioFrame): void {
-      if (frame.encoding !== "mulaw8k") {
+      if (!encodingEquals(frame.encoding, MULAW_8K)) {
         throw new Error(
-          `Twilio media stream expects mulaw8k outbound frames, got ${frame.encoding}`
+          `Twilio media stream expects mulaw@8000 outbound frames, got ${formatEncoding(frame.encoding)}`
         );
       }
       // Enqueue only — the pacer drains it at the real-time telephony rate.

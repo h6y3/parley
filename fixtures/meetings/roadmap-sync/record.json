@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "kind": "meeting",
+  "callId": "CAfixture0001",
+  "startedAt": "2026-08-19T17:00:00.000Z",
+  "endedAt": "2026-08-19T17:04:00.000Z",
+  "durationSeconds": 240,
+  "status": "completed",
+  "endedReason": "far_end",
+  "brief": {
+    "title": "Roadmap Sync",
+    "topic": "Q4 scope review — reporting rework and rollout timing.",
+    "role": "product lead",
+    "track": ["engineering"]
+  },
+  "consentReceipt": {
+    "requestedAt": "2026-08-19T17:00:08.000Z",
+    "grantedAt": "2026-08-19T17:00:14.000Z",
+    "phrase": "go ahead and take notes",
+    "matchedPhrase": "go ahead and take notes",
+    "utterances": [
+      {
+        "speaker": "model",
+        "text": "Hi everyone — I'm an AI assistant on the line for Jordan Rivera, here to take notes. Any objection to my doing that?"
+      },
+      {
+        "speaker": "participant",
+        "text": "Sure, go ahead and take notes."
+      }
+    ]
+  },
+  "transcriptPath": "fixtures/meetings/roadmap-sync/transcript.jsonl",
+  "gapMs": 34000,
+  "coveredMs": 191000,
+  "modelTurnsCompleted": 2
+}

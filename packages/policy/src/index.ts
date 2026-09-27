@@ -16,7 +16,13 @@ export type {
 } from "./schema.js";
 export { composePolicy, CANARY_PHRASES } from "./compose.js";
 export type { CallMode } from "./compose.js";
-export { principalCall, representedCall, transactionalCall, navigableCall } from "./presets.js";
+export {
+  principalCall,
+  representedCall,
+  transactionalCall,
+  navigableCall,
+  meetingCall
+} from "./presets.js";
 // OPENING_TRIGGER is NOT re-exported here. It lived in this package as a second
 // copy of the constant in @parley/core, which nothing imported and which drifted
 // the moment the real one changed — the live-call fix updated core and left this

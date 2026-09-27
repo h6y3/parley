@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   loadBrief,
+  METAMORPHIC_RELATIONS,
   parseCliArgs,
   runPreviewCommand,
   runReliabilityCommand,
+  runScenarioCommand,
   runScenariosCommand,
   runTextPreviewCommand
 } from "../src/cli.js";
+import { MEETING_SCENARIOS } from "../src/scenarios.js";
 import type { runTextPreview } from "../src/text-preview-runner.js";
+import type { ScenarioRun } from "../src/call-scenario-evaluation.js";
 
 const briefJson = JSON.stringify({
   to: "+14085559999",
@@ -73,6 +77,34 @@ describe("runPreviewCommand", () => {
     expect(output).toContain("personal assistant");
     expect(output).toContain("openingTrigger:");
     expect(output).not.toContain("recipient:");
+    expect(output).not.toContain("meetingBrief");
+  });
+
+  // An operator must be able to audit exactly what a call carries — the
+  // meeting brief included — before dialling, without it appearing anywhere
+  // in systemInstruction (see payload-preview.test.ts for that guarantee).
+  it("shows execution.meeting.brief's fields when the envelope declares one", () => {
+    const envelopeJson = JSON.stringify({
+      version: 2,
+      brief: JSON.parse(briefJson),
+      policy: {},
+      execution: {
+        meeting: {
+          consent: { phrase: "go ahead and take notes", timeoutSeconds: 120, onTimeout: "hangUp" },
+          brief: {
+            title: "Roadmap Sync",
+            topic: "Q4 scope.",
+            role: "product lead",
+            track: ["engineering"]
+          }
+        }
+      }
+    });
+    const readFile = fakeReadFile({ "envelope.json": envelopeJson });
+    const output = runPreviewCommand({ command: "preview", briefPath: "envelope.json" }, readFile);
+    expect(output).toContain("meetingBrief (audit-only — never sent to the model):");
+    expect(output).toContain("title: Roadmap Sync");
+    expect(output).toContain("track: engineering");
   });
 });
 
@@ -81,6 +113,50 @@ describe("runScenariosCommand", () => {
     const output = runScenariosCommand();
     expect(output).toContain("topic-change:");
     expect(output).toContain("silence:");
+  });
+
+  // MEETING_SCENARIOS had exactly one consumer — its own test. Absent from
+  // this listing there was no way to discover a meeting derail's id, and
+  // `harness reliability` takes an id.
+  it("lists the meeting scenarios too, grouped so a meeting derail is not read as a two-party one", () => {
+    const output = runScenariosCommand();
+    for (const s of MEETING_SCENARIOS) expect(output).toContain(`${s.id}:`);
+    expect(output).toContain("execution.meeting");
+  });
+});
+
+describe("metamorphic relation selection", () => {
+  it("defaults to the quote raise, so an existing invocation keeps running what it ran", () => {
+    expect(parseCliArgs(["metamorphic", "--file", "s.json", "--runs", "1"]).relation).toBe(
+      "quote-raised-above-ceiling"
+    );
+  });
+
+  it("accepts the consent relation", () => {
+    expect(
+      parseCliArgs([
+        "metamorphic",
+        "--file",
+        "s.json",
+        "--runs",
+        "1",
+        "--relation",
+        "consent-phrase-removed"
+      ]).relation
+    ).toBe("consent-phrase-removed");
+  });
+
+  it("refuses a relation it cannot run rather than silently falling back", () => {
+    expect(() =>
+      parseCliArgs(["metamorphic", "--file", "s.json", "--runs", "1", "--relation", "bogus"])
+    ).toThrow(/--relation must be one of/);
+  });
+
+  it("declares both relations", () => {
+    expect([...METAMORPHIC_RELATIONS]).toEqual([
+      "quote-raised-above-ceiling",
+      "consent-phrase-removed"
+    ]);
   });
 });
 
@@ -201,5 +277,77 @@ describe("scenario commands", () => {
 
   it("refuses generate-scenarios without both --seed and --out", () => {
     expect(() => parseCliArgs(["generate-scenarios", "--seed", "s.json"])).toThrow(/--out/);
+  });
+});
+
+describe("--concurrency actually runs scenarios concurrently", () => {
+  it("overlaps runs at the requested width", async () => {
+    // There was no behavioural test for this at all, and `main` was quietly
+    // dropping the flag on its way to `runScenarioCommand` — parsed,
+    // range-checked, printed in --help, and then not forwarded, so
+    // `--concurrency 5` ran five billed sessions one after another. A parse
+    // assertion cannot see that: it stops one call short of the thing.
+    const scenario = {
+      id: "s",
+      description: "d",
+      envelope: {
+        version: 2,
+        brief: { to: "+15555550100", persona: "p", objective: "o", facts: [] },
+        policy: {
+          principalName: "Alex Rivera",
+          identity: { style: "self" },
+          disclosure: { honestIfAsked: false, volunteer: false },
+          scope: { lock: false },
+          grounding: { antiInvention: true },
+          deferral: { enabled: false },
+          authority: {}
+        },
+        execution: {}
+      },
+      params: {
+        menu: [],
+        correctDigit: null,
+        quotedAmount: null,
+        raisedTopic: null,
+        adjacentIndex: null,
+        offersAppointment: false,
+        reachesSomeoneWhoCanAct: true
+      },
+      script: [{ label: "l", text: "hello" }]
+    };
+
+    let inFlight = 0;
+    let peak = 0;
+    const release: (() => void)[] = [];
+    const runOne = async (): Promise<ScenarioRun> => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise<void>((resolve) => release.push(resolve));
+      inFlight -= 1;
+      return {
+        transcript: "",
+        endedBecause: "script-exhausted",
+        turnsDelivered: 1,
+        toolCalls: [],
+        snapshot: {}
+      };
+    };
+
+    const finished = runScenarioCommand(
+      { scenarioPath: "x.json", runs: 4, concurrency: 3, apiKey: "unused" },
+      {
+        readFile: () => JSON.stringify(scenario),
+        readdir: () => null,
+        run: runOne
+      }
+    );
+    // Let the three workers start, then drain everything.
+    await new Promise((r) => setTimeout(r, 0));
+    while (release.length > 0 || inFlight > 0) {
+      release.shift()?.();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    await finished;
+    expect(peak).toBe(3);
   });
 });

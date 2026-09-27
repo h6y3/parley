@@ -19,5 +19,15 @@ jobs:
       - run: pnpm run build
       - run: node examples/scenarios/validate.mjs
       - run: pnpm run lint
+      - run: pnpm run format:check
       - run: pnpm run typecheck
       - run: pnpm run test
+      # The browser suite is excluded from `pnpm run test` on purpose — it
+      # needs a Chromium binary, which a fresh clone should not download
+      # silently (see packages/meeting-browser/vitest.config.ts). CI is the
+      # place that download is free, and the suite is the ONLY evidence that
+      # Playwright accepts IN_CALL_ANCHOR_VISIBLE_SELECTOR — the single query
+      # that decides whether a join was admitted. If it stopped resolving,
+      # every join would time out and nothing else here would say so.
+      - run: pnpm --filter @parley/meeting-browser exec playwright install --with-deps chromium
+      - run: pnpm --filter @parley/meeting-browser run test:browser

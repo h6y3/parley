@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PCM_16K } from "../src/types.js";
 import type {
   AudioFrame,
   MediaStreamHandle,
@@ -42,7 +43,7 @@ describe("TelephonyProvider interface shape", () => {
 
 describe("RealtimeProvider interface shape", () => {
   it("a conforming fixture object satisfies the interface", async () => {
-    const audioFrame: AudioFrame = { encoding: "pcm16k", data: Buffer.from([]) };
+    const audioFrame: AudioFrame = { encoding: PCM_16K, data: Buffer.from([]) };
     const fixture: RealtimeProvider = {
       name: "fixture-realtime",
       connect: async (): Promise<RealtimeSession> => ({

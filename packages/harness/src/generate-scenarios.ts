@@ -1,4 +1,4 @@
-import type { CallScenario, ScenarioParams, ScenarioTurn } from "./call-scenario.js";
+import type { CallScenario, CallShapeParams, ScenarioTurn } from "./call-scenario.js";
 import { callScenarioSchema, deriveExpectations } from "./call-scenario.js";
 
 /** The axes a service-booking call varies along. Domain and tree depth are
@@ -62,7 +62,12 @@ export function matrixCells(): MatrixCell[] {
 export interface ScenarioRequest {
   cell: MatrixCell;
   envelope: CallScenario["envelope"];
-  params: ScenarioParams;
+  /** Call shape only, and stated in the type rather than left to a comment.
+   * This generator manufactures service-booking calls — a menu, a quote, an
+   * arrival window — and every knob it turns is one a meeting does not have.
+   * A meeting scenario is authored by hand against a real bridge's shape, not
+   * generated from this matrix. */
+  params: CallShapeParams;
 }
 
 /** The prose an author is allowed to produce. Note what is absent: no
@@ -131,7 +136,7 @@ export function buildScenarioRequest(seed: CallScenario, cell: MatrixCell): Scen
   const noMatch = cell.complication === "noMatchingMenuOption";
   const expansion = cell.complication === "scopeExpansionOffered";
 
-  const params: ScenarioParams = {
+  const params: CallShapeParams = {
     menu: noMatch
       ? [
           { option: "new installations", digit: "1" },

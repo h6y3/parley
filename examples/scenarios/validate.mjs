@@ -24,8 +24,8 @@ for (const f of files) {
     console.error(`FAIL ${f}: ${e.message}`);
   }
 }
-if (files.length < 12) {
-  console.error(`expected >=12 scenarios, found ${files.length}`);
+if (files.length < 13) {
+  console.error(`expected >=13 scenarios, found ${files.length}`);
   failed++;
 }
 process.exit(failed ? 1 : 0);

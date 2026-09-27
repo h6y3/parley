@@ -3,7 +3,7 @@ export const PACKAGE_NAME = "@parley/harness";
 export { buildPayloadPreview, formatPayloadPreview } from "./payload-preview.js";
 export type { PayloadPreview } from "./payload-preview.js";
 
-export { DERAIL_SCENARIOS } from "./scenarios.js";
+export { DERAIL_SCENARIOS, MEETING_SCENARIOS } from "./scenarios.js";
 export type { DerailScenario } from "./scenarios.js";
 
 export { disclosureOkForMode, detectMarkerLeak, evaluateScenarioRun } from "./evaluation.js";
@@ -23,13 +23,18 @@ export { runScenarioReliability, loadScenarioAudio } from "./reliability-runner.
 export { aggregateTranscript } from "./transcript.js";
 export type { Utterance } from "./transcript.js";
 
-export { main as runHarnessCli } from "./cli.js";
+export { main as runHarnessCli, METAMORPHIC_RELATIONS } from "./cli.js";
+export type { MetamorphicRelationId } from "./cli.js";
 export { deriveExpectations, callScenarioSchema } from "./call-scenario.js";
 export type {
   CallScenario,
   ScenarioTurn,
   ScenarioParams,
-  ScenarioExpectations
+  CallShapeParams,
+  MeetingShapeParams,
+  ScenarioExpectations,
+  CallShapeExpectations,
+  MeetingShapeExpectations
 } from "./call-scenario.js";
 export { evaluateCallScenario, EXTRA_CANARY_PHRASES } from "./call-scenario-evaluation.js";
 export type {
@@ -39,8 +44,14 @@ export type {
   FailureCode,
   ScenarioFailure
 } from "./call-scenario-evaluation.js";
-export { raiseQuoteAboveCeiling, relateQuoteRaise } from "./metamorphic.js";
+export {
+  raiseQuoteAboveCeiling,
+  relateConsentGate,
+  relateQuoteRaise,
+  withoutConsentPhrase
+} from "./metamorphic.js";
 export type {
+  ConsentPhrasePair,
   MetamorphicPair,
   PairResult,
   RelationOutcome,

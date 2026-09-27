@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CallSession,
+  MULAW_8K,
   type AudioCodec,
   type RealtimeProvider,
   type TelephonyProvider
@@ -12,7 +13,7 @@ import { handleHttpRequest, type HttpRequest, type ServerDeps } from "../src/req
 const codec: AudioCodec = {
   decodeInbound: (f) => f,
   encodeOutbound: (f) => f,
-  dtmfTones: () => ({ encoding: "mulaw8k", data: Buffer.alloc(0) })
+  dtmfTones: () => ({ encoding: MULAW_8K, data: Buffer.alloc(0) })
 };
 const realtime: RealtimeProvider = { name: "fake", connect: vi.fn() };
 
@@ -61,7 +62,8 @@ function deps(verify: boolean): { deps: ServerDeps; session: CallSession } {
       numberAllowlist: createNumberAllowlist(["+14155550002"]),
       hostAllowlist: createHostAllowlist(["voice.example.com"]),
       pending,
-      callToken: "unused-by-the-status-route"
+      callToken: "unused-by-the-status-route",
+      meetingArtifactsConfigured: true
     }
   };
 }
@@ -129,6 +131,29 @@ describe("POST /twilio/status", () => {
       deps(true).deps
     );
     expect(res.status).toBe(204);
+  });
+
+  it.each(["busy", "canceled", "completed", "failed", "no-answer"])(
+    "evicts an unconnected call on terminal status %s",
+    async (callStatus) => {
+      const { deps: d } = deps(true);
+      const res = await handleHttpRequest(
+        statusReq("voice.example.com", { CallSid: "CA1", CallStatus: callStatus }),
+        d
+      );
+      expect(res.status).toBe(204);
+      expect(d.pending.get("CA1")).toBeUndefined();
+    }
+  );
+
+  it("leaves an attached call for the media close path to finalize", async () => {
+    const { deps: d } = deps(true);
+    d.pending.markConnected("CA1");
+    await handleHttpRequest(
+      statusReq("voice.example.com", { CallSid: "CA1", CallStatus: "completed" }),
+      d
+    );
+    expect(d.pending.get("CA1")).toBeDefined();
   });
 
   it("is not gated by the call token", async () => {

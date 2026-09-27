@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AudioFrame, RealtimeProvider, TranscriptEvent } from "@parley/core";
+import {
+  PCM_16K,
+  type AudioFrame,
+  type RealtimeProvider,
+  type TranscriptEvent
+} from "@parley/core";
 import { SCOPE_STATEMENT } from "@parley/policy";
 import { runScenarioReliability } from "../src/reliability-runner.js";
 
@@ -17,7 +22,7 @@ describe("runScenarioReliability", () => {
 
   it("runs the script N times and reports a passing streak when every run is clean", async () => {
     const runAudioScript = vi.fn(async () => ({ turns: [], fullTranscript: cleanTranscript }));
-    const loadAudio = vi.fn((): AudioFrame[] => [{ encoding: "pcm16k", data: Buffer.from([1]) }]);
+    const loadAudio = vi.fn((): AudioFrame[] => [{ encoding: PCM_16K, data: Buffer.from([1]) }]);
     const report = await runScenarioReliability(
       {
         provider,

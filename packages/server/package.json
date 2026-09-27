@@ -1,6 +1,6 @@
 {
   "name": "@parley/server",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -29,6 +29,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@parley/transcription-deepgram": "workspace:*",
     "@types/node": "^22.9.0",
     "@types/ws": "^8.5.13",
     "tsup": "^8.3.5",

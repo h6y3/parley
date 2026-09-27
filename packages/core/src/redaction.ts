@@ -1,4 +1,10 @@
-const SECRET_KEY_PATTERN = /(api[_-]?key|token|secret|password|authorization)/i;
+// `send[_-]?digits` is deliberately narrower than a bare `digits`: it matches
+// `sendDigits` (OriginateParams / execution.dial — carrier-side DTMF that
+// typically carries a bridge passcode) without over-matching `allowedDigits`
+// (the permitted-keypad-character config for the model's in-band
+// `press_digits` tool) or `digits` (that tool's own call argument) — neither
+// of which is a secret.
+const SECRET_KEY_PATTERN = /(api[_-]?key|token|secret|password|authorization|send[_-]?digits)/i;
 const REDACTED = "[redacted]";
 
 /** Deep-walks an arbitrary value (object, array, or primitive) and replaces the

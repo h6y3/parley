@@ -6,7 +6,7 @@
   "status": "pass",
   "visualReview": "pending",
   "artifact": {
-    "path": "/Users/example/Development/_organized/_active/parley/docs/diagrams/parley-conversation-processing.html",
+    "path": "docs/diagrams/parley-conversation-processing.html",
     "sha256": "62df7b90e25eb45a750a129d1ccef93dc8f6ce7c0fccbc81cf965ab257b17fa5",
     "bytes": 823790
   },

@@ -1,0 +1,129 @@
+{
+  "$ref": "#/definitions/TranscriptRow",
+  "definitions": {
+    "TranscriptHeader": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1,
+          "description": "This file format's own version — always the literal 1. A separate axis from MeetingRecord's own `version` field: transcript.jsonl and the record that names it (via `transcriptPath`) are two independent artifacts, each free to version on its own schedule."
+        },
+        "callId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The identifier of the call or meeting this transcript belongs to — the same value as the owning MeetingRecord's own `callId`, which is how a consumer joins this file back to the record that named its path. Who assigned it depends on the transport; see that field's own description in the meeting-record schema. Opaque either way."
+        },
+        "startedAt": {
+          "type": "string",
+          "description": "ISO-8601 UTC instant the call began — the same value as the owning MeetingRecord's own `startedAt`, and the origin every millisecond timestamp elsewhere in this file (startMs/endMs on an utterance row, fromMs/toMs on a gap row) is measured from. See timeBase below for the unit."
+        },
+        "diarized": {
+          "type": "boolean",
+          "description": "Whether the TRANSCRIPTION PROVIDER attempted to tell separate speakers apart on this call. FALSE means diarization was never attempted at all — read it as \"not attempted\", never as \"attempted, and the room turned out to have exactly one speaker\", which is a different and stronger claim this field does not make. It is NOT a statement about whether the rows below are attributed, and reading it as one is the mistake this wording exists to prevent: the browser meeting transport writes false here and still populates speakerId on every row it could match, because it attributes speech from the meeting's own on-screen captions and captions are not diarization. To learn where a row's speakerId came from, read that row's speakerSource; this field answers only what the transcription provider did."
+        },
+        "timeBase": {
+          "type": "string",
+          "const": "msSinceStartedAt",
+          "description": "The unit and origin for every millisecond timestamp elsewhere in this file: each of startMs/endMs (utterance rows) and fromMs/toMs (gap rows) is a count of milliseconds elapsed since THIS header's own startedAt — never Unix epoch time, and never relative to when consent was granted. Always the single literal value \"msSinceStartedAt\" in this format version, written out explicitly rather than left for a reader to assume, so a future format version that changes the basis has a value to change here rather than silently producing timestamps a v1 reader would misread against the wrong origin."
+        }
+      },
+      "required": ["v", "callId", "startedAt", "diarized", "timeBase"],
+      "additionalProperties": true
+    },
+    "TranscriptUtteranceRow": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "utterance",
+          "description": "Discriminates this row from a gap row (\"gap\") — read this field first and branch on it. The two row shapes share no other field whose name means the same thing, so `type` is the only field a consumer can rely on before knowing which shape the rest of the row is."
+        },
+        "speaker": {
+          "type": "string",
+          "description": "Who said this: \"model\" for Parley's own agent, or the far end's speaker tag otherwise — \"participant\" is the only such tag this format version's transcription provider produces, so it is the only other value a meeting transcript actually contains today. The distinction that matters most to a consumer is the binary one: \"model\" is Parley speaking, and any other value is someone in the room, not the agent. Left open rather than a closed set of values, for the same reason MeetingRecord's own `consentReceipt.utterances[].speaker` is (`meeting-record.ts`): a future speaker tag must not be rejected by a reader validating against this v1 schema."
+        },
+        "speakerId": {
+          "type": ["string", "null"],
+          "description": "Opaque identifier attributing this utterance to a specific speaker, stable within the call. Written as an explicit `null`, never an omitted key — a reader parsing this file one line at a time needs the key present to have an \"unattributed\" branch from the very first row, rather than discovering the possibility only on some later row that happens to omit it. `null` means this utterance was attributed to nobody. A POPULATED value says only that something claimed to know who spoke — read speakerSource for what made the claim and speakerConfidence for what it is worth, and never take a populated speakerId on its own as diarization-grade. The browser meeting transport populates it with the display name from the meeting's own live captions, matched to this utterance by time, at speakerSource \"roster\" and speakerConfidence 0.6."
+        },
+        "speakerSource": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": ["channel", "roster", "diarization"]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where this row's speakerId came from. OPTIONAL, and the distinction between ABSENT and null is the whole reason it is: an absent key means the writer recorded no provenance at all — which is what every transcript written before this field existed looks like, and those files are still read — while an explicit null is a positive statement that this row was attributed to nobody. A reader must not collapse the two, and must not treat an absent key as a validation failure. Present, it is null exactly when speakerId is null. \"channel\": the speaker had an audio channel of their own, so the attribution is a property of the wire rather than an inference. \"roster\": matched against a participant list or the meeting UI's own live captions — an INFERENCE, whose strength is speakerConfidence; this is what the browser meeting transport writes. \"diarization\": the transcription provider itself separated the speakers. A consumer that puts a name in front of a human should branch on this field before doing so: a roster match at 0.6 and a channel attribution license very different claims about who said something."
+        },
+        "speakerConfidence": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How much this row's speakerId is worth, from 0 to 1. OPTIONAL for exactly the same reason as speakerSource above, and absent means the same thing: no provenance was recorded, as in every transcript written before these two fields existed. Present, it is null exactly when speakerId is null. Deliberately below 1 for an inferred attribution: the browser meeting transport writes 0.6 for a caption line that fell within three seconds of this utterance, which says \"the meeting UI showed this name speaking around then\" and not \"this person said this\". It qualifies its own speakerSource and does not rank one source against another; do not compare or rescale it across sources."
+        },
+        "startMs": {
+          "type": ["number", "null"],
+          "description": "Milliseconds since the header's startedAt (see timeBase) that this utterance began, or explicit `null` when the plane that produced it reports no timestamps at all — in production this is only ever the realtime speaking model, most visibly the turn still open when the meeting's consent handoff retires that plane. A `null` here is not only a missing value: it changes where this ROW sits in the file. See TranscriptRow's own description for the ordering rule this drives — do not assume the file is fully sorted by time without checking this field first."
+        },
+        "endMs": {
+          "type": ["number", "null"],
+          "description": "Milliseconds since the header's startedAt that this utterance ended, or explicit `null` under the exact same condition as startMs, which it always accompanies — the two are either both a number or both null, never one without the other."
+        },
+        "text": {
+          "type": "string",
+          "description": "The utterance's text, as transcribed. Always a FINAL result — see this schema's own top comment: an interim transcript from the same plane is filtered out before a row is ever built for it, so this text will not later be revised or replaced by a subsequent row carrying the same speaker and an overlapping time range."
+        }
+      },
+      "required": ["type", "speaker", "speakerId", "startMs", "endMs", "text"],
+      "additionalProperties": true
+    },
+    "TranscriptGapRow": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "gap",
+          "description": "Discriminates this row from an utterance row (\"utterance\") — read this field first and branch on it, the same way as for an utterance row; see that row's own type description for why."
+        },
+        "fromMs": {
+          "type": "number",
+          "description": "Milliseconds since the header's startedAt (see timeBase) marking the start of this gap — the instant audio stopped reaching the transcriber."
+        },
+        "toMs": {
+          "type": "number",
+          "description": "Milliseconds since the header's startedAt marking the end of this gap — the instant audio started reaching the transcriber again."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why this stretch of audio never reached the transcriber. Two values exist in the shipped writer: \"transcriber_connecting\" — the handoff window between consent being granted and the transcription provider's own connection completing (bounded at ten seconds); this is the gap essentially every real meeting records, typically a few hundred milliseconds long. \"transcriber_not_ready\" — the transcriber's connection dropped and audio arriving in that window was dropped rather than buffered; in the shipped implementation this window is only a few frames wide, because a lost transcriber connection ends the call rather than continuing to run against it, so this value is possible but rare in practice. Left as an open string rather than a closed set of two, for the same reason speaker above is: the underlying type this is drawn from (TranscriptGap.reason in @parley/core) is itself a bare string, not a two-value union, so a v1 reader must not reject a row carrying a reason neither of these two names."
+        }
+      },
+      "required": ["type", "fromMs", "toMs", "reason"],
+      "additionalProperties": true,
+      "description": "A stretch of the meeting the transcriber did not cover — a hole in the RECORD, not evidence of silence in the room. The room may have been talking the entire time this row spans; nothing about a gap row says otherwise, only that none of it reached the transcriber to be written down."
+    },
+    "TranscriptRow": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/TranscriptUtteranceRow"
+        },
+        {
+          "$ref": "#/definitions/TranscriptGapRow"
+        }
+      ],
+      "description": "Every body line of transcript.jsonl (every line after the header) is either an utterance row or a gap row, discriminated by type; there is no third shape and no row is ever a permissive mix of both — a row committing to neither shape is invalid, not a lenient partial match. ORDERING, the least guessable part of this format: every body line with a known time — an utterance's startMs, a gap's fromMs — appears in the file in ascending order by that time, interleaved, so a gap between two utterances is always written between them, never off to one side; a reader who stops at the first gap row never reads past a hole in the record without seeing it. But an utterance can carry startMs: null: the realtime speaking-model plane reports no timestamps at all, so the writer has no coordinate to place such a row into that timeline. Rather than treat the missing value as zero — which would sort the row to the very front, ahead of every gap and every other utterance, asserting it was the first thing said on the call, a false claim rather than an absent one — every untimed row is APPENDED after every timed row instead, in the order it was originally spoken relative to other untimed rows only. A model utterance spoken in the first second of the listening window can therefore be the LAST line of the file. A reader that assumes this file is fully sorted by time, full stop, will misplace such a row — check startMs (utterance) or fromMs (gap) for null before trusting a row's position in the file to mean anything about when it happened."
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

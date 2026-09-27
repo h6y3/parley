@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { PCM_16K } from "@parley/core";
 import type {
   AudioFrame,
   RealtimeConnectParams,
@@ -77,7 +78,7 @@ describe("runAudioScript", () => {
   it("sends the opening trigger, streams each turn's frames, and resolves early on isFinal", async () => {
     vi.useFakeTimers();
     const fake = makeFakeProvider();
-    const frame: AudioFrame = { encoding: "pcm16k", data: Buffer.from([9]) };
+    const frame: AudioFrame = { encoding: PCM_16K, data: Buffer.from([9]) };
 
     const resultPromise = runAudioScript({
       provider: fake.provider,
@@ -144,7 +145,7 @@ describe("runAudioScript resource safety", () => {
         model: "m",
         systemInstruction: "s",
         openingTrigger: "go",
-        turns: [{ label: "boom", frames: [{ encoding: "pcm16k", data: Buffer.from([1]) }] }],
+        turns: [{ label: "boom", frames: [{ encoding: PCM_16K, data: Buffer.from([1]) }] }],
         // Real (non-fake) timers here: keep the opening turn's timeout tiny so
         // this test resolves quickly instead of waiting out the 15s default.
         turnTimeoutMs: 10

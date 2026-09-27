@@ -22,6 +22,7 @@
  * make impossible.
  */
 import { describe, expect, it, vi } from "vitest";
+import { MULAW_8K } from "@parley/core";
 import type { AudioCodec, Brief, RealtimeProvider, TelephonyProvider } from "@parley/core";
 import { representedCall } from "@parley/policy";
 import { createHostAllowlist, createNumberAllowlist } from "../src/allowlist.js";
@@ -33,7 +34,7 @@ const TOKEN = "s3cr3t-token-value";
 const codec: AudioCodec = {
   decodeInbound: (f) => f,
   encodeOutbound: (f) => f,
-  dtmfTones: () => ({ encoding: "mulaw8k", data: Buffer.alloc(0) })
+  dtmfTones: () => ({ encoding: MULAW_8K, data: Buffer.alloc(0) })
 };
 const realtime: RealtimeProvider = { name: "fake", connect: vi.fn() };
 
@@ -67,6 +68,7 @@ function deps(overrides: Partial<ServerDeps> = {}): ServerDeps {
     hostAllowlist: createHostAllowlist(["voice.example.com"]),
     pending: new PendingSessions(),
     callToken: TOKEN,
+    meetingArtifactsConfigured: true,
     ...overrides
   };
 }

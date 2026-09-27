@@ -19,6 +19,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "node:net";
+import { MULAW_8K } from "@parley/core";
 import type { AudioCodec, RealtimeProvider, TelephonyProvider } from "@parley/core";
 import { createHostAllowlist, createNumberAllowlist } from "../src/allowlist.js";
 import { createParleyServer } from "../src/server.js";
@@ -26,7 +27,7 @@ import { createParleyServer } from "../src/server.js";
 const codec: AudioCodec = {
   decodeInbound: (f) => f,
   encodeOutbound: (f) => f,
-  dtmfTones: () => ({ encoding: "mulaw8k", data: Buffer.alloc(0) })
+  dtmfTones: () => ({ encoding: MULAW_8K, data: Buffer.alloc(0) })
 };
 const realtime: RealtimeProvider = { name: "fake", connect: vi.fn() };
 const telephony = {

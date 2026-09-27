@@ -49,6 +49,20 @@ import type { CallPolicy } from "../src/schema.js";
  * deferralRule, alwaysDeferRule, authorityRule, callbackRule, and
  * voicemailLeaveMessage. We prove participation the only way that makes
  * sense for an interpolated value: changing it changes the output.
+ *
+ * TWO FIXTURES, since 2026-08-20. `composePolicy` now selects a rail set by
+ * call shape (compose.ts) — most "call"-shape fields are, BY DESIGN,
+ * suppressed entirely once `meeting.announce` is true, not merely inert when
+ * falsy. Proving one of those fields still participates therefore has to
+ * happen in the "call" shape, or the test is asserting a property the design
+ * deliberately removed. `full` (meeting-shape, `meeting.announce: true`)
+ * stays the fixture for the two structural checks below (which only need
+ * every field populated once, not composed output) and for the handful of
+ * fields whose rail is kept for both shapes (`principalName`,
+ * `disclosure.honestIfAsked`, `pronunciation`, `extraGuardrails`) or is
+ * meeting-only (`meeting`, `meeting.purpose`). `callFull` — `full` with
+ * `meeting` removed, so `composePolicy` selects the "call" shape — is the
+ * fixture for every field whose rail the meeting shape suppresses.
  */
 
 /** The top-level CallPolicy fields whose value is itself a nested object,
@@ -66,7 +80,8 @@ const NESTED_OBJECT_FIELDS = [
   "wrapUp",
   "voicemail",
   "patience",
-  "ivr"
+  "ivr",
+  "meeting"
 ] as const satisfies readonly (keyof CallPolicy)[];
 
 /** Unwrap a `.optional()` wrapper (if present) and return the inner
@@ -104,24 +119,32 @@ const full: CallPolicy = {
   patience: { expectLookupPauses: true },
   ivr: { goal: "the service department", menuHints: ["Press one for service."] },
   pronunciation: ["Pronounce the last name Rivera as ree-VAIR-uh."],
-  extraGuardrails: ["Custom note."]
+  extraGuardrails: ["Custom note."],
+  meeting: { announce: true, purpose: "take notes for the team" }
 };
 
 function composed(p: CallPolicy): string {
   return composePolicy(p).join("\n---\n");
 }
 
-// Removes an optional top-level key from `full` while keeping everything
-// else identical. `Partial<CallPolicy>` makes the delete legal (the field is
-// genuinely optional on CallPolicy); the cast back documents that the result
-// is still a valid CallPolicy with that one key absent.
-function omit<K extends keyof CallPolicy>(key: K): CallPolicy {
-  const clone: Partial<CallPolicy> = { ...full };
+// Removes an optional top-level key from `base` (default `full`) while
+// keeping everything else identical. `Partial<CallPolicy>` makes the delete
+// legal (the field is genuinely optional on CallPolicy); the cast back
+// documents that the result is still a valid CallPolicy with that one key
+// absent.
+function omit<K extends keyof CallPolicy>(key: K, base: CallPolicy = full): CallPolicy {
+  const clone: Partial<CallPolicy> = { ...base };
   delete clone[key];
   return clone as CallPolicy;
 }
 
 const baseline = composed(full);
+
+// The "call" shape variant of `full`: every field `full` has, MINUS
+// `meeting`, so `composePolicy` selects the ordinary call rail set instead of
+// the meeting one. See the fixture-split note in the file-level comment.
+const callFull: CallPolicy = omit("meeting");
+const callBaseline = composed(callFull);
 
 describe("schema/composer rail coverage (drift guard)", () => {
   it("the fully-populated policy composes a non-empty guardrail set", () => {
@@ -155,8 +178,8 @@ describe("schema/composer rail coverage (drift guard)", () => {
   });
 
   it("identity participates", () => {
-    const mutated: CallPolicy = { ...full, identity: { style: "self" } };
-    expect(composed(mutated)).not.toBe(baseline);
+    const mutated: CallPolicy = { ...callFull, identity: { style: "self" } };
+    expect(composed(mutated)).not.toBe(callBaseline);
   });
 
   it("disclosure.honestIfAsked participates", () => {
@@ -168,49 +191,55 @@ describe("schema/composer rail coverage (drift guard)", () => {
   });
 
   it("disclosure.volunteer participates", () => {
-    const mutated: CallPolicy = { ...full, disclosure: { ...full.disclosure, volunteer: false } };
-    expect(composed(mutated)).not.toBe(baseline);
+    const mutated: CallPolicy = {
+      ...callFull,
+      disclosure: { ...callFull.disclosure, volunteer: false }
+    };
+    expect(composed(mutated)).not.toBe(callBaseline);
   });
 
   it("scope.lock participates", () => {
-    const mutated: CallPolicy = { ...full, scope: { lock: false } };
-    expect(composed(mutated)).not.toBe(baseline);
+    const mutated: CallPolicy = { ...callFull, scope: { lock: false } };
+    expect(composed(mutated)).not.toBe(callBaseline);
   });
 
   it("grounding.antiInvention participates", () => {
-    const mutated: CallPolicy = { ...full, grounding: { antiInvention: false } };
-    expect(composed(mutated)).not.toBe(baseline);
+    const mutated: CallPolicy = { ...callFull, grounding: { antiInvention: false } };
+    expect(composed(mutated)).not.toBe(callBaseline);
   });
 
   it("deferral.enabled participates", () => {
-    const mutated: CallPolicy = { ...full, deferral: { enabled: false } };
-    expect(composed(mutated)).not.toBe(baseline);
+    const mutated: CallPolicy = { ...callFull, deferral: { enabled: false } };
+    expect(composed(mutated)).not.toBe(callBaseline);
   });
 
   it("authority.authorizedCommitments participates", () => {
-    const mutated: CallPolicy = { ...full, authority: { alwaysDefer: full.authority.alwaysDefer } };
-    expect(composed(mutated)).not.toBe(baseline);
+    const mutated: CallPolicy = {
+      ...callFull,
+      authority: { alwaysDefer: callFull.authority.alwaysDefer }
+    };
+    expect(composed(mutated)).not.toBe(callBaseline);
   });
 
   it("authority.alwaysDefer participates", () => {
     const mutated: CallPolicy = {
-      ...full,
-      authority: { authorizedCommitments: full.authority.authorizedCommitments }
+      ...callFull,
+      authority: { authorizedCommitments: callFull.authority.authorizedCommitments }
     };
-    expect(composed(mutated)).not.toBe(baseline);
+    expect(composed(mutated)).not.toBe(callBaseline);
   });
 
   it("callback participates", () => {
-    expect(composed(omit("callback"))).not.toBe(baseline);
+    expect(composed(omit("callback", callFull))).not.toBe(callBaseline);
   });
 
   it("wrapUp.enabled participates", () => {
-    const mutated: CallPolicy = { ...full, wrapUp: { enabled: false } };
-    expect(composed(mutated)).not.toBe(baseline);
+    const mutated: CallPolicy = { ...callFull, wrapUp: { enabled: false } };
+    expect(composed(mutated)).not.toBe(callBaseline);
   });
 
   it("voicemail participates", () => {
-    expect(composed(omit("voicemail"))).not.toBe(baseline);
+    expect(composed(omit("voicemail", callFull))).not.toBe(callBaseline);
   });
 
   it("pronunciation participates", () => {
@@ -222,36 +251,47 @@ describe("schema/composer rail coverage (drift guard)", () => {
   });
 
   it("scope.adjacent participates", () => {
-    const mutated: CallPolicy = { ...full, scope: { lock: true } };
-    expect(composed(mutated)).not.toBe(baseline);
+    const mutated: CallPolicy = { ...callFull, scope: { lock: true } };
+    expect(composed(mutated)).not.toBe(callBaseline);
   });
 
   it("authority.spend participates", () => {
-    const authority: CallPolicy["authority"] = { ...full.authority };
+    const authority: CallPolicy["authority"] = { ...callFull.authority };
     delete authority.spend;
-    const mutated: CallPolicy = { ...full, authority };
-    expect(composed(mutated)).not.toBe(baseline);
+    const mutated: CallPolicy = { ...callFull, authority };
+    expect(composed(mutated)).not.toBe(callBaseline);
   });
 
   it("patience participates", () => {
-    expect(composed(omit("patience"))).not.toBe(baseline);
+    expect(composed(omit("patience", callFull))).not.toBe(callBaseline);
   });
 
   it("ivr participates", () => {
-    expect(composed(omit("ivr"))).not.toBe(baseline);
+    expect(composed(omit("ivr", callFull))).not.toBe(callBaseline);
   });
 
   it("ivr.menuHints participates", () => {
-    const mutated: CallPolicy = { ...full, ivr: { goal: full.ivr?.goal ?? "" } };
+    const mutated: CallPolicy = { ...callFull, ivr: { goal: callFull.ivr?.goal ?? "" } };
+    expect(composed(mutated)).not.toBe(callBaseline);
+  });
+
+  it("meeting participates", () => {
+    expect(composed(omit("meeting"))).not.toBe(baseline);
+  });
+
+  it("meeting.purpose participates", () => {
+    const mutated: CallPolicy = { ...full, meeting: { announce: true } };
     expect(composed(mutated)).not.toBe(baseline);
   });
 
-  // The `full` fixture uses voicemail.onMachine "leaveMessage", so the ivr
-  // participation test above exercises the IVR rail rather than the voicemail
-  // NARROWING. That narrowing is the single line that ended every business call
-  // at second one, so it gets its own assertion rather than riding along.
+  // The `full`/`callFull` fixtures use voicemail.onMachine "leaveMessage", so
+  // the ivr participation test above exercises the IVR rail rather than the
+  // voicemail NARROWING. That narrowing is the single line that ended every
+  // business call at second one, so it gets its own assertion rather than
+  // riding along. Built from `callFull` (not `full`) because the voicemail
+  // rail is call-shape only — see compose.ts's order:95 rail.
   it("ivr narrows the voicemail rail when onMachine is hangUp", () => {
-    const withHangup: CallPolicy = { ...full, voicemail: { onMachine: "hangUp" } };
+    const withHangup: CallPolicy = { ...callFull, voicemail: { onMachine: "hangUp" } };
     const noIvr: CallPolicy = { ...withHangup };
     delete noIvr.ivr;
     expect(composed(noIvr)).toContain("automated system");

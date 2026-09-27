@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CallSession,
+  MULAW_8K,
   type AudioCodec,
   type RealtimeProvider,
   type TelephonyProvider
@@ -12,7 +13,7 @@ import { handleHttpRequest, type HttpRequest, type ServerDeps } from "../src/req
 const codec: AudioCodec = {
   decodeInbound: (f) => f,
   encodeOutbound: (f) => f,
-  dtmfTones: () => ({ encoding: "mulaw8k", data: Buffer.alloc(0) })
+  dtmfTones: () => ({ encoding: MULAW_8K, data: Buffer.alloc(0) })
 };
 const realtime: RealtimeProvider = { name: "fake", connect: vi.fn() };
 
@@ -63,7 +64,8 @@ function deps(verify: boolean): ServerDeps {
     // /twilio/answer must NOT require it. Twilio cannot send a bearer token,
     // and its control is the webhook signature these tests exercise. Pinned in
     // request-handler-auth.test.ts.
-    callToken: "unused-by-the-answer-route"
+    callToken: "unused-by-the-answer-route",
+    meetingArtifactsConfigured: true
   };
 }
 

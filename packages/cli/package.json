@@ -1,6 +1,6 @@
 {
   "name": "@parley/cli",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -21,20 +21,28 @@
     "build": "tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "emit-schema": "node dist/emit-schema.js"
   },
   "dependencies": {
     "@parley/audio": "workspace:*",
     "@parley/core": "workspace:*",
     "@parley/harness": "workspace:*",
+    "@parley/meeting-browser": "workspace:*",
+    "@parley/realtime-deepgram": "workspace:*",
     "@parley/realtime-gemini": "workspace:*",
     "@parley/server": "workspace:*",
-    "@parley/telephony-twilio": "workspace:*"
+    "@parley/telephony-twilio": "workspace:*",
+    "@parley/transcription-deepgram": "workspace:*",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "jsonschema": "^1.5.0",
+    "prettier": "^3.3.3",
     "tsup": "^8.3.5",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.5"
+    "vitest": "^2.1.5",
+    "zod-to-json-schema": "^3.23.5"
   }
 }

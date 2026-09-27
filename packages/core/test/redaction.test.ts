@@ -34,6 +34,24 @@ describe("redactSecrets", () => {
     });
   });
 
+  it("redacts a sendDigits field — carrier-side DTMF typically carries a bridge passcode", () => {
+    expect(redactSecrets({ sendDigits: "1234#", to: "+14155551234" })).toEqual({
+      sendDigits: "[redacted]", // # noscan (test fixture, not a real secret)
+      to: "+14155551234"
+    });
+  });
+
+  it("does not over-match sendDigits' near neighbours: allowedDigits (config) and digits (a tool arg)", () => {
+    // Neither of these carries a bridge passcode: allowedDigits is the
+    // permitted-keypad-character config for the model's in-band press_digits
+    // tool, and digits is that tool's own argument. Only the carrier-played
+    // SendDigits at origination is the secret.
+    expect(redactSecrets({ allowedDigits: "0123456789*#", digits: "1" })).toEqual({
+      allowedDigits: "0123456789*#",
+      digits: "1"
+    });
+  });
+
   it("redacts secrets inside arrays of objects", () => {
     expect(redactSecrets([{ secret: "shh" }, { fine: "ok" }])).toEqual([
       { secret: "[redacted]" }, // # noscan

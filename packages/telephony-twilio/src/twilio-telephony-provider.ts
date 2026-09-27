@@ -1,16 +1,42 @@
-import type {
-  AnswerResponse,
-  AnswerResponseParams,
-  AttachMediaStreamParams,
-  MediaStreamHandle,
-  OriginateParams,
-  OriginateResult,
-  TelephonyProvider,
-  WebhookVerificationRequest
+import {
+  SEND_DIGITS_MAX_LENGTH,
+  SEND_DIGITS_PATTERN,
+  type AnswerResponse,
+  type AnswerResponseParams,
+  type AttachMediaStreamParams,
+  type MediaStreamHandle,
+  type OriginateParams,
+  type OriginateResult,
+  type TelephonyProvider,
+  type WebhookVerificationRequest
 } from "@parley/core";
 import { attachTwilioMediaStream } from "./media-stream.js";
 import { verifyTwilioSignature } from "./signature.js";
 import { buildStreamTwiml } from "./twiml.js";
+
+/** Validate `sendDigits` BEFORE it ever reaches `fetch`, so one bad character
+ * deep in a bridge's entry sequence fails loudly and locally rather than
+ * failing the whole origination against Twilio's API (or, worse, silently
+ * dropping the parameter and dialling a call nothing will ever enter the
+ * bridge for).
+ *
+ * The thrown message deliberately never echoes `sendDigits` itself: the value
+ * typically carries a bridge passcode (see `OriginateParams.sendDigits`), and
+ * an error message is a surface nothing in this codebase redacts on its way
+ * to a log — see the `redactSecrets` note on that field. */
+function validateSendDigits(sendDigits: string): void {
+  if (sendDigits.length < 1 || sendDigits.length > SEND_DIGITS_MAX_LENGTH) {
+    throw new Error(
+      `sendDigits must be 1-${SEND_DIGITS_MAX_LENGTH} characters (received length ` +
+        `${sendDigits.length})`
+    );
+  }
+  if (!SEND_DIGITS_PATTERN.test(sendDigits)) {
+    throw new Error(
+      "sendDigits contains a character outside Twilio's SendDigits alphabet (0-9, *, #, w, W)"
+    );
+  }
+}
 
 export interface TwilioTelephonyProviderOptions {
   accountSid: string;
@@ -62,6 +88,10 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
       body.set("StatusCallbackEvent", "initiated ringing answered completed");
     }
     if (params.machineDetection) body.set("MachineDetection", params.machineDetection);
+    if (params.sendDigits !== undefined) {
+      validateSendDigits(params.sendDigits);
+      body.set("SendDigits", params.sendDigits);
+    }
     const res = await this.fetchImpl(this.callsUrl(".json"), {
       method: "POST",
       headers: {
@@ -101,7 +131,15 @@ export class TwilioTelephonyProvider implements TelephonyProvider {
      down the <Connect><Stream> carrying the conversation, played the tone to
      nobody, hit the end of the new document and hung up. Measured on the first
      live call that ever pressed a key. Keypresses are audio now — see
-     AudioCodec.dtmfTones. */
+     AudioCodec.dtmfTones.
+
+     `sendDigits` above is NOT a reversal of this. It is a parameter of the
+     ORIGINATION request (`originate`, above) — set before the call is even
+     dialled, let alone answered — not a REST action posted against a call
+     already carrying a live <Connect><Stream>. There is no TwiML document to
+     redirect and no media stream to tear down; Twilio plays the tones itself,
+     out-of-band, once it answers. The failure mode this note describes cannot
+     reach it. */
 
   async hangup(callId: string): Promise<void> {
     await this.fetchImpl(this.callsUrl(`/${callId}.json`), {

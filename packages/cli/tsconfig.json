@@ -1,7 +1,20 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist"
+    "outDir": "dist",
+    // `@parley/cli` and `@parley/meeting-browser` depend on EACH OTHER, and
+    // that cycle is real rather than accidental: the transport writes records
+    // and transcripts with this package's writers, and this package's binary
+    // is where an operator starts a meeting. Resolved from SOURCE on both
+    // sides so neither package's typecheck or `dts` build waits on the
+    // other's `dist/` — pnpm schedules a cycle's members concurrently, so a
+    // dist-resolved cycle fails a clean `pnpm -r run build` on whichever
+    // member happens to lose the race. TypeScript handles circular source
+    // references; a build graph does not handle circular artifacts.
+    "paths": {
+      "@parley/cli": ["./src/index.ts"],
+      "@parley/meeting-browser": ["../meeting-browser/src/index.ts"]
+    }
   },
   "include": ["src", "test"]
 }

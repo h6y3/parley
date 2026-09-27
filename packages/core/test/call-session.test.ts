@@ -1,99 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 import { CallSession } from "../src/call-session.js";
-import { OPENING_TRIGGER } from "../src/render.js";
-import type { Brief } from "../src/brief.js";
+import { MEETING_OPENING_TRIGGER, OPENING_TRIGGER } from "../src/render.js";
+import { MULAW_8K, PCM_16K, PCM_24K } from "../src/types.js";
 import type {
-  AudioCodec,
   AudioFrame,
   MediaStreamHandle,
   RealtimeConnectParams,
   RealtimeProvider,
   RealtimeSession,
-  TelephonyProvider,
-  WebSocketLike
+  TelephonyProvider
 } from "../src/types.js";
-
-const brief: Brief = {
-  to: "+14155550123",
-  persona: "You are Ada.",
-  objective: "Confirm the booking.",
-  facts: ["Party of four."]
-};
-
-const guardrails: readonly string[] = ["Rule one.", "Rule two."];
-
-// Pass-through fake codec — this test verifies wiring, not DSP.
-const fakeCodec: AudioCodec = {
-  decodeInbound: (f: AudioFrame) => ({ encoding: "pcm16k", data: f.data }),
-  encodeOutbound: (f: AudioFrame) => ({ encoding: "mulaw8k", data: f.data }),
-  // Recognisable stand-in for real tones: these tests verify that a press
-  // reaches the OUTBOUND AUDIO STREAM, which is where keypresses now go. The
-  // tone generation itself is @parley/audio's dtmf.test.ts, which checks the
-  // actual frequencies with a Goertzel detector.
-  dtmfTones: (digits: string) => ({ encoding: "mulaw8k", data: Buffer.from(digits, "utf8") })
-};
-
-function fakes() {
-  let realtimeCb!: RealtimeConnectParams["callbacks"];
-  const sentAudio: AudioFrame[] = [];
-  const openingTrigger = vi.fn();
-  const session: RealtimeSession = {
-    sendOpeningTrigger: openingTrigger,
-    sendAudio: (f) => sentAudio.push(f),
-    notifyActivityEnd: () => {},
-    sendToolResponse: () => {},
-    close: async () => {}
-  };
-  let connectParams!: RealtimeConnectParams;
-  const realtime: RealtimeProvider = {
-    name: "fake-realtime",
-    connect: async (p) => {
-      connectParams = p;
-      realtimeCb = p.callbacks;
-      return session;
-    }
-  };
-
-  let onInbound!: (f: AudioFrame) => void;
-  const sentOutbound: AudioFrame[] = [];
-  const clearOutbound = vi.fn();
-  const handle: MediaStreamHandle = {
-    sendOutboundAudio: (f) => sentOutbound.push(f),
-    clearOutboundBuffer: clearOutbound,
-    drainOutbound: async () => ({ confirmed: true, waitedMs: 0 }),
-    close: () => {}
-  };
-  const telephony: TelephonyProvider = {
-    name: "fake-telephony",
-    originate: async () => ({ providerCallId: "call-1", status: "queued" }),
-    buildAnswerResponse: () => ({ contentType: "text/xml", body: "<Response/>" }),
-    verifyWebhookSignature: () => true,
-    attachMediaStream: (p) => {
-      onInbound = p.onInboundAudio;
-      return handle;
-    },
-    hangup: async () => {}
-  };
-
-  return {
-    realtime,
-    telephony,
-    session,
-    handle,
-    openingTrigger,
-    clearOutbound,
-    sentAudio,
-    sentOutbound,
-    emitInbound: (f: AudioFrame) => onInbound(f),
-    emitModelAudio: (f: AudioFrame) => realtimeCb.onAudio(f),
-    emitInterrupted: () => realtimeCb.onInterrupted(),
-    emitTranscript: (e: Parameters<RealtimeConnectParams["callbacks"]["onTranscript"]>[0]) =>
-      realtimeCb.onTranscript(e),
-    getConnectParams: () => connectParams
-  };
-}
-
-const fakeSocket: WebSocketLike = { send: () => {}, on: () => {}, close: () => {} };
+import {
+  brief,
+  guardrails,
+  fakeCodec,
+  fakes,
+  makeMeetingFakes,
+  FakeSocket
+} from "./helpers/call-session-harness.js";
 
 describe("CallSession", () => {
   it("resolves the systemInstruction via renderSystemInstruction from the brief and injected guardrails, and sends the fixed opening trigger", async () => {
@@ -109,13 +33,31 @@ describe("CallSession", () => {
       model: "test-model"
     });
     await cs.originate();
-    await cs.attach("call-1", fakeSocket);
+    await cs.attach("call-1", new FakeSocket());
 
     expect(f.getConnectParams().systemInstruction).toBe(
       "You are Ada.\n\nConfirm the booking. Party of four.\n\nRule one. Rule two."
     );
     expect(f.getConnectParams().responseModality).toBe("audio");
     expect(f.openingTrigger).toHaveBeenCalledWith(OPENING_TRIGGER);
+  });
+
+  /** The two live meeting calls that produced `MEETING_OPENING_TRIGGER` were
+   * sent `OPENING_TRIGGER`, whose only affirmative instruction is to greet a
+   * person or work a recorded menu — neither of which is joining a meeting —
+   * so the whole line read as "keep waiting" and the model never spoke.
+   *
+   * Asserting the negative alongside the positive is the point: a send site
+   * that sent BOTH would satisfy the positive assertion alone while handing a
+   * live model two contradictory openings. */
+  it("sends the meeting opening trigger, and not the generic one, when execution.meeting is declared", async () => {
+    const f = makeMeetingFakes();
+    const cs = new CallSession(f.params);
+    await cs.attach("CA1", new FakeSocket());
+
+    expect(f.openingTrigger).toHaveBeenCalledWith(MEETING_OPENING_TRIGGER);
+    expect(f.openingTrigger).not.toHaveBeenCalledWith(OPENING_TRIGGER);
+    expect(f.openingTrigger).toHaveBeenCalledTimes(1);
   });
 
   it("attaches the media stream before starting realtime.connect (carrier start frame must not be missed)", async () => {
@@ -150,7 +92,7 @@ describe("CallSession", () => {
       model: "test-model"
     });
     await cs.originate();
-    await cs.attach("call-1", fakeSocket);
+    await cs.attach("call-1", new FakeSocket());
 
     expect(order).toEqual(["attach", "connect"]);
   });
@@ -178,8 +120,12 @@ describe("CallSession", () => {
       model: "test-model"
     });
     await cs.originate();
-    await expect(cs.attach("call-1", fakeSocket)).rejects.toThrow(/connect failed/);
+    await expect(cs.attach("call-1", new FakeSocket())).rejects.toThrow(/connect failed/);
     expect(mediaClose).toHaveBeenCalledTimes(1);
+    // A failed connect must leave no phase behind — enterPhase("speaking")
+    // runs only after the realtime session is assigned, which this path
+    // never reaches.
+    expect([...cs.phases]).toEqual([]);
   });
 
   it("bridges inbound audio through the codec into the realtime session", async () => {
@@ -195,11 +141,11 @@ describe("CallSession", () => {
       model: "test-model"
     });
     await cs.originate();
-    await cs.attach("call-1", fakeSocket);
+    await cs.attach("call-1", new FakeSocket());
 
-    f.emitInbound({ encoding: "mulaw8k", data: Buffer.from([1, 2, 3]) });
+    f.emitInbound({ encoding: MULAW_8K, data: Buffer.from([1, 2, 3]) });
     expect(f.sentAudio).toHaveLength(1);
-    expect(f.sentAudio[0].encoding).toBe("pcm16k");
+    expect(f.sentAudio[0].encoding).toEqual(PCM_16K);
   });
 
   it("bridges model audio out through the codec to the media handle", async () => {
@@ -215,11 +161,11 @@ describe("CallSession", () => {
       model: "test-model"
     });
     await cs.originate();
-    await cs.attach("call-1", fakeSocket);
+    await cs.attach("call-1", new FakeSocket());
 
-    f.emitModelAudio({ encoding: "pcm24k", data: Buffer.from([9, 9]) });
+    f.emitModelAudio({ encoding: PCM_24K, data: Buffer.from([9, 9]) });
     expect(f.sentOutbound).toHaveLength(1);
-    expect(f.sentOutbound[0].encoding).toBe("mulaw8k");
+    expect(f.sentOutbound[0].encoding).toEqual(MULAW_8K);
   });
 
   it("clears the telephony outbound buffer on barge-in", async () => {
@@ -235,7 +181,7 @@ describe("CallSession", () => {
       model: "test-model"
     });
     await cs.originate();
-    await cs.attach("call-1", fakeSocket);
+    await cs.attach("call-1", new FakeSocket());
 
     f.emitInterrupted();
     expect(f.clearOutbound).toHaveBeenCalledOnce();
@@ -254,9 +200,92 @@ describe("CallSession", () => {
       model: "test-model"
     });
     await cs.originate();
-    const handle = await cs.attach("call-1", fakeSocket);
+    const handle = await cs.attach("call-1", new FakeSocket());
     f.emitTranscript({ speaker: "model", text: "hello", isFinal: true });
     expect(handle.transcript).toEqual([{ speaker: "model", text: "hello", isFinal: true }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// execution.dial.sendDigits — carrier-side DTMF at origination.
+//
+// Twilio plays `SendDigits` itself, out-of-band, before any media stream
+// exists — distinct from the model's in-band `press_digits` tool, which goes
+// out over the codec once the call is live. `originate()` is the ONLY place
+// this value is read; nothing else in CallSession touches it.
+// ---------------------------------------------------------------------------
+describe("CallSession.originate — execution.dial passthrough", () => {
+  it("passes execution.dial.sendDigits through to the telephony provider's originate params", async () => {
+    const f = fakes();
+    let captured: Parameters<TelephonyProvider["originate"]>[0] | undefined;
+    const telephony: TelephonyProvider = {
+      ...f.telephony,
+      originate: async (params) => {
+        captured = params;
+        return f.telephony.originate(params);
+      }
+    };
+    const cs = new CallSession({
+      brief,
+      guardrails,
+      telephony,
+      realtime: f.realtime,
+      codec: fakeCodec,
+      from: "+14155550000",
+      answerWebhookUrl: "https://example.test/answer",
+      model: "test-model",
+      execution: { dial: { sendDigits: "1234#" } }
+    });
+    await cs.originate();
+
+    expect(captured?.sendDigits).toBe("1234#");
+  });
+
+  it("omits sendDigits when no execution.dial block is declared", async () => {
+    const f = fakes();
+    let captured: Parameters<TelephonyProvider["originate"]>[0] | undefined;
+    const telephony: TelephonyProvider = {
+      ...f.telephony,
+      originate: async (params) => {
+        captured = params;
+        return f.telephony.originate(params);
+      }
+    };
+    const cs = new CallSession({
+      brief,
+      guardrails,
+      telephony,
+      realtime: f.realtime,
+      codec: fakeCodec,
+      from: "+14155550000",
+      answerWebhookUrl: "https://example.test/answer",
+      model: "test-model"
+    });
+    await cs.originate();
+
+    expect(captured?.sendDigits).toBeUndefined();
+  });
+
+  it("never hands sendDigits to onDiagnostic — the only sink CallSession itself can write a log line to", async () => {
+    const f = fakes();
+    const diagnostics: string[] = [];
+    const cs = new CallSession({
+      brief,
+      guardrails,
+      telephony: f.telephony,
+      realtime: f.realtime,
+      codec: fakeCodec,
+      from: "+14155550000",
+      answerWebhookUrl: "https://example.test/answer",
+      model: "test-model",
+      execution: { dial: { sendDigits: "9999secretpasscode9999" } },
+      onDiagnostic: (message) => diagnostics.push(message)
+    });
+    await cs.originate();
+    await cs.attach("call-1", new FakeSocket());
+    f.emitInterrupted();
+
+    expect(diagnostics.join("\n")).not.toContain("secretpasscode");
   });
 });
 
@@ -283,7 +312,7 @@ describe("CallSessionHandle.stop", () => {
       model: "test-model"
     });
     await cs.originate();
-    const handle = await cs.attach("call-1", fakeSocket);
+    const handle = await cs.attach("call-1", new FakeSocket());
 
     await handle.stop("remote");
 
@@ -307,6 +336,11 @@ interface ToolFakeOpts {
   execution?: CallExecution;
   dtmfThrows?: boolean;
   hangupThrows?: boolean;
+  /** Injectable clock — see `CallSessionParams.now`. Only the DTMF
+   * barge-in tests need control over it; everything else is fine with the
+   * default (`Date.now`), which never lands inside a burst window because
+   * the fake burst durations are sub-millisecond. */
+  now?: () => number;
 }
 
 async function attachWith(opts: ToolFakeOpts) {
@@ -314,6 +348,7 @@ async function attachWith(opts: ToolFakeOpts) {
   const order: string[] = [];
   const hangups: Array<{ callId: string; reason?: string }> = [];
   const responses: Array<{ id: string; result: ToolResult }> = [];
+  let clearCount = 0;
   let mediaClosed = false;
   let realtimeCb!: RealtimeConnectParams["callbacks"];
   let connectParams!: RealtimeConnectParams;
@@ -341,7 +376,9 @@ async function attachWith(opts: ToolFakeOpts) {
       if (opts.dtmfThrows) throw new Error("carrier refused");
       sentDtmf.push(f.data.toString("utf8"));
     },
-    clearOutboundBuffer: () => {},
+    clearOutboundBuffer: () => {
+      clearCount += 1;
+    },
     drainOutbound: async () => {
       order.push("drain");
       return { confirmed: true, waitedMs: 0 };
@@ -372,15 +409,20 @@ async function attachWith(opts: ToolFakeOpts) {
     from: "+15555550142",
     answerWebhookUrl: "https://voice.example.com/twilio/answer",
     model: "test-model",
-    ...(opts.execution ? { execution: opts.execution } : {})
+    ...(opts.execution ? { execution: opts.execution } : {}),
+    ...(opts.now ? { now: opts.now } : {})
   });
-  const handleOut = await cs.attach("CA1", fakeSocket);
+  const handleOut = await cs.attach("CA1", new FakeSocket());
 
   return {
     session: cs,
     handle: handleOut,
     sentDtmf,
     order,
+    get clearCount() {
+      return clearCount;
+    },
+    emitInterrupted: () => realtimeCb.onInterrupted(),
     emitTranscript: (e: { speaker: "model" | "caller"; text: string; isFinal: boolean }) =>
       connectParams.callbacks.onTranscript(e),
     finishTurn: () => connectParams.callbacks.onTurnComplete?.(),
@@ -518,6 +560,58 @@ describe("CallSession tool channel", () => {
     const f = await attachWith({});
     await f.fireToolCall({ id: "c1", name: "transfer_funds", args: {} });
     expect(f.responses).toEqual([{ id: "c1", result: "refused: tool not available" }]);
+  });
+});
+
+describe("DTMF barge-in protection", () => {
+  // Found on a REAL live call, not by any of the 742 tests that were passing
+  // at the time. The realtime model's VAD fires onInterrupted continuously
+  // while an IVR talks, and onInterrupted used to clear the outbound buffer
+  // unconditionally — including a keypress still mid-press, which is ~3
+  // seconds of tone audio on a real call (DEFAULT_TONE_MS/DEFAULT_GAP_MS,
+  // @parley/audio's dtmf.ts). The agent pressed a 12-digit meeting ID three
+  // times and never reached the passcode prompt. Every existing DTMF test
+  // asserted tones were GENERATED, never that they SURVIVED an interrupt —
+  // these are the ones that would have caught it.
+  const digits = "55501234567#";
+  const ivrExecution: CallExecution = {
+    ivr: { maxPresses: 20, allowedDigits: "0123456789#", onUnrecognized: "zeroOut" }
+  };
+
+  it("a barge-in that lands while a DTMF burst is in flight does not clear the outbound buffer", async () => {
+    const t = 1_000_000;
+    const f = await attachWith({ execution: ivrExecution, now: () => t });
+
+    await f.fireToolCall({ id: "c1", name: "press_digits", args: { digits } });
+    // The press itself must still have gone out as audio — this fix must not
+    // make barge-in protection come at the cost of the press never sending.
+    expect(f.sentDtmf).toEqual([digits]);
+
+    // No time has passed since the press: exactly the window an IVR's own
+    // talking falls inside on a real call.
+    f.emitInterrupted();
+
+    expect(f.clearCount).toBe(0);
+  });
+
+  it("a barge-in after the burst's window has elapsed still clears — barge-in must keep working", async () => {
+    let t = 1_000_000;
+    const f = await attachWith({ execution: ivrExecution, now: () => t });
+
+    await f.fireToolCall({ id: "c1", name: "press_digits", args: { digits } });
+
+    // Comfortably past the burst's own duration (well under 1ms for this
+    // fake codec) plus its margin.
+    t += 1_000;
+    f.emitInterrupted();
+
+    expect(f.clearCount).toBe(1);
+  });
+
+  it("a barge-in with no DTMF ever pressed still clears immediately — unaffected by this fix", async () => {
+    const f = await attachWith({});
+    f.emitInterrupted();
+    expect(f.clearCount).toBe(1);
   });
 });
 
@@ -705,5 +799,139 @@ describe("the transcript stores turns, not word fragments", () => {
     expect(f.handle.transcript).toEqual([
       { speaker: "model", text: "Thanks for your h", isFinal: false }
     ]);
+  });
+});
+
+/**
+ * `onCallEvent` was `() => {}`. Every lifecycle event the telephony layer
+ * synthesises — `admitted` and `removed` among them, both added with tests of
+ * their own on the provider side — reached a function that dropped it, so the
+ * carrier's whole lifecycle channel existed with no consumer at all.
+ */
+describe("carrier lifecycle events", () => {
+  it("routes an admitted event into the session rather than dropping it", async () => {
+    const diagnostics: string[] = [];
+    const f = fakes();
+    const session = new CallSession({
+      brief,
+      guardrails,
+      telephony: f.telephony,
+      realtime: f.realtime,
+      codec: fakeCodec,
+      from: "+14155550000",
+      answerWebhookUrl: "https://example.test/answer",
+      model: "test-model",
+      onDiagnostic: (m) => diagnostics.push(m)
+    });
+    await session.attach("CA1", new FakeSocket());
+    f.emitCallEvent({ type: "admitted" });
+    expect(diagnostics).toContain("carrier lifecycle: admitted");
+  });
+
+  it("records answeredBy from a lifecycle event delivered by the media layer", async () => {
+    const f = fakes();
+    const session = new CallSession({
+      brief,
+      guardrails,
+      telephony: f.telephony,
+      realtime: f.realtime,
+      codec: fakeCodec,
+      from: "+14155550000",
+      answerWebhookUrl: "https://example.test/answer",
+      model: "test-model"
+    });
+    await session.attach("CA1", new FakeSocket());
+    f.emitCallEvent({ type: "answered", answeredBy: "machine" });
+    expect(session.answeredBy).toBe("machine");
+  });
+
+  // Twilio emits `removed` on EVERY socket close, normal hangups included,
+  // because it cannot tell a host removal from a hangup. Saying so is the
+  // whole point: an EndReason fed from this would label every completed call
+  // "removed", which is why no such EndReason exists.
+  it("reports an unattributable removal as what it is, and ends nothing", async () => {
+    const diagnostics: string[] = [];
+    const f = fakes();
+    const session = new CallSession({
+      brief,
+      guardrails,
+      telephony: f.telephony,
+      realtime: f.realtime,
+      codec: fakeCodec,
+      from: "+14155550000",
+      answerWebhookUrl: "https://example.test/answer",
+      model: "test-model",
+      onDiagnostic: (m) => diagnostics.push(m)
+    });
+    const handle = await session.attach("CA1", new FakeSocket());
+    f.emitCallEvent({ type: "removed", by: "unknown" });
+    expect(diagnostics.some((d) => d.includes("cannot tell a host removal from a hangup"))).toBe(
+      true
+    );
+    expect(handle.endedBy).toBeUndefined();
+  });
+});
+
+describe("CallSession.meetingBrief", () => {
+  it("reads execution.meeting.brief through unchanged", () => {
+    const f = fakes();
+    const meetingBrief = {
+      title: "Roadmap Sync",
+      topic: "Q4 scope.",
+      role: "product lead",
+      track: ["engineering"]
+    };
+    const session = new CallSession({
+      brief,
+      guardrails,
+      telephony: f.telephony,
+      realtime: f.realtime,
+      codec: fakeCodec,
+      from: "+14155550000",
+      answerWebhookUrl: "https://example.test/answer",
+      model: "test-model",
+      execution: {
+        meeting: {
+          consent: { phrase: "go ahead and take notes", timeoutSeconds: 180, onTimeout: "hangUp" },
+          brief: meetingBrief
+        }
+      }
+    });
+    expect(session.meetingBrief).toEqual(meetingBrief);
+  });
+
+  it("is undefined for a declared meeting whose caller supplied no brief", () => {
+    const f = fakes();
+    const session = new CallSession({
+      brief,
+      guardrails,
+      telephony: f.telephony,
+      realtime: f.realtime,
+      codec: fakeCodec,
+      from: "+14155550000",
+      answerWebhookUrl: "https://example.test/answer",
+      model: "test-model",
+      execution: {
+        meeting: {
+          consent: { phrase: "go ahead and take notes", timeoutSeconds: 180, onTimeout: "hangUp" }
+        }
+      }
+    });
+    expect(session.meetingBrief).toBeUndefined();
+  });
+
+  it("is undefined for an ordinary (non-meeting) call — indistinguishable from 'meeting, no brief'", () => {
+    const f = fakes();
+    const session = new CallSession({
+      brief,
+      guardrails,
+      telephony: f.telephony,
+      realtime: f.realtime,
+      codec: fakeCodec,
+      from: "+14155550000",
+      answerWebhookUrl: "https://example.test/answer",
+      model: "test-model"
+    });
+    expect(session.meetingBrief).toBeUndefined();
   });
 });

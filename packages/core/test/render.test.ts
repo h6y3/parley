@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { OPENING_TRIGGER, renderSystemInstruction } from "../src/render.js";
+import {
+  MEETING_OPENING_TRIGGER,
+  OPENING_TRIGGER,
+  renderSystemInstruction
+} from "../src/render.js";
 
 describe("renderSystemInstruction", () => {
   it("orders persona, objective+facts, guardrails and joins with blank lines", () => {
@@ -58,5 +62,68 @@ describe("OPENING_TRIGGER", () => {
 
   it("still says what to do once something is heard", () => {
     expect(OPENING_TRIGGER).toMatch(/greet a person and say why you are calling/);
+  });
+});
+
+/**
+ * Two live meeting calls were sent `OPENING_TRIGGER`. On both the model took
+ * its turns (`modelTurnsCompleted` 2 and 1), said nothing, never called
+ * `begin_notetaking`, and the call ended `consent_refused` with no transcript.
+ *
+ * These assert PROPERTIES rather than the literal sentence, so the wording can
+ * be tuned against the next live call without any of them being lost silently
+ * — which is exactly how the defect survived: nothing anywhere asserted that
+ * the instruction a meeting receives ever tells the model to speak.
+ */
+describe("MEETING_OPENING_TRIGGER", () => {
+  it("is one line, and is not the generic trigger", () => {
+    expect(MEETING_OPENING_TRIGGER).not.toContain("\n");
+    expect(MEETING_OPENING_TRIGGER).not.toBe(OPENING_TRIGGER);
+  });
+
+  it("states the one thing the model cannot observe — nothing has been heard yet", () => {
+    expect(MEETING_OPENING_TRIGGER).toMatch(/just connected and nothing has been heard yet/);
+  });
+
+  it("classifies what a bridge sounds like before it starts as the meeting not having begun", () => {
+    expect(MEETING_OPENING_TRIGGER).toMatch(/[Hh]old music/);
+    expect(MEETING_OPENING_TRIGGER).toMatch(/waiting for the host/);
+    expect(MEETING_OPENING_TRIGGER).toMatch(/silence/);
+    expect(MEETING_OPENING_TRIGGER).toMatch(/the meeting has not begun/);
+  });
+
+  it("says waiting means silence and no keypress, and is not narrated", () => {
+    expect(MEETING_OPENING_TRIGGER).toMatch(/say nothing, press nothing/);
+    expect(MEETING_OPENING_TRIGGER).toMatch(/do not narrate that you are waiting/);
+  });
+
+  // The whole point of the constant: hearing the room is PERMISSION TO SPEAK,
+  // not one more reason to wait. Without this the trigger is a third
+  // instruction pointing at silence, alongside the two meeting rails that
+  // legitimately do.
+  it("makes hearing the room the cue to speak, not another reason to wait", () => {
+    expect(MEETING_OPENING_TRIGGER).toMatch(/hear people talking to one another/);
+    expect(MEETING_OPENING_TRIGGER).toMatch(/the waiting is over/);
+    expect(MEETING_OPENING_TRIGGER).toMatch(/say once who you are and why you are here/);
+    expect(MEETING_OPENING_TRIGGER).toMatch(/take notes/);
+  });
+
+  // `meetingConsentRequest` (@parley/policy) records a live call where a
+  // negative-polarity ask — "are any of you unhappy with that?" — was granted
+  // with a bare "no", the one answer the consent gate cannot accept. A trigger
+  // asking the same question the other way round would fight the rail it hands
+  // over to.
+  it("asks for consent positively, never as an objection", () => {
+    expect(MEETING_OPENING_TRIGGER).toMatch(/whether it is all right/);
+    expect(MEETING_OPENING_TRIGGER).not.toMatch(/object/i);
+  });
+
+  // Greeting a person and stating a purpose, or working a phone tree, belong
+  // to the two-party trigger. Carried into a meeting they are what made the
+  // instruction unactionable in the first place.
+  it("carries no transactional or IVR framing", () => {
+    expect(MEETING_OPENING_TRIGGER).not.toMatch(/why you are calling/i);
+    expect(MEETING_OPENING_TRIGGER).not.toMatch(/menu/i);
+    expect(MEETING_OPENING_TRIGGER).not.toMatch(/recording/i);
   });
 });

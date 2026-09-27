@@ -6,3 +6,14 @@ package-lock.json
 yarn.lock
 *.min.js
 *.map
+
+# Captured, not authored: real Google Meet DOM. Prettier's HTML formatter
+# would rewrite structure and whitespace, which is exactly what the fixture
+# README (packages/meeting-browser/test/fixtures/google-meet/README.md)
+# documents as off-limits — these bytes are evidence of what Google actually
+# served, not source we own the style of.
+packages/meeting-browser/test/fixtures/google-meet/*.html
+
+# Generated visual-publishing artifacts. Reformatting these files creates
+# enormous non-semantic diffs and can invalidate their recorded checksums.
+docs/diagrams/*
