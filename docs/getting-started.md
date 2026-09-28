@@ -1,8 +1,10 @@
 # Getting started
 
-A from-scratch walkthrough: clone the repo, configure it, and place your first briefed phone
-call. The install, config-check, `serve`, and `call` commands below were run against this repo to
-write this page. All phone numbers, hostnames, and names are samples — substitute your own.
+Parley is a one-shot voice-agent harness: give it a bounded call envelope and it owns one phone
+call from origination through a structured outcome. This walkthrough takes a fresh clone through
+configuration, offline preview, and a first controlled call. The install, config-check, `serve`,
+and `call` commands below were run against this repo to write this page. All phone numbers,
+hostnames, and names are samples — substitute your own.
 
 For the full environment-variable reference and the call-envelope schema, see
 [`docs/configuration.md`](configuration.md). For running the daemon as a supervised, always-on

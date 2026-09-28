@@ -1,7 +1,8 @@
 # Security model
 
-Parley is secure by default — none of the following require a hardening pass after adoption;
-they are the out-of-the-box behavior of `@parley/telephony-twilio` and `@parley/server` as built.
+Parley is a one-shot voice-agent harness that fails closed by default — none of the following
+require a hardening pass after adoption; they are the out-of-the-box behavior of
+`@parley/telephony-twilio` and `@parley/server` as built.
 
 ## `POST /call` authentication — the primary control
 

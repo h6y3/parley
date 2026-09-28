@@ -1,11 +1,15 @@
 # Architecture
 
-Parley is a long-running Node.js service (the **daemon**, `@parley/server`) that can also be
-used as a set of libraries directly. The daemon exposes three surfaces: a local HTTP API for
-originating calls, a Twilio webhook for call-answer callbacks, and a WebSocket endpoint for the
-Twilio media stream. Internally, a `CallSession` orchestrator in `@parley/core` owns the
-lifecycle of a single call end-to-end: assembling the prompt, driving the telephony provider,
-driving the realtime provider, and bridging audio between them.
+Parley is a one-shot voice-agent harness built around a long-running Node.js daemon
+(`@parley/server`). A consumer submits one bounded call envelope; Parley owns that call from
+validation and origination through tool gating, termination, and the completed-call record. The
+same packages can also be embedded directly.
+
+The daemon exposes three runtime surfaces: a local HTTP API for originating calls, a Twilio
+webhook for answer callbacks, and a WebSocket endpoint for the Twilio media stream. Internally, a
+`CallSession` orchestrator in `@parley/core` owns the lifecycle of a single call end-to-end:
+assembling the prompt, driving the telephony provider, driving the realtime provider, and bridging
+audio between them.
 
 ## Dataflow
 

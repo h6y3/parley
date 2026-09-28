@@ -1,10 +1,10 @@
 # Agent setup — copy-paste prompts for driving Parley with an AI coding agent
 
-Parley is designed to be installed, configured, and validated by an AI coding agent (Claude Code,
-Cursor, or any other AI coding agent with shell access to this repo) rather than by hand. This doc has
-three copy-paste prompts: one to install and configure the daemon, one to validate call behavior
-offline before any real call, and a reference section for wiring Parley into your own agent as a
-tool.
+Parley is a one-shot voice-agent harness designed to be installed, configured, and validated by an
+AI coding agent (Claude Code, Cursor, or any other AI coding agent with shell access to this repo)
+rather than by hand. This doc has three copy-paste prompts: one to install and configure the daemon,
+one to validate call behavior offline before any real call, and a reference section for wiring
+Parley into your own agent as a tool.
 
 None of the prompts below place a real phone call. Placing a real call is a separate, explicit
 step you take only after reviewing the harness output.

@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Reframed the public documentation around Parley's actual product boundary: a one-shot
+  voice-agent harness for bounded calls, rather than a voice connection or generic bot. The README
+  now leads with the call contract, capability gate, structured evidence, retry lineage, and
+  offline-to-live validation loop; the getting-started, architecture, agent-setup, security, and
+  package metadata use the same nomenclature.
+- Added `@parley/meeting-browser` to the README package inventory, which had fallen behind the
+  workspace after the package was introduced.
+
 ## [0.3.1] — 2026-09-27
 
 ### Added
