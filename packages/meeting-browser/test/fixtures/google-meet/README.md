@@ -117,7 +117,7 @@ what makes this markup evidence rather than a mockup.
 
 | Found in the capture                                                                                                         | Replaced with                                                                                      | Occurrences (all 4 files) |
 | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------- |
-| `Jordan Rivera` (the human host's real name)                                                                                 | `Jordan Rivera` (this repo's existing canonical sample identity, used elsewhere in the test suite) | 5                         |
+| The human host's original display name                                                                                       | `Jordan Rivera` (this repo's existing canonical sample identity, used elsewhere in the test suite) | 5                         |
 | The notetaker account's display name — this repo's own reserved word, capitalized. Not spelled out here; see the note below. | `AI Notetaker`                                                                                     | 14 (all-caps form)        |
 | The same name, spoken aloud mid-sentence and rendered as caption text (mixed case)                                           | `AI Notetaker`                                                                                     | 1                         |
 | The notetaker account's email address, which embedded that same reserved word                                                | `notetaker@example.com`                                                                            | 1                         |
@@ -143,9 +143,9 @@ using the **same** mapping, reused rather than reinvented:
 | The notetaker account's email address, embedding that same reserved word (lowercase)                                            | `notetaker@example.com` | 1           |
 | `gcc-mtng-qkr` (this session's real, ephemeral meeting code — different from the code above; Meet issues a new one per session) | `abc-defg-hij`          | 4           |
 
-No form of the human host's real name (`Jordan Rivera`) appears in this
-capture at all — only the notetaker account is present in the roster, so
-there was nothing of the host's to replace. Verified clean two ways: the same
+No form of the human host's original display name appears in this capture at
+all — only the notetaker account is present in the roster, so there was
+nothing of the host's to replace. Verified clean two ways: the same
 case-insensitive sweep for the unspelled reserved word as the other four
 (zero remaining), and this repo's own open-source-readiness leakage grep
 (`docs/superpowers/plans/2026-07-28-open-source-readiness.md`) run against

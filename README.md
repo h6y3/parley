@@ -3,33 +3,51 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/h6y3/parley/actions/workflows/ci.yml/badge.svg)](https://github.com/h6y3/parley/actions/workflows/ci.yml)
 
-**A one-shot voice-agent harness for real phone calls.**
+**Give your agent a phone.**
 
-Give Parley a bounded brief. It places one call, navigates the phone tree, talks to the person on
-the other end, stays inside the authority you gave it, and returns evidence of what happened.
+Agents can browse, write code, use apps, and remember what matters. But much of the real world still
+runs on phone calls. Parley is the open-source voice-action layer for the agent or app you already
+use.
 
-Parley is not a voice bridge with a prompt attached. It is the control surface around a voice
-agent: the call contract, prompt boundary, telephony, tool permissions, runtime limits, outcome
-record, and offline test harness needed to let an AI act on a phone call without giving it an open
-line to improvise.
+Give Parley one bounded call envelope. It places the call, navigates the phone tree, talks to the
+person on the other end, stays inside the authority you gave it, and returns structured evidence of
+what happened. Your agent keeps the memory, planning, and relationship with the user. Parley owns
+the call.
 
-It is a standalone, MIT-licensed TypeScript monorepo. The default stack uses Twilio for telephony
-and Gemini Live for the speaking agent. It is pre-1.0 and intended for developers building their
-own lawful, consent-aware call workflows—not robocalling, spam, or a managed calling service.
+If a harness can run a command or make an authenticated HTTP request, it can invoke Parley. That
+includes local coding agents such as Claude Code and Codex, personal-agent harnesses such as
+OpenClaw, and ChatGPT-powered or custom applications. These are composable entry points, not native
+product integrations or endorsements.
 
-## The short version
+## Bring your own agent
 
 ```text
-your agent or app
-    │
-    │  one typed call envelope
-    ▼
-Parley
-    ├── validates the destination, identity, authority, tools, limits, and required outcomes
-    ├── creates one fresh realtime voice session for the call
-    ├── gates every keypress, commitment, outcome, and hangup on the server
-    └── emits a completed-call record with what happened and what is still missing
+Claude Code · Codex · OpenClaw · your ChatGPT-powered app · your own harness
+                              │
+                              │  CLI or authenticated HTTP
+                              │  one typed call envelope
+                              ▼
+                           Parley
+                              ├── validates identity, authority, tools, and limits
+                              ├── creates one fresh realtime voice session
+                              ├── gates keypresses, commitments, outcomes, and hangup
+                              └── returns a completed-call record with evidence and gaps
 ```
+
+Parley is deliberately narrow. It does not replace your agent's memory, goals, browser, tools, or
+personality. It adds a bounded phone capability that can be tested offline, self-hosted, and changed
+without moving the rest of your agent stack. It is the control surface around one real-world action,
+not another general-purpose personal assistant or a voice bridge with a prompt attached.
+
+There is no hidden human concierge. If the automated call cannot satisfy the envelope, Parley
+returns that failure instead of quietly changing who did the work.
+
+Parley is a standalone, MIT-licensed TypeScript monorepo. The default implementation uses Twilio
+and Gemini Live; the public contract is the envelope and the completed-call record. It is pre-1.0
+and intended for developers building their own lawful, consent-aware call workflows—not
+robocalling, spam, or a managed calling service.
+
+## The call contract
 
 A call envelope can say, in effect:
 
