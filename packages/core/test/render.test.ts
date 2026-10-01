@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   MEETING_OPENING_TRIGGER,
   OPENING_TRIGGER,
+  isoDate,
   renderSystemInstruction
 } from "../src/render.js";
 
@@ -197,8 +198,8 @@ describe("renderSystemInstruction today", () => {
     });
     expect(out).toContain(
       "The next 14 days are: Sat Dec 26, Sun Dec 27, Mon Dec 28, Tue Dec 29, Wed Dec 30, " +
-        "Thu Dec 31, Fri Jan 1, Sat Jan 2, Sun Jan 3, Mon Jan 4, Tue Jan 5, Wed Jan 6, Thu Jan 7, " +
-        "Fri Jan 8."
+        "Thu Dec 31, Fri Jan 1 2027, Sat Jan 2 2027, Sun Jan 3 2027, Mon Jan 4 2027, " +
+        "Tue Jan 5 2027, Wed Jan 6 2027, Thu Jan 7 2027, Fri Jan 8 2027."
     );
     const dst = renderSystemInstruction({
       ...base,
@@ -211,5 +212,33 @@ describe("renderSystemInstruction today", () => {
 
   it("is byte-identical to the old output when today is absent", () => {
     expect(renderSystemInstruction(base)).toBe("P\n\nO\n\nG.");
+  });
+});
+
+describe("isoDate", () => {
+  it("reads the date in the given zone, not UTC's", () => {
+    const now = new Date("2026-10-01T03:00:00Z");
+    expect(isoDate(now, "America/Los_Angeles")).toBe("2026-09-30");
+    expect(isoDate(now, "Asia/Tokyo")).toBe("2026-10-01");
+    expect(isoDate(new Date("2027-01-01T00:30:00Z"), "UTC")).toBe("2027-01-01");
+  });
+
+  it("does not depend on a locale that prints ISO order (en-CA needs ICU data)", () => {
+    const Real = Intl.DateTimeFormat;
+    const locales: unknown[] = [];
+    vi.stubGlobal("Intl", {
+      ...Intl,
+      DateTimeFormat: function (l?: unknown, o?: Intl.DateTimeFormatOptions) {
+        locales.push(l);
+        return new Real(l as string, o);
+      }
+    });
+    try {
+      expect(isoDate(new Date("2026-10-01T12:00:00Z"), "UTC")).toBe("2026-10-01");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(locales.length).toBeGreaterThan(0);
+    expect(locales).not.toContain("en-CA");
   });
 });

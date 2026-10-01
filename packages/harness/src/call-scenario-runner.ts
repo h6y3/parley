@@ -1,7 +1,6 @@
 import {
   anchorConsentBoundary,
   buildToolDeclarations,
-  defaultTimeZone,
   planOpening,
   type TodayInput,
   renderSystemInstruction,
@@ -11,6 +10,7 @@ import {
   withOpening
 } from "@parley/core";
 import { composePolicy } from "@parley/policy";
+import { harnessTimeZone } from "./time-zone.js";
 import { DEFAULT_GEMINI_MODEL } from "@parley/realtime-gemini";
 import type { CallScenario, ScenarioTurn } from "./call-scenario.js";
 import type { EndedBecause, ScenarioRun } from "./call-scenario-evaluation.js";
@@ -165,7 +165,7 @@ export async function runCallScenario(params: {
     guardrails: composePolicy(policy, brief.preferences ?? []),
     // The same sentence `CallSession` sends, or the offline layers would
     // measure a prompt nobody's call carries.
-    today: params.today ?? { now: new Date(), timeZone: defaultTimeZone() }
+    today: params.today ?? { now: new Date(), timeZone: harnessTimeZone() }
   });
   // A Parley constant, never scenario content — joined by the helper a real
   // call uses.
@@ -442,8 +442,10 @@ export async function runCallScenario(params: {
       heard.push({ text: turn.text, at: new Date().toISOString() });
       // A delivered line is the far end speaking — what CallSession tells the
       // gate on each far-end transcript. See `modelAudio` below for the other
-      // half of the completed-record confirmation rule.
-      gate.noteCallerSpeech();
+      // half of the completed-record confirmation rule. A scripted line is a
+      // whole utterance, so it is passed as final, with its words for the
+      // gate's agreement check.
+      gate.noteCallerSpeech(turn.text, true);
       // Pin the boundary on the line itself, before the model's reply to it
       // can move `requestedAt` past it — see the declaration above.
       consentAnchor = anchorConsentBoundary(consentAnchor, heard, requestedAt, consentPhrases);

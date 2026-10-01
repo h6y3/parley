@@ -1,4 +1,10 @@
-import type { OpeningDelivery, ToolCallRequest, ToolDeclaration, ToolResult } from "@parley/core";
+import type {
+  OpeningDelivery,
+  OpeningDeliveryByShape,
+  ToolCallRequest,
+  ToolDeclaration,
+  ToolResult
+} from "@parley/core";
 
 /**
  * The one seam between the scenario runner and a realtime model: text turns
@@ -45,8 +51,9 @@ export interface ScenarioTransport {
    * must declare what its production provider declares. The runner feeds it
    * to `planOpening`, the helper `CallSession` uses, so a scenario puts the
    * opening where a real call on this vendor does: as a line (`"turn"`), or
-   * appended to the one-time `systemInstruction` (`"prompt"`). */
-  readonly openingDelivery: OpeningDelivery;
+   * appended to the one-time `systemInstruction` (`"prompt"`) — per call
+   * shape where the provider declares it per shape. */
+  readonly openingDelivery: OpeningDelivery | OpeningDeliveryByShape;
   /** Open the session. Resolves only once the model is ready to take a turn —
    * a line sent before then would be read under settings not yet applied. */
   connect(p: {

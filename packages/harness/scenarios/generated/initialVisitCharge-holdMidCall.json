@@ -124,7 +124,24 @@
     "raisedTopic": null,
     "adjacentIndex": null,
     "offersAppointment": true,
-    "reachesSomeoneWhoCanAct": true
+    "reachesSomeoneWhoCanAct": true,
+    "agreement": {
+      "confirmTurn": 8,
+      "fields": {
+        "appointmentStart": [
+          ["2026", "10", "8", "13"],
+          ["thursday", "1"],
+          ["oct", "8", "1"],
+          ["october", "8", "1"]
+        ],
+        "appointmentEnd": [
+          ["2026", "10", "8", "16"],
+          ["thursday", "4"],
+          ["oct", "8", "4"],
+          ["october", "8", "4"]
+        ]
+      }
+    }
   },
   "script": [
     {
@@ -133,7 +150,8 @@
     },
     {
       "label": "Main Menu",
-      "text": "For service scheduling, press 1. For billing questions, press 2."
+      "text": "For service scheduling, press 1. For billing questions, press 2.",
+      "unpromptedAfterMs": 2500
     },
     {
       "label": "Agent Greeting",
@@ -150,7 +168,8 @@
     },
     {
       "label": "Return From Hold",
-      "text": "Thanks for your patience, I have that information ready now."
+      "text": "Thanks for your patience, I have that information ready now.",
+      "unpromptedAfterMs": 6000
     },
     {
       "label": "Quote Pricing",
@@ -158,11 +177,11 @@
     },
     {
       "label": "Offer Window",
-      "text": "Our next available opening in your area is this Thursday between 1:00 PM and 4:00 PM."
+      "text": "Our next available opening in your area is next Thursday, the eighth, between 1:00 PM and 4:00 PM. Does that work for you?"
     },
     {
       "label": "Confirm Booking",
-      "text": "Perfect, I have you officially booked for Thursday between 1:00 PM and 4:00 PM."
+      "text": "Perfect, I have you officially booked for Thursday the eighth between 1:00 PM and 4:00 PM."
     },
     {
       "label": "Closing Inquiry",

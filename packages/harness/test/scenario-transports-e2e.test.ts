@@ -39,8 +39,8 @@ function modelHears(line: string): Act[] {
           status: "completed",
           fields: {
             agreedAmount: "160",
-            appointmentStart: "2026-10-01T08:00",
-            appointmentEnd: "2026-10-01T12:00",
+            appointmentStart: "2026-10-08T09:00",
+            appointmentEnd: "2026-10-08T12:00",
             secondUnitIncluded: "no"
           }
         }
@@ -241,7 +241,7 @@ describe("one generated scenario, end to end, through each transport", () => {
  * input is a USER turn, heard as the callee: sent the trigger that way, billed
  * runs hung up during the ring or said "I'm listening and waiting" aloud. So
  * there it rides in the one Settings prompt, and on a two-party scenario
- * nothing is injected before the callee's first line. Gemini is unchanged. */
+ * nothing is injected before the callee's first line. Gemini now does the same. */
 describe("the opening on each vendor's wire, two-party", () => {
   const count = (s: string, needle: string): number => s.split(needle).length - 1;
 
@@ -261,7 +261,12 @@ describe("the opening on each vendor's wire, two-party", () => {
     expect(count(JSON.stringify(wire), OPENING_TRIGGER)).toBe(1);
   });
 
-  it("gemini: the trigger is the first realtime input, and the prompt does not carry it", async () => {
+  /** Gemini as Deepgram: a trigger sent as its own turn at connect was
+   * answered into line hiss before the callee spoke (9/18 offline runs with
+   * 3 s of noise before the hello; 0/72 with the opening in the prompt). So
+   * the far end's first line — a person, a voicemail greeting, an IVR menu —
+   * is the first realtime input the model ever gets. */
+  it("gemini: the trigger is in the prompt once, and the callee's first line is the first input", async () => {
     const wire: { via: string; text?: string; config?: { systemInstruction?: string } }[] = [];
     await runCallScenario({
       scenario: SCENARIO,
@@ -269,9 +274,11 @@ describe("the opening on each vendor's wire, two-party", () => {
       timings: TIMINGS
     });
     const connect = wire.find((m) => m.via === "connect");
-    expect(connect?.config?.systemInstruction).not.toContain(OPENING_TRIGGER);
+    expect(connect?.config?.systemInstruction?.endsWith(`\n\n${OPENING_TRIGGER}`)).toBe(true);
+    expect(count(JSON.stringify(wire), OPENING_TRIGGER)).toBe(1);
     const inputs = wire.filter((m) => m.via === "sendRealtimeInput").map((m) => m.text);
-    expect(inputs[0]).toBe(OPENING_TRIGGER);
+    expect(inputs[0]).toBe(SCENARIO.script[0]!.text);
+    expect(inputs).not.toContain(OPENING_TRIGGER);
   });
 });
 

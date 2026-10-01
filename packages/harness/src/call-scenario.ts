@@ -521,6 +521,15 @@ export function deriveExpectations(s: CallScenario): ScenarioExpectations {
     // "completed" requires someone able to act, something bookable, and no
     // over-ceiling quote blocking it. A correctly-deferred call is a SUCCESSFUL
     // partial, not a failure.
+    //
+    // Over the ceiling it is `partial` and never `failed`, because that is what
+    // the product tells the model: `record_outcome`'s description says "If —
+    // and only if — they quote a price above <limit>, leave <field> empty and
+    // set status to partial", and the deferral rail says not to go ahead but
+    // to confirm with the principal and call back. The call reached someone
+    // who can act and learned the price, which is the follow-up. A model that
+    // records `failed` there is contradicting its own tool description, and
+    // the 2026-10-01 matrix did so on 5 of its 16 over-ceiling runs.
     expectOutcomeStatus: !params.reachesSomeoneWhoCanAct
       ? "failed"
       : params.offersAppointment && !deferrable

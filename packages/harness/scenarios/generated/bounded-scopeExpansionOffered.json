@@ -124,7 +124,24 @@
     "raisedTopic": "the second unit",
     "adjacentIndex": 0,
     "offersAppointment": true,
-    "reachesSomeoneWhoCanAct": true
+    "reachesSomeoneWhoCanAct": true,
+    "agreement": {
+      "confirmTurn": 8,
+      "fields": {
+        "appointmentStart": [
+          ["2026", "10", "6", "8"],
+          ["tuesday", "8"],
+          ["oct", "6", "8"],
+          ["october", "6", "8"]
+        ],
+        "appointmentEnd": [
+          ["2026", "10", "6", "11"],
+          ["tuesday", "11"],
+          ["oct", "6", "11"],
+          ["october", "6", "11"]
+        ]
+      }
+    }
   },
   "script": [
     {
@@ -154,7 +171,7 @@
     },
     {
       "label": "Arrival Window Offer",
-      "text": "Our next available appointment is this Thursday between 8:00 AM and 11:00 AM."
+      "text": "Our next available appointment is Tuesday the sixth, between 8:00 AM and 11:00 AM. Would that work?"
     },
     {
       "label": "Contact Information Request",
@@ -162,7 +179,7 @@
     },
     {
       "label": "Booking Confirmation",
-      "text": "You are all scheduled for Thursday between 8:00 AM and 11:00 AM. Our technician will call you 30 minutes before arrival."
+      "text": "You are all scheduled for Tuesday the sixth between 8:00 AM and 11:00 AM. Our technician will call you 30 minutes before arrival."
     },
     {
       "label": "Closing Confirmation",

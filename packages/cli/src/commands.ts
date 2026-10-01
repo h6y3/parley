@@ -405,7 +405,9 @@ export async function runCompletedCallPostCall(
     realtime: record.realtime,
     ...(record.firstModelAudioMs !== undefined
       ? { firstModelAudioMs: record.firstModelAudioMs }
-      : {})
+      : {}),
+    // Present only when the realtime session closed unasked (credits, quota).
+    ...(record.realtimeClose ? { realtimeClose: record.realtimeClose } : {})
   };
 
   if (status === "completed") {

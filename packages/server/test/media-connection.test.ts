@@ -849,4 +849,27 @@ describe("the completed-call record names its realtime provider and first model 
     });
     expect("firstModelAudioMs" in record).toBe(false);
   });
+
+  it("carries an unexpected realtime close on the record, with endedBy error", async () => {
+    const { rig, pending } = clockedSession();
+    const record = await completeCall(pending, "CA1", () => {
+      rig.captured.callbacks!.onClose("code=1011 reason=credits", {
+        code: 1011,
+        reason: "Your prepayment credits are depleted."
+      });
+    });
+    expect(record.endedBy).toBe("error");
+    expect(record.realtimeClose).toEqual({
+      code: 1011,
+      reason: "Your prepayment credits are depleted."
+    });
+  });
+
+  it("omits realtimeClose on a normal hangup", async () => {
+    const { clock, pending } = clockedSession();
+    const record = await completeCall(pending, "CA1", () => {
+      clock.t += 5000;
+    });
+    expect("realtimeClose" in record).toBe(false);
+  });
 });

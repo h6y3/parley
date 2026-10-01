@@ -128,7 +128,24 @@
     "raisedTopic": null,
     "adjacentIndex": null,
     "offersAppointment": true,
-    "reachesSomeoneWhoCanAct": true
+    "reachesSomeoneWhoCanAct": true,
+    "agreement": {
+      "confirmTurn": 8,
+      "fields": {
+        "appointmentStart": [
+          ["2026", "10", "8", "9"],
+          ["thursday", "9"],
+          ["oct", "8", "9"],
+          ["october", "8", "9"]
+        ],
+        "appointmentEnd": [
+          ["2026", "10", "8", "12"],
+          ["thursday", "12"],
+          ["oct", "8", "12"],
+          ["october", "8", "12"]
+        ]
+      }
+    }
   },
   "script": [
     {
@@ -150,11 +167,13 @@
     },
     {
       "label": "Agent Looking Up Schedule",
-      "text": "... Still pulling up the route map for your area, one moment please."
+      "text": "... Still pulling up the route map for your area, one moment please.",
+      "unpromptedAfterMs": 6000
     },
     {
       "label": "Offer Arrival Window",
-      "text": "Thanks for holding. I have an opening available this Thursday between 8 AM and 12 PM."
+      "text": "Thanks for holding. I have an opening next Thursday, the eighth, between 9 AM and 12 PM.",
+      "unpromptedAfterMs": 6000
     },
     {
       "label": "Quote Diagnostic Fee",
@@ -166,7 +185,7 @@
     },
     {
       "label": "Booking Confirmation",
-      "text": "Great, I have you confirmed for Thursday between 8 AM and 12 PM at 742 Evergreen Terrace."
+      "text": "Great, I have you confirmed for Thursday the eighth between 9 AM and 12 PM at 742 Evergreen Terrace."
     },
     {
       "label": "Call Wrap-up",

@@ -10,7 +10,7 @@
       "facts": [
         "I have discovered carpenter ants in my kitchen and basement.",
         "My property is a single-family house at 742 Evergreen Terrace.",
-        "My name is John Doe.",
+        "The account is under Jordan Rivera.",
         "My phone number is 555-0199."
       ],
       "preferences": [
@@ -151,23 +151,23 @@
     },
     {
       "label": "offer_time_window",
-      "text": "Our next available opening is this Thursday between 8:00 AM and 12:00 PM. Would that window work for you?"
+      "text": "Our next available opening is next Thursday, the eighth, between 9:00 AM and 12:00 PM. Would that window work for you?"
     },
     {
       "label": "ask_contact_number",
-      "text": "Wonderful. What is the best phone number for our technician to reach you on arrival day?"
+      "text": "And what is the best phone number for our technician to reach you on arrival day?"
     },
     {
       "label": "confirm_details",
-      "text": "I have you down for Thursday between 8:00 AM and 12:00 PM at 742 Evergreen Terrace for 430 dollars. Shall I finalize this booking?"
+      "text": "I have you down for Thursday the eighth between 9:00 AM and 12:00 PM at 742 Evergreen Terrace for 430 dollars. Shall I finalize this booking?"
     },
     {
       "label": "agent_wrapup",
-      "text": "You are all scheduled. Our technician will see you Thursday morning. Thank you for choosing Apex Pest Defense, and have a great day!"
+      "text": "Alright, I'll hold off on that for now. Give us a call back once you've checked, and thank you for calling Apex Pest Defense."
     },
     {
       "label": "Closing Confirmation",
-      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+      "text": "No, nothing else from us. Talk to you soon \u2014 goodbye."
     }
   ]
 }

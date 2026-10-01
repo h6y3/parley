@@ -4,6 +4,160 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-10-01
+
+A call whose outcome asks who confirmed the arrangement now asks the person's name once, and a
+role is no longer accepted in its place.
+
+### Added
+
+- **`realtimeClose: { code, reason }` on the call record, when the realtime session closes
+  unasked.** Live, Gemini 3.8: prepaid credits ran out and the session closed with code 1011 ("Your
+  prepayment credits are depleted…") one to two seconds after pickup. The daemon log had it; the
+  call record showed only a two-second call, so the client could not tell the user why.
+  `RealtimeProviderCallbacks.onClose` gains an optional second argument `{ code?, reason? }`, which
+  both shipped providers fill. Gemini reports every unasked close, including one during connect;
+  Deepgram reports one only once the session is up — a close before `SettingsApplied` (a key or
+  credit refusal at setup) still rejects `connect` instead, and leaves no `realtimeClose`.
+  `CallSession` records it only when the close is not the consent handoff and not Parley's own end
+  (`endCall` has already settled), redacts the reason (`+` numbers and any bare run of ten or more
+  digits; `key=`/`token=`/`Bearer` text; bare Google `AIza…` keys, `sk-…` keys, GitHub `gh[pousr]_…`
+  tokens and long mixed letter-and-digit runs) and caps it at 300 characters. The call ends
+  `endedBy: "error"` alongside, as before. The field is absent on every other call, ordinary and
+  meeting records alike (`schema/meeting-record.schema.json` gains it as optional).
+
+### Changed
+
+- **`record_outcome`'s description asks for a name when an outcome field needs one.** When a
+  declared field asks who confirmed the arrangement (`@parley/core` `isWhoConfirmedField`), the
+  description tells the model to ask once, before it records, who it is speaking with ("And who am I
+  speaking with?"), and to leave the field empty if they will not say. Calls without such a field
+  read exactly what they read before. No recap is asked for. The field is recognised by its NAME:
+  `confirmedBy` / `confirmed_by`, `contactName`, `contactPerson`, `spokeWith`, `spokeTo`,
+  `speakingWith`, `personName`, `staffName`, `agentName`, `representativeName`, `nameOfPerson`; a
+  name that only might be a person (`contact`, `rep`, `agreedWith`) also needs its description to
+  say "confirmed by", "who … confirmed", "speaking with" / "spoke to" or "name of the person". A
+  description never decides alone, and a name containing date, time, day, amount, price, cost, fee,
+  number, id, notes, comment, summary or details never matches — so "Delivery date as confirmed by
+  the store" (`deliveryDate`) and "Anything the person you spoke with mentioned" (`notes`) are left
+  alone.
+- **Gemini two-party calls take the opening in the prompt, as Deepgram does.** The opening
+  instruction is appended to the one-time system instruction and nothing is sent at connect, so
+  the far end's own voice — a person, a voicemail greeting, an IVR menu — is the model's first
+  input. Sent as its own turn at connect, it was a turn the model answered: offline (Gemini 3.8),
+  with 3 s of line hiss before the callee's "hello", the model spoke before the callee in 9 of 18
+  runs, against 0 of 72 with the opening in the prompt; end-of-hello to first audio also fell
+  (median 1566 → 1316 ms, p90 1871 → 1399). Gemini meetings are unchanged, byte for byte:
+  `MEETING_OPENING_TRIGGER` still goes as its own turn. `RealtimeProvider.openingDelivery` (and
+  `ScenarioTransport.openingDelivery`) may now be declared per call shape,
+  `{ twoParty, meeting }` (`OpeningDeliveryByShape`, exported from `@parley/core`), and
+  `planOpening` accepts either form; Gemini declares `{ twoParty: "prompt", meeting: "turn" }`.
+- **The date list names the year on days in a later year.** Across a year boundary the 14-day list
+  reads "Thu Dec 31, Fri Jan 1 2027, Sat Jan 2 2027, ..." (today's own `YYYY-MM-DD` already carries
+  the year); a list within one year is unchanged.
+- **The harness `preview` command shows where the opening really goes.** On a two-party call
+  (both shipped providers) the opening is part of the system instruction and nothing is sent at
+  connect, so the preview prints `openingTrigger: (none ...)` instead of a separate opening turn;
+  a meeting envelope still shows its trigger as its own turn.
+- **The confirmation refusal ends "— without mentioning this".** Scenario matrix, Gemini 3.8:
+  after `record_outcome` was refused for want of the callee's yes, the model said aloud "I'm
+  sorry, I understand I need to wait for you to confirm the arrangement before proceeding." The
+  literal is now "refused: they have not confirmed what you just said — read the arrangement back
+  exactly as they said it, wait for their yes, then record; do not end the call — without
+  mentioning this", matching the end_call refusal's "without mentioning it". The role refusal
+  above carries the same ending.
+
+- **The deferral rule's go-ahead never covers money or authority.** Scenario matrix, Gemini 3.8:
+  quoted $430 against an authorised ceiling of $250, the model said "I do not have that
+  information… Can we still proceed with booking the visit?" — the deferral rule's own "ask whether
+  they can still go ahead without it" — and booked, recording `completed` with the amount empty.
+  `deferralRule` now continues, after "not a reason to stop.": "This never covers a price, fee or
+  commitment beyond what you are authorised to agree to — for those, do not go ahead; say you will
+  confirm with ${principalName} and call back." This is a prompt rule only, and a model may still
+  slip: nothing in code refuses a `completed` record with the amount left empty. The record's
+  amount check applies only when the call sets a `spendCeiling`, and only to an amount written in
+  that field.
+
+- **The committed harness scenarios model the 0.4.1 call.** Lines that are not replies (a hold
+  ending, a transfer picking up, a menu after its greeting, a queue message) carry
+  `unpromptedAfterMs`. Every press gate names the key a correct model presses, `0` on the
+  no-matching-option cells. Offers are dated for `--today 2026-10-01`. Every cell that settles an
+  arrangement declares `params.agreement` and has a callee line that agrees in plain words. The
+  reference also scores a `confirmedBy` name. The over-ceiling cells expect `partial` and book
+  nothing. A matrix from before this change is not comparable with one after it. See
+  `docs/scenario-authoring.md`, "It happened: the 0.4.1 refit".
+
+### Fixed
+
+- **A completed record made straight after the callee's offer is refused.** Scenario matrix,
+  Gemini 3.8, 4–6 of 43 model-ended runs: the callee offered "We have an opening this Thursday
+  between 1:00 PM and 4:00 PM that I can reserve for you.", the model recorded `completed` before
+  saying a word, ended the call, and only then said "Thank you, that works perfectly. Goodbye."
+  The existing rule (refuse when the model has spoken since the far end last did) cannot see a
+  record made before the model speaks. `ToolGate` now also refuses a `completed` record on a
+  two-party call, once per call, when the far end's words since the model last spoke carry no
+  agreement signal — a case-insensitive whole-word match against `AGREEMENT_SIGNALS` ("yes",
+  "okay", "that works", "sounds good", "you're all set", "booked", "reserved", …; "I can
+  reserve" does not match, and "not sure" or "fully booked" are struck out first). The refusal is
+  the existing confirmation literal, and the refused record is stored as `partial` first (fields
+  kept), so a call that ends there keeps an honest outcome; a later accepted record replaces it.
+  "Mm-hmm", "uh-huh", "that's fine", "that'll work" and "rescheduled" count as agreement; "we're
+  booked", "can't say yes" and a yes inside a question do not. It is one-shot, so a yes the list misses costs one extra
+  read-back and never traps the model; it is also spent once it has passed, so a record refused
+  later for a role or an amount is not asked for a second yes. When the far end's latest words are
+  the answer to "who am I speaking with?" — they hold the record's who-confirmed name ("Sam.") —
+  the agreement is read from the words just before them as well, so "Yes, Monday at 9:26 works." —
+  "Sam." is accepted while "We have Thursday 1 to 4." — "Sam here." is still refused. `partial`, `failed` and meetings
+  are not gated. `ToolGate.noteCallerSpeech` now takes the far end's text and whether it is final:
+  Gemini's non-final fragments are joined as they came, Deepgram's (and the harness's scripted
+  lines') whole utterances with a space between.
+- **A role is never recorded where a person's name belongs.** Live, Gemini 3.8: on several calls
+  whose job declared `confirmedBy` ("Who at the office confirmed it"), the model never asked and
+  recorded "receptionist" or "Receptionist". `ToolGate.recordOutcome` now stores a who-confirmed
+  value made only of role or placeholder words ("the receptionist", "front desk staff", "N/A", "the
+  person I'm speaking with") as an
+  empty field. On a `completed` record it also answers, once, with a new `ToolResult`, "refused:
+  that is a role, not a name — ask who you are speaking with, or leave it empty if they will not say
+  — without mentioning this". The record is written before that refusal (every other field as given,
+  the name empty), so it satisfies `end_call`'s record-first rule, and a call that ends before the
+  model records again keeps the booking; a later record replaces it. A `partial` or `failed` record
+  (a voicemail, say) is blanked and accepted with no refusal, so the model is never told to ask "who
+  am I speaking with?" into a recording. An empty value and any value carrying a name ("Sam", "Dr.
+  Patel", "Sam at the front desk") are accepted; no other field is affected. The refusal is
+  one-shot, so it cannot loop.
+- **The harness tells the model today in `PARLEY_TIMEZONE`.** The payload preview, scenario runs
+  and the `--today` pin used the host zone whatever the daemon was configured with; they now use
+  `PARLEY_TIMEZONE` when set (an invalid name fails as it does at daemon boot), else the host
+  zone. `resolveTimeZone` moved to `@parley/core`; `@parley/cli` still exports it.
+- **The date in the date sentence no longer depends on ICU's `en-CA` locale.** It is read by part
+  (`formatToParts`) in the call's zone; `@parley/core` exports `isoDate(now, timeZone)`.
+
+### Upgrading
+
+No action required beyond this: a consumer that switches on `ToolResult` gains one literal (the
+role refusal — which, unlike the other refusals, follows a record that WAS written, name empty), and must match the confirmation refusal by its new text — it now ends "— without
+mentioning this". Code that drives `ToolGate` directly must pass the far end's words to
+`noteCallerSpeech(text, isFinal)`; with no words the agreement check sees no yes. Scenario scripts
+whose confirming line agrees without an agreement word will show one extra confirmation turn.
+
+A `completed` record refused for want of the callee's confirmation is now stored as `partial`
+(fields as given, a who-confirmed role blanked) before the refusal is returned, so a call that ends
+during the read-back reports `partial` rather than no outcome, and `end_call` accepts it as the
+record. Treat that `partial` as "arranged, not confirmed". A spend-ceiling amount written as a
+range (`$150-$200`, `150 to 200`) is now held to its high end, and `$1,250` reads as 1250.
+
+The composed prompt changes wherever the deferral rule is on: a client that keeps a snapshot of
+the composed rails, or pins the prompt byte for byte, must regenerate it.
+
+A custom `RealtimeProvider` may pass `{ code, reason }` as `onClose`'s second argument; without it, the
+record carries code `0` and the prose reason.
+
+Code that reads `RealtimeProvider.openingDelivery` or `ScenarioTransport.openingDelivery` as a
+string must accept the `{ twoParty, meeting }` form too; pass it to `planOpening` rather than
+resolving it by hand. A Gemini scenario matrix from before this release ran two-party scenarios
+with the trigger as a turn, so expect its ring-time codes (`spoke-before-callee`) to move when
+compared against one after.
+
 ## [0.4.0] — 2026-10-01
 
 Realtime provider parity: Deepgram Voice Agent is now a supported, selectable speaking-plane

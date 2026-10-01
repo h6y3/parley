@@ -374,7 +374,7 @@ describe("opening delivery follows the transport's declaration", () => {
  * confirmation rule a real call is held to. */
 describe("the runner feeds ToolGate's confirmation rule", () => {
   const notConfirmed =
-    "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call";
+    "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call — without mentioning this";
   const withOutcome = (): CallScenario => {
     const base = scenario([
       { label: "offer", text: "How about Monday at 9:26?" },
@@ -413,7 +413,8 @@ describe("the runner feeds ToolGate's confirmation rule", () => {
       timings: FAST
     });
     expect(run.toolCalls.map((c) => c.result)).toEqual([notConfirmed]);
-    expect(run.snapshot.outcome).toBeUndefined();
+    // Kept, downgraded: arranged, not confirmed (review 0.4.1 I-A).
+    expect(run.snapshot.outcome?.status).toBe("partial");
   });
 
   it("accepts it when their yes is the last thing said", async () => {

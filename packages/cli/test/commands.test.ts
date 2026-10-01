@@ -602,6 +602,30 @@ describe("runCompletedCallPostCall — the real production wiring cli.ts calls",
     }
   });
 
+  it("carries realtimeClose into the meeting record, and omits it when absent", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "parley-ccpc-"));
+    const recordsPath = join(dir, "calls.jsonl");
+    const record = completedCallRecordFixture({
+      isMeeting: true,
+      realtimeClose: { code: 1011, reason: "credits depleted" }
+    });
+    await runCompletedCallPostCall({ record, meetingsDir: join(dir, "meetings"), recordsPath }, {});
+    const written = JSON.parse((await readFile(recordsPath, "utf8")).trim());
+    expect(written.realtimeClose).toEqual({ code: 1011, reason: "credits depleted" });
+
+    const dir2 = await mkdtemp(join(tmpdir(), "parley-ccpc-"));
+    const p2 = join(dir2, "calls.jsonl");
+    await runCompletedCallPostCall(
+      {
+        record: completedCallRecordFixture({ isMeeting: true }),
+        meetingsDir: join(dir2, "m"),
+        recordsPath: p2
+      },
+      {}
+    );
+    expect(JSON.parse((await readFile(p2, "utf8")).trim())).not.toHaveProperty("realtimeClose");
+  });
+
   it("omits firstModelAudioMs from the meeting record when the model never spoke", async () => {
     const dir = await mkdtemp(join(tmpdir(), "parley-ccpc-"));
     const recordsPath = join(dir, "calls.jsonl");

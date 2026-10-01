@@ -125,7 +125,19 @@ before anything happens:
 - `end_call` can be gated behind `record_outcome`, and that refusal is **one-shot** — a model
   that cannot produce an outcome is never trapped on a live, billing call;
 - `record_outcome` requires a string value for every field the envelope declared, refuses an
-  incomplete map, and silently drops undeclared extras.
+  incomplete map, and silently drops undeclared extras;
+- a `completed` record on a two-party call is refused when the model has spoken since the far
+  end last did, and — once per call — when the far end's latest words carry no agreement signal
+  (an offer such as "I can reserve Thursday" is not a yes, nor is a signal inside a question). When
+  those latest words are the name the record gives as who confirmed it, the reply before them is
+  read instead, so "Yes, 9:26 works" followed by "Sam." still counts as agreement. The
+  refused record is still written, downgraded to `partial` with its fields, so a callee who hangs
+  up during the read-back leaves "arranged, not confirmed" rather than nothing; a confirmed
+  `completed` record replaces it, and it never replaces one;
+- a field that asks who confirmed the arrangement (`isWhoConfirmedField`) never records a role in
+  place of a name: the field is stored empty. A `completed` record holding one is still written
+  (name empty) and answered, once, "refused: that is a role, not a name — …", so the model asks;
+  `partial` and `failed` records are blanked without a refusal.
 
 None of these limits is reachable by anything said on the call. A callee who succeeds completely
 in persuading the model gets the declared budget and then refusals.
@@ -172,12 +184,13 @@ or reconfigure a running agent. Tool results are answered only from the closed `
 union, unchanged.
 
 Where the opening goes is the provider's declaration (`RealtimeProvider.openingDelivery`), and
-either way it is Parley's own fixed text, never caller content. Gemini (`"turn"`) receives the
-trigger as its own input after connect. Deepgram (`"prompt"`) has only one post-connect text
-input, `InjectUserMessage`, which its model hears as the callee speaking, so the trigger is
-appended to the one-time `Settings` prompt instead: a two-party call sends nothing after
-connect, and a meeting sends one short Parley-authored cue (`MEETING_CONNECTED_CUE`) as a user
-turn, never as speech. The provider refuses any longer or multi-line line on that path, so it
+either way it is Parley's own fixed text, never caller content. On a two-party call both shipped
+providers append the trigger to the one-time setup prompt and send nothing after connect. A Gemini
+meeting receives `MEETING_OPENING_TRIGGER` as its own input after connect (Gemini declares
+`{ twoParty: "prompt", meeting: "turn" }`). Deepgram (`"prompt"`) has only one post-connect text
+input, `InjectUserMessage`, which its model hears as the callee speaking, so its meeting trigger
+is appended to the `Settings` prompt too, and the meeting sends one short Parley-authored cue
+(`MEETING_CONNECTED_CUE`) as a user turn, never as speech. The provider refuses any longer or multi-line line on that path, so it
 cannot become a re-instruction channel. Appending a constant to the system instruction keeps the
 one-shot rule intact: it is still built once, before connect, and never touched again.
 

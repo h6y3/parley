@@ -94,6 +94,10 @@
           {
             "name": "secondUnitIncluded",
             "description": "yes or no \u2014 whether the drinking-water unit is included in the visit"
+          },
+          {
+            "name": "confirmedBy",
+            "description": "Name of the person at the company who confirmed the booking"
           }
         ]
       },
@@ -126,7 +130,25 @@
     "raisedTopic": "the drinking-water filtration unit",
     "adjacentIndex": 0,
     "offersAppointment": true,
-    "reachesSomeoneWhoCanAct": true
+    "reachesSomeoneWhoCanAct": true,
+    "agreement": {
+      "confirmTurn": 8,
+      "fields": {
+        "appointmentStart": [
+          ["2026", "10", "6", "8"],
+          ["tuesday", "8"],
+          ["oct", "6", "8"],
+          ["october", "6", "8"]
+        ],
+        "appointmentEnd": [
+          ["2026", "10", "6", "12"],
+          ["tuesday", "12"],
+          ["oct", "6", "12"],
+          ["october", "6", "12"]
+        ],
+        "confirmedBy": [["sam"]]
+      }
+    }
   },
   "script": [
     {
@@ -144,7 +166,8 @@
     },
     {
       "label": "history",
-      "text": "I see the last service on the softener was in 2024. I can definitely get you scheduled. Let me see what dates I have available."
+      "text": "I see the last service on the softener was in 2024. I can definitely get you scheduled. Let me see what dates I have available.",
+      "unpromptedAfterMs": 6000
     },
     {
       "label": "second-unit",
@@ -160,11 +183,11 @@
     },
     {
       "label": "offer",
-      "text": "Let me see what I have available for you. I currently have Tuesday, August twenty-fifth, between eight and twelve. Would that work?"
+      "text": "Let me see what I have available for you. I currently have Tuesday, October sixth, between eight and twelve. Would that work?"
     },
     {
       "label": "confirm",
-      "text": "Perfect, I will get you scheduled, and you should be receiving a booking confirmation shortly."
+      "text": "Perfect, you're booked for Tuesday the sixth, eight to twelve, and you should be receiving a booking confirmation shortly."
     },
     {
       "label": "goodbye",

@@ -133,7 +133,8 @@
     },
     {
       "label": "IVR Menu",
-      "text": "For service scheduling, press 1. For billing, press 2."
+      "text": "For service scheduling, press 1. For billing, press 2.",
+      "unpromptedAfterMs": 2500
     },
     {
       "label": "Representative Introduction",
@@ -158,19 +159,19 @@
     },
     {
       "label": "Contact Information",
-      "text": "Perfect. May I please have your full name and primary phone number?"
+      "text": "Okay. May I have your full name and a phone number for the account?"
     },
     {
-      "label": "Booking Confirmation",
-      "text": "You are all set for tomorrow between 8:00 AM and 12:00 PM with the quote of 430 dollars."
+      "label": "Hold Off",
+      "text": "Thank you. I'll note the 430 dollar quote on the account; give us a call back once you've checked and we'll find you a time."
     },
     {
       "label": "Closing",
-      "text": "Thank you for choosing Apex Appliance Repair, and have a great day!"
+      "text": "Thank you for calling Apex Appliance Repair, and have a great day!"
     },
     {
       "label": "Closing Confirmation",
-      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+      "text": "No, nothing else from us. Talk to you soon \u2014 goodbye."
     }
   ]
 }

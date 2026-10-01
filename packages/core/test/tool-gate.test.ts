@@ -3,6 +3,7 @@ import {
   ToolGate,
   TOOL_RESULTS,
   buildToolDeclarations,
+  isWhoConfirmedField,
   routeToolCall,
   type CallExecution,
   type ToolResult
@@ -15,6 +16,15 @@ const fullExec: CallExecution = {
   ...ivrExec,
   closure: { requireOutcomeBeforeEnd: true },
   outcome: { fields: [{ name: "appointmentStart", description: "ISO start" }] }
+};
+
+/** A gate whose far end has just said yes, so the completed-record
+ * confirmation rules (tested in their own blocks below) stay out of tests
+ * about something else. */
+const agreedGate = (execution: CallExecution): ToolGate => {
+  const g = new ToolGate(execution);
+  g.noteCallerSpeech("Yes, that works.", true);
+  return g;
 };
 
 describe("declaration", () => {
@@ -79,7 +89,7 @@ describe("end gating", () => {
   });
 
   it("refuses ONCE when an outcome is required and none is recorded, then allows", () => {
-    const g = new ToolGate(fullExec);
+    const g = agreedGate(fullExec);
     expect(g.authorizeEnd()).toBe(
       "refused: record the outcome first — call record_outcome now without mentioning it"
     );
@@ -87,7 +97,7 @@ describe("end gating", () => {
   });
 
   it("allows immediately once an outcome exists", () => {
-    const g = new ToolGate(fullExec);
+    const g = agreedGate(fullExec);
     g.recordOutcome("completed", { appointmentStart: "2026-08-25T08:00" });
     expect(g.authorizeEnd()).toBe("ok — say nothing more");
   });
@@ -111,7 +121,7 @@ describe("outcome recording", () => {
   });
 
   it("drops undeclared fields and keeps declared ones", () => {
-    const g = new ToolGate(fullExec);
+    const g = agreedGate(fullExec);
     expect(g.recordOutcome("completed", { appointmentStart: "X", smuggled: "Y" })).toBe(
       "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call"
     );
@@ -119,7 +129,7 @@ describe("outcome recording", () => {
   });
 
   it("last write wins", () => {
-    const g = new ToolGate(fullExec);
+    const g = agreedGate(fullExec);
     g.recordOutcome("partial", { appointmentStart: "A" });
     g.recordOutcome("completed", { appointmentStart: "B" });
     expect(g.snapshot().outcome?.status).toBe("completed");
@@ -127,7 +137,7 @@ describe("outcome recording", () => {
   });
 
   it("refuses a missing declared field at the binding gate", () => {
-    const g = new ToolGate({
+    const g = agreedGate({
       outcome: {
         fields: [
           { name: "failureReason", description: "reason" },
@@ -145,7 +155,7 @@ describe("outcome recording", () => {
     const execution: CallExecution = {
       outcome: { fields: [{ name: "failureReason", description: "reason" }] }
     };
-    const g = new ToolGate(execution);
+    const g = agreedGate(execution);
     expect(g.recordOutcome("completed", { failureReason: null })).toBe(
       "refused: incomplete outcome"
     );
@@ -169,7 +179,7 @@ describe("snapshot", () => {
 
 describe("INJECTION GATE: every result is a declared literal", () => {
   it("no gate method can return a string outside TOOL_RESULTS", () => {
-    const g = new ToolGate(fullExec);
+    const g = agreedGate(fullExec);
     const produced = [
       g.authorizePress("1"),
       g.failPress(),
@@ -271,7 +281,7 @@ describe("ToolGate — the spend ceiling is enforced, not merely stated", () => 
   });
 
   it("refuses an amount above the ceiling", () => {
-    const gate = new ToolGate(withCeiling(250));
+    const gate = agreedGate(withCeiling(250));
     expect(gate.recordOutcome("completed", { agreedAmount: "430", when: "Thu" })).toBe(
       "refused: that amount is above the limit for this call"
     );
@@ -280,20 +290,20 @@ describe("ToolGate — the spend ceiling is enforced, not merely stated", () => 
   it("records nothing at all when it refuses", () => {
     // A partial write would be worse than either outcome: the caller-side system
     // would see a booked appointment and no price, and read it as free.
-    const gate = new ToolGate(withCeiling(250));
+    const gate = agreedGate(withCeiling(250));
     gate.recordOutcome("completed", { agreedAmount: "430", when: "Thu" });
     expect(gate.snapshot().outcome).toBeUndefined();
   });
 
   it("accepts an amount exactly at the ceiling", () => {
-    const gate = new ToolGate(withCeiling(250));
+    const gate = agreedGate(withCeiling(250));
     expect(gate.recordOutcome("completed", { agreedAmount: "250", when: "Thu" })).toBe(
       "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call"
     );
   });
 
   it("accepts an amount below the ceiling, currency symbols and all", () => {
-    const gate = new ToolGate(withCeiling(250));
+    const gate = agreedGate(withCeiling(250));
     expect(gate.recordOutcome("completed", { agreedAmount: "$160.00", when: "Thu" })).toBe(
       "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call"
     );
@@ -301,17 +311,39 @@ describe("ToolGate — the spend ceiling is enforced, not merely stated", () => 
   });
 
   it("accepts an empty amount — a correctly deferred call records no price", () => {
-    const gate = new ToolGate(withCeiling(250));
+    const gate = agreedGate(withCeiling(250));
     expect(gate.recordOutcome("partial", { agreedAmount: "", when: "Thu" })).toBe(
       "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call"
     );
+  });
+
+  // Review 0.4.1 minor: a range read as one run of digits ("$150-$200" →
+  // 150200) was refused on every attempt. A range is held to its HIGH end.
+  it.each([
+    ["$150-$200", 180, false],
+    ["$150-$200", 200, true],
+    ["150-200", 180, false],
+    ["$150 - $200", 250, true],
+    ["$150 – $200", 180, false],
+    ["150 to 200", 180, false],
+    ["150 to 200", 200, true],
+    ["$1,250", 1000, false],
+    ["$1,250", 1250, true],
+    ["$1,250.50", 1250, false],
+    ["$1,000-$1,250", 1300, true],
+    ["$160.00", 160, true]
+  ] as const)("reads %j against a ceiling of %d (accepted: %s)", (amount, limit, accepted) => {
+    const gate = agreedGate(withCeiling(limit));
+    const result = gate.recordOutcome("completed", { agreedAmount: amount, when: "Thu" });
+    if (accepted) expect(result).not.toMatch(/^refused/);
+    else expect(result).toBe("refused: that amount is above the limit for this call");
   });
 
   it("does not bound a value it cannot read as a number", () => {
     // Stated plainly rather than papered over: this reads digits. An amount
     // written out in words passes, and the prose rail is the only thing
     // covering that. See docs/security-model.md.
-    const gate = new ToolGate(withCeiling(250));
+    const gate = agreedGate(withCeiling(250));
     expect(
       gate.recordOutcome("completed", { agreedAmount: "four hundred and thirty", when: "Thu" })
     ).toBe(
@@ -320,7 +352,7 @@ describe("ToolGate — the spend ceiling is enforced, not merely stated", () => 
   });
 
   it("leaves recording unchanged when no ceiling is declared", () => {
-    const gate = new ToolGate({
+    const gate = agreedGate({
       outcome: { fields: [{ name: "agreedAmount", description: "total agreed" }] }
     });
     expect(gate.recordOutcome("completed", { agreedAmount: "99999" })).toBe("recorded");
@@ -342,7 +374,7 @@ describe("ToolGate — the spend ceiling is enforced, not merely stated", () => 
   it("still holds end_call's one-shot refusal after a rejected record", () => {
     // The refusal must not accidentally satisfy requireOutcomeBeforeEnd, or an
     // over-ceiling call could hang up with nothing recorded at all.
-    const gate = new ToolGate(withCeiling(250));
+    const gate = agreedGate(withCeiling(250));
     gate.recordOutcome("completed", { agreedAmount: "430" });
     expect(gate.authorizeEnd()).toBe(
       "refused: record the outcome first — call record_outcome now without mentioning it"
@@ -555,12 +587,12 @@ describe("tool results say what happens next", () => {
   // an outcome is not a reason to end", and an unconditional "now say goodbye"
   // would contradict it on a mid-call or partial record.
   it("a record on a call that can close itself points at the goodbye and end_call", () => {
-    const g = new ToolGate(fullExec);
+    const g = agreedGate(fullExec);
     expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(recordedThenClose);
   });
 
   it("a record on a call with no end_call stays plain — it names no tool the model lacks", () => {
-    const g = new ToolGate({ outcome: { fields: [{ name: "a", description: "b" }] } });
+    const g = agreedGate({ outcome: { fields: [{ name: "a", description: "b" }] } });
     expect(g.recordOutcome("completed", { a: "x" })).toBe("recorded");
   });
 
@@ -629,7 +661,7 @@ describe("tool results say what happens next", () => {
  */
 describe("a completed record needs them to have spoken since the model did", () => {
   const notConfirmed: ToolResult =
-    "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call";
+    "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call — without mentioning this";
   const recorded: ToolResult =
     "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call";
   const outcomeFirst: ToolResult =
@@ -643,14 +675,14 @@ describe("a completed record needs them to have spoken since the model did", () 
   it("good flow: their 'yes' is the last thing said, so completed is accepted", () => {
     const g = new ToolGate(fullExec);
     g.noteModelAudio(); // the read-back
-    g.noteCallerSpeech(); // "Yes, that works."
+    g.noteCallerSpeech("Yes, that works.", true);
     expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(recorded);
     expect(g.snapshot().outcome?.status).toBe("completed");
   });
 
   it("bad flow: the model spoke after their last words, so completed is refused", () => {
     const g = new ToolGate(fullExec);
-    g.noteCallerSpeech(); // "How about Monday at 9:26?"
+    g.noteCallerSpeech("How about Monday at 9:26?", true);
     g.noteModelAudio(); // "That works perfectly … 9:30 … Goodbye."
     expect(g.recordOutcome("completed", { appointmentStart: "Mon 9:30" })).toBe(notConfirmed);
   });
@@ -663,17 +695,17 @@ describe("a completed record needs them to have spoken since the model did", () 
 
   it("after a refusal, their next words let the same record through", () => {
     const g = new ToolGate(fullExec);
-    g.noteCallerSpeech();
+    g.noteCallerSpeech("How about Monday at 9:26?", true);
     g.noteModelAudio();
     expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(notConfirmed);
     g.noteModelAudio(); // the read-back the refusal asked for
-    g.noteCallerSpeech(); // "Yes."
+    g.noteCallerSpeech("Yes.", true);
     expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(recorded);
   });
 
   it("partial and failed are never held to it", () => {
     const g = new ToolGate(fullExec);
-    g.noteCallerSpeech();
+    g.noteCallerSpeech("How about Monday at 9:26?", true);
     g.noteModelAudio();
     expect(g.recordOutcome("partial", { appointmentStart: "" })).toBe(recorded);
     expect(g.recordOutcome("failed", { appointmentStart: "" })).toBe(recorded);
@@ -690,41 +722,80 @@ describe("a completed record needs them to have spoken since the model did", () 
     expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(recorded);
   });
 
-  it("a refusal is not a recorded outcome, and keeps whatever was recorded before", () => {
+  // Review 0.4.1 I-A: a refusal that wrote nothing left NO outcome when the
+  // callee then hung up. The refused record is kept, downgraded to `partial`
+  // ("arranged, not confirmed") — the true state — and a confirmed completed
+  // record replaces it.
+  it("a refusal keeps the record, downgraded to partial, fields as given", () => {
     const g = new ToolGate(fullExec);
     g.noteModelAudio();
     expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(notConfirmed);
-    expect(g.snapshot().outcome).toBeUndefined();
+    expect(g.snapshot().outcome?.status).toBe("partial");
+    expect(g.snapshot().outcome?.fields).toEqual({ appointmentStart: "X" });
 
     g.recordOutcome("partial", { appointmentStart: "" });
     g.noteModelAudio();
     expect(g.recordOutcome("completed", { appointmentStart: "Y" })).toBe(notConfirmed);
     expect(g.snapshot().outcome?.status).toBe("partial");
-    expect(g.snapshot().outcome?.fields.appointmentStart).toBe("");
+    expect(g.snapshot().outcome?.fields.appointmentStart).toBe("Y");
   });
 
-  // The end_call one-shot meets this refusal. Nothing loops: end_call is
-  // refused at most once per call, so a model that cannot get a confirmation
-  // can still hang up (with no completed record) on its second end_call.
-  it("refused record → refused end_call → refused record → end_call goes through", () => {
+  it("a refusal never downgrades a completed record already accepted", () => {
     const g = new ToolGate(fullExec);
-    g.noteCallerSpeech();
+    g.noteModelAudio();
+    g.noteCallerSpeech("Yes, that works.", true);
+    expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(recorded);
+    g.noteModelAudio(); // "Thank you, goodbye." — then records again
+    expect(g.recordOutcome("completed", { appointmentStart: "X2" })).toBe(notConfirmed);
+    expect(g.snapshot().outcome?.status).toBe("completed");
+    expect(g.snapshot().outcome?.fields.appointmentStart).toBe("X");
+  });
+
+  // The end_call one-shot meets this refusal. The refusal kept the record as
+  // `partial`, so record-first is satisfied and end_call closes: a model that
+  // hangs up anyway leaves the honest "arranged, not confirmed" behind.
+  it("refused record → end_call goes through, and the record is partial", () => {
+    const g = new ToolGate(fullExec);
+    g.noteCallerSpeech("How about Monday at 9:26?", true);
     g.noteModelAudio();
     expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(notConfirmed);
+    expect(g.authorizeEnd()).toBe(closing);
+    expect(g.snapshot().outcome?.status).toBe("partial");
+    expect(g.snapshot().outcome?.fields).toEqual({ appointmentStart: "X" });
+  });
+
+  it("refused end_call (nothing recorded) → refused record → end_call goes through, partial kept", () => {
+    const g = new ToolGate(fullExec);
+    g.noteCallerSpeech("How about Monday at 9:26?", true);
+    g.noteModelAudio();
     expect(g.authorizeEnd()).toBe(outcomeFirst);
-    // "Without mentioning it": no new audio, and the earlier speech still stands.
     expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(notConfirmed);
     expect(g.authorizeEnd()).toBe(closing);
-    expect(g.snapshot().outcome).toBeUndefined();
+    expect(g.snapshot().outcome?.status).toBe("partial");
+  });
+
+  // Review 0.4.1 I-A, scenario 1: the live 0.4.0 Gemini pattern. The model
+  // says "That works perfectly … Goodbye." and records; the audio rule
+  // refuses; it reads back; the callee, who already heard goodbye, says
+  // "Mm-hmm." That has to be a yes, or the agreement rule refuses a second time.
+  it("audio refusal → read-back → 'Mm-hmm.' → completed accepted, replacing the partial", () => {
+    const g = new ToolGate(fullExec);
+    g.noteCallerSpeech("How about Monday at 9:26?", true);
+    g.noteModelAudio(); // "That works perfectly … Goodbye."
+    expect(g.recordOutcome("completed", { appointmentStart: "Mon 9:26" })).toBe(notConfirmed);
+    g.noteModelAudio(); // "Just to confirm: Monday at 9:26?"
+    g.noteCallerSpeech("Mm-hmm.", true);
+    expect(g.recordOutcome("completed", { appointmentStart: "Mon 9:26" })).toBe(recorded);
+    expect(g.snapshot().outcome?.status).toBe("completed");
   });
 
   it("refused record → read-back → they confirm → recorded → end_call ok", () => {
     const g = new ToolGate(fullExec);
-    g.noteCallerSpeech(); // "How about Monday at 9:26?"
+    g.noteCallerSpeech("How about Monday at 9:26?", true);
     g.noteModelAudio(); // "Monday at 9:30 works. Goodbye."
     expect(g.recordOutcome("completed", { appointmentStart: "Mon 9:30" })).toBe(notConfirmed);
     g.noteModelAudio(); // "Just to confirm: Monday at 9:26?"
-    g.noteCallerSpeech(); // "Yes, Monday at 9:26 works."
+    g.noteCallerSpeech("Yes, Monday at 9:26 works.", true);
     expect(g.recordOutcome("completed", { appointmentStart: "Mon 9:26" })).toBe(recorded);
     expect(g.authorizeEnd()).toBe(closing);
     expect(g.snapshot().outcome?.fields.appointmentStart).toBe("Mon 9:26");
@@ -753,5 +824,702 @@ describe("a completed record needs them to have spoken since the model did", () 
     });
     expect(answers).toEqual([notConfirmed]);
     expect(diagnostics).toEqual([`record_outcome ${notConfirmed}`]);
+  });
+});
+
+/**
+ * Scenario matrix, Gemini 3.8, 2026-10-01 (4–6 of 43 model-ended runs): the
+ * callee OFFERED — "We have an opening this Thursday between 1:00 PM and 4:00
+ * PM that I can reserve for you." — and the model recorded `completed` before
+ * saying a word, then ended the call and only then said "Thank you, that works
+ * perfectly. Goodbye." The audio rule above cannot see it: nothing was said
+ * after the callee's last words. So a completed record also needs the callee's
+ * latest words to carry an agreement signal — refused once per call, so the
+ * cost of a false refusal is one extra confirmation turn, never a trap.
+ */
+describe("a completed record needs their latest words to agree", () => {
+  const notConfirmed: ToolResult =
+    "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call — without mentioning this";
+  const recorded: ToolResult =
+    "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call";
+  const offer =
+    "We have an opening this Thursday between 1:00 PM and 4:00 PM that I can reserve for you.";
+
+  it("their offer, then a silent record: refused, and kept as partial", () => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio(); // "Could you fit in a visit this week?"
+    g.noteCallerSpeech(offer, true);
+    expect(g.recordOutcome("completed", { appointmentStart: "Thu 1-4" })).toBe(notConfirmed);
+    expect(g.snapshot().outcome?.status).toBe("partial");
+    expect(g.snapshot().outcome?.fields).toEqual({ appointmentStart: "Thu 1-4" });
+  });
+
+  // Review 0.4.1 I-A, scenario 2: an automated completion has no yes in it,
+  // and the line drops before any read-back. The outcome must still exist.
+  it("agreement refusal → they hang up → the stored outcome is partial with the fields", () => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Your refill request is in the system. Goodbye.", true);
+    expect(g.recordOutcome("completed", { appointmentStart: "refill" })).toBe(notConfirmed);
+    expect(g.snapshot().outcome).toEqual({
+      status: "partial",
+      fields: { appointmentStart: "refill" },
+      recordedAt: expect.any(String)
+    });
+  });
+
+  it("agreement refusal → end_call is accepted, and the record is partial", () => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech(offer, true);
+    expect(g.recordOutcome("completed", { appointmentStart: "Thu 1-4" })).toBe(notConfirmed);
+    expect(g.authorizeEnd()).toBe("ok — say nothing more");
+    expect(g.snapshot().outcome?.status).toBe("partial");
+  });
+
+  it("agreement refusal → they confirm → completed replaces the partial", () => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech(offer, true);
+    expect(g.recordOutcome("completed", { appointmentStart: "Thu 1-4" })).toBe(notConfirmed);
+    g.noteModelAudio(); // read-back
+    g.noteCallerSpeech("Yes.", true);
+    expect(g.recordOutcome("completed", { appointmentStart: "Thu 1-4" })).toBe(recorded);
+    expect(g.snapshot().outcome?.status).toBe("completed");
+  });
+
+  it("the partial a refusal keeps blanks a who-confirmed role, as the role rule does", () => {
+    const g = new ToolGate({
+      closure: { requireOutcomeBeforeEnd: true },
+      outcome: {
+        fields: [
+          { name: "newAppointment", description: "The new appointment date and time" },
+          { name: "confirmedBy", description: "Who at the office confirmed it" }
+        ]
+      }
+    });
+    g.noteModelAudio();
+    g.noteCallerSpeech(offer, true);
+    expect(
+      g.recordOutcome("completed", { newAppointment: "Thu 1-4", confirmedBy: "receptionist" })
+    ).toBe(notConfirmed);
+    expect(g.snapshot().outcome?.status).toBe("partial");
+    expect(g.snapshot().outcome?.fields).toEqual({ newAppointment: "Thu 1-4", confirmedBy: "" });
+  });
+
+  it("a refused record over the spend ceiling is not kept, even as partial", () => {
+    const g = new ToolGate({
+      closure: { requireOutcomeBeforeEnd: true },
+      outcome: { fields: [{ name: "agreedAmount", description: "total agreed" }] },
+      spendCeiling: { field: "agreedAmount", limit: 250 }
+    });
+    g.noteModelAudio();
+    g.noteCallerSpeech("It'll be $430, I can book you Thursday.", true);
+    expect(g.recordOutcome("completed", { agreedAmount: "$430" })).toBe(notConfirmed);
+    expect(g.snapshot().outcome).toBeUndefined();
+  });
+
+  it.each([
+    "Yes, that works.",
+    "You're all set for Tuesday.",
+    "you’re all set",
+    "Okay.",
+    "Sounds good, see you then.",
+    "That's right.",
+    "Great, I've booked it.",
+    "Alright, it's reserved.",
+    // Review 0.4.1 I-A: real confirmations the first list missed.
+    "Mm-hmm.",
+    "Mmhmm",
+    "mm hmm",
+    "Mhm.",
+    "Uh-huh.",
+    "uh huh",
+    "Uhhuh.",
+    "That's fine.",
+    "That is fine.",
+    "Fine.",
+    "That'll work.",
+    "That will work.",
+    "Ten works.",
+    "Tuesday works for us.",
+    "That is right.",
+    "That's correct.",
+    "Tuesday at ten it is.",
+    "Okay then, ten it is!",
+    "You're on the books for Tuesday.",
+    "We'll see him then.",
+    "See her then.",
+    "I've rescheduled you for Tuesday.",
+    "Your request has been received.",
+    "Noted, Tuesday at ten.",
+    "That's good.",
+    "Sounds good.",
+    "Thursday at two? Yes, that works."
+  ])("their %j, then a silent record: accepted", (line) => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio(); // the read-back
+    g.noteCallerSpeech(line, true);
+    expect(g.recordOutcome("completed", { appointmentStart: "Tue 10am" })).toBe(recorded);
+  });
+
+  it.each([
+    offer,
+    "I can book you in for Thursday at two.",
+    "We're fully booked on Monday, but Tuesday is open.",
+    "I'm not sure we have anything Friday.",
+    "Right now the earliest is Thursday.",
+    "Let me make sure — how about Thursday?",
+    "Yesterday was busy, how about Thursday?",
+    // Review 0.4.1 I-A: misfires the matcher must not take for a yes.
+    "We're booked on Monday.",
+    "Sorry, we're all booked that day.",
+    "I can't say yes to that.",
+    "I can book you Wednesday, is that okay?",
+    "Does Thursday work for you?",
+    "That doesn't work.",
+    "That won't work for us.",
+    "No, that wouldn't work.",
+    "Nothing works on Monday.",
+    "We don't have anything on the books for Monday.",
+    "Whatever it is, we can't do Monday.",
+    "That's not good for us.",
+    "Fine dining is upstairs, how about Thursday?"
+  ])("%j carries no agreement signal", (line) => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech(line, true);
+    expect(g.recordOutcome("completed", { appointmentStart: "Thu" })).toBe(notConfirmed);
+  });
+
+  it("one-shot: after one refusal, the next attempt is accepted even without a yes", () => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech(offer, true);
+    expect(g.recordOutcome("completed", { appointmentStart: "Thu 1-4" })).toBe(notConfirmed);
+    g.noteModelAudio(); // "Just to confirm: Thursday between one and four?"
+    g.noteCallerSpeech("Mm-hm, Thursday one to four.", true);
+    expect(g.recordOutcome("completed", { appointmentStart: "Thu 1-4" })).toBe(recorded);
+  });
+
+  it("Gemini fragments: the caller's words since the model last spoke are read as one", () => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Ye", false);
+    g.noteCallerSpeech("s, that works", false);
+    expect(g.recordOutcome("completed", { appointmentStart: "Tue" })).toBe(recorded);
+  });
+
+  it("Gemini fragments are joined as they came: a word split across two is one word", () => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Ye", false);
+    g.noteCallerSpeech("p.", false);
+    expect(g.recordOutcome("completed", { appointmentStart: "Tue" })).toBe(recorded);
+  });
+
+  it("whole utterances are joined as separate words, not run together", () => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Okay", true);
+    g.noteCallerSpeech("Thursday then.", true);
+    expect(g.recordOutcome("completed", { appointmentStart: "Thu" })).toBe(recorded);
+  });
+
+  it("a yes from before the model last spoke does not count", () => {
+    const g = new ToolGate(fullExec);
+    g.noteCallerSpeech("Yes, hello.", true);
+    g.noteModelAudio(); // "Can we move it to Thursday?"
+    g.noteCallerSpeech("I can do Thursday at two.", true);
+    expect(g.recordOutcome("completed", { appointmentStart: "Thu 2pm" })).toBe(notConfirmed);
+  });
+
+  it("a meeting is not gated", () => {
+    const g = new ToolGate({
+      ...fullExec,
+      meeting: {
+        consent: { phrase: "go ahead and take notes", timeoutSeconds: 180, onTimeout: "hangUp" }
+      }
+    });
+    g.noteCallerSpeech(offer, true);
+    expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(recorded);
+  });
+
+  it("partial and failed are never held to it", () => {
+    const g = new ToolGate(fullExec);
+    g.noteCallerSpeech(offer, true);
+    expect(g.recordOutcome("partial", { appointmentStart: "" })).toBe(recorded);
+    expect(g.recordOutcome("failed", { appointmentStart: "" })).toBe(recorded);
+  });
+});
+
+/**
+ * Replay, Gemini 3.8, 2026-10-01 (gate-926, 8/8 runs): the callee said "Yes,
+ * Monday at 9:26 works.", the model asked who it was speaking with, the callee
+ * said "Sam." — and the first completed record, carrying confirmedBy "Sam",
+ * was refused because "Sam." agrees to nothing. The name answer is not where
+ * the agreement lives; the words before it are.
+ */
+describe("a completed record after the name answer reads the words before it", () => {
+  const whoExec: CallExecution = {
+    closure: { requireOutcomeBeforeEnd: true },
+    outcome: {
+      fields: [
+        { name: "newAppointment", description: "The new appointment date and time" },
+        { name: "confirmedBy", description: "Who at the office confirmed it" }
+      ]
+    }
+  };
+  const noWhoExec: CallExecution = {
+    closure: { requireOutcomeBeforeEnd: true },
+    outcome: { fields: [{ name: "newAppointment", description: "The new appointment" }] }
+  };
+  const notConfirmed: ToolResult =
+    "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call — without mentioning this";
+  const recorded: ToolResult =
+    "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call";
+
+  it('their yes → the name question → "Sam." → completed, confirmedBy Sam: accepted', () => {
+    const g = new ToolGate(whoExec);
+    g.noteModelAudio(); // "Could we do Monday at 9:26?"
+    g.noteCallerSpeech("Yes, Monday at 9:26 works.", true);
+    g.noteModelAudio(); // "Great. And who am I speaking with?"
+    g.noteModelAudio();
+    g.noteCallerSpeech("Sam.", true);
+    expect(g.recordOutcome("completed", { newAppointment: "Mon 9:26", confirmedBy: "Sam" })).toBe(
+      recorded
+    );
+    expect(g.snapshot().outcome?.status).toBe("completed");
+    expect(g.snapshot().outcome?.fields.confirmedBy).toBe("Sam");
+  });
+
+  it.each(["sam", "  SAM!  ", "Sam Lee", "this is Sam"])(
+    "the name matches case-, space- and punctuation-insensitively, any word of it (%j)",
+    (value) => {
+      const g = new ToolGate(whoExec);
+      g.noteModelAudio();
+      g.noteCallerSpeech("Yes, Monday at 9:26 works.", true);
+      g.noteModelAudio();
+      g.noteCallerSpeech("It's Sam.", true);
+      expect(g.recordOutcome("completed", { newAppointment: "Mon", confirmedBy: value })).toBe(
+        recorded
+      );
+    }
+  );
+
+  it('their offer → the name question → "Sam here.": refused — the words before are an offer', () => {
+    const g = new ToolGate(whoExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech("We have Thursday 1 to 4.", true);
+    g.noteModelAudio(); // "Who am I speaking with?"
+    g.noteCallerSpeech("Sam here.", true);
+    expect(g.recordOutcome("completed", { newAppointment: "Thu 1-4", confirmedBy: "Sam" })).toBe(
+      notConfirmed
+    );
+    expect(g.snapshot().outcome?.status).toBe("partial");
+  });
+
+  it("the latest words do not hold the recorded name: unchanged, refused", () => {
+    const g = new ToolGate(whoExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Yes, Monday at 9:26 works.", true);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Sam.", true);
+    expect(g.recordOutcome("completed", { newAppointment: "Mon", confirmedBy: "Maria" })).toBe(
+      notConfirmed
+    );
+  });
+
+  it('a short word of the name does not count as the name ("I" in "Sam I")', () => {
+    const g = new ToolGate(whoExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Yes, Monday at 9:26 works.", true);
+    g.noteModelAudio();
+    g.noteCallerSpeech("I can do Thursday instead.", true);
+    expect(g.recordOutcome("completed", { newAppointment: "Thu", confirmedBy: "Sam I" })).toBe(
+      notConfirmed
+    );
+  });
+
+  it("confirmedBy empty: unchanged, refused", () => {
+    const g = new ToolGate(whoExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Yes, Monday at 9:26 works.", true);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Sam.", true);
+    expect(g.recordOutcome("completed", { newAppointment: "Mon", confirmedBy: "" })).toBe(
+      notConfirmed
+    );
+  });
+
+  it("no who-confirmed field declared: unchanged, refused", () => {
+    const g = new ToolGate(noWhoExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Yes, Monday at 9:26 works.", true);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Sam.", true);
+    expect(g.recordOutcome("completed", { newAppointment: "Mon" })).toBe(notConfirmed);
+  });
+
+  it("only ONE window back: a yes two model turns ago does not count", () => {
+    const g = new ToolGate(whoExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Yes, Monday works.", true);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Actually, Tuesday would be better.", true);
+    g.noteModelAudio(); // "Tuesday then — who am I speaking with?"
+    g.noteCallerSpeech("Sam.", true);
+    expect(g.recordOutcome("completed", { newAppointment: "Tue", confirmedBy: "Sam" })).toBe(
+      notConfirmed
+    );
+  });
+
+  it("Gemini fragments: both windows are read as they were joined", () => {
+    const g = new ToolGate(whoExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Ye", false);
+    g.noteCallerSpeech("s, Monday at 9:26 wor", false);
+    g.noteCallerSpeech("ks.", false);
+    g.noteModelAudio();
+    g.noteCallerSpeech(" Sa", false);
+    g.noteCallerSpeech("m.", false);
+    expect(g.recordOutcome("completed", { newAppointment: "Mon 9:26", confirmedBy: "Sam" })).toBe(
+      recorded
+    );
+  });
+
+  it("one-shot unchanged: a refusal spends it, the next completed record is accepted", () => {
+    const g = new ToolGate(whoExec);
+    g.noteModelAudio();
+    g.noteCallerSpeech("We have Thursday 1 to 4.", true);
+    g.noteModelAudio();
+    g.noteCallerSpeech("Sam here.", true);
+    expect(g.recordOutcome("completed", { newAppointment: "Thu", confirmedBy: "Sam" })).toBe(
+      notConfirmed
+    );
+    g.noteModelAudio(); // read-back
+    g.noteCallerSpeech("Thursday one to four.", true);
+    expect(g.recordOutcome("completed", { newAppointment: "Thu", confirmedBy: "Sam" })).toBe(
+      recorded
+    );
+  });
+});
+
+/**
+ * Live, Gemini 3.8, 2026-10-01, several calls: the job declared `confirmedBy`
+ * ("Who at the office confirmed it"); the model never asked who it was
+ * speaking with and recorded "receptionist", "Receptionist" or "". Deepgram
+ * calls asked and got real names. The rule: ask once, never fake.
+ */
+describe("a who-confirmed field: ask once, never fake", () => {
+  const whoExec: CallExecution = {
+    closure: { requireOutcomeBeforeEnd: true },
+    outcome: {
+      fields: [
+        { name: "newAppointment", description: "The new appointment date and time" },
+        { name: "confirmedBy", description: "Who at the office confirmed it" }
+      ]
+    }
+  };
+  const roleNotName: ToolResult =
+    "refused: that is a role, not a name — ask who you are speaking with, or leave it empty if they will not say — without mentioning this";
+  const notConfirmed: ToolResult =
+    "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call — without mentioning this";
+  const recorded: ToolResult =
+    "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call";
+  const outcomeFirst: ToolResult =
+    "refused: record the outcome first — call record_outcome now without mentioning it";
+  const closing: ToolResult = "ok — say nothing more";
+  const describeRecord = (e: CallExecution): string =>
+    buildToolDeclarations(e).find((d) => d.name === "record_outcome")?.description ?? "";
+
+  describe("detection", () => {
+    it.each([
+      [{ name: "confirmedBy", description: "Who at the office confirmed it" }],
+      [{ name: "confirmed_by", description: "" }],
+      [{ name: "contact", description: "Name of the person you spoke with" }],
+      [{ name: "rep", description: "Who you were speaking with" }],
+      [{ name: "agreedWith", description: "Who confirmed the booking" }],
+      [{ name: "contactName", description: "" }],
+      [{ name: "contact_person", description: "" }],
+      [{ name: "spokeWith", description: "" }],
+      [{ name: "spokeTo", description: "" }],
+      [{ name: "speakingWith", description: "" }],
+      [{ name: "personName", description: "" }],
+      [{ name: "staffName", description: "" }],
+      [{ name: "agentName", description: "" }],
+      [{ name: "representativeName", description: "" }],
+      [{ name: "nameOfPerson", description: "" }]
+    ])("detects %o", (f) => {
+      expect(isWhoConfirmedField(f)).toBe(true);
+    });
+
+    it.each([
+      [{ name: "newAppointment", description: "The new appointment date and time" }],
+      [{ name: "confirmationNumber", description: "The confirmation number they gave" }],
+      [{ name: "confirmed", description: "Whether they confirmed the booking" }],
+      [{ name: "agreedAmount", description: "The price agreed" }],
+      // Review 0.4.1 I2: descriptions are free text written per call, and
+      // these mention a person without the field being one. The name decides.
+      [{ name: "deliveryDate", description: "Delivery date as confirmed by the store" }],
+      [{ name: "notes", description: "Anything the person you spoke with mentioned" }],
+      [
+        {
+          name: "orderNumber",
+          description: "Order number, and who to call if it does not get confirmed"
+        }
+      ],
+      [{ name: "summary", description: "Who confirmed it and what they said" }],
+      [{ name: "contactNumber", description: "Number of the person you spoke with" }],
+      [{ name: "status", description: "Confirmed by the person you spoke with?" }]
+    ])("does not detect %o", (f) => {
+      expect(isWhoConfirmedField(f)).toBe(false);
+    });
+  });
+
+  describe("the instruction", () => {
+    it("tells the model to ask once who it is speaking with, and to leave it empty if they decline", () => {
+      const d = describeRecord(whoExec);
+      expect(d).toContain("And who am I speaking with?");
+      expect(d).toMatch(/ask once/i);
+      expect(d).toContain("confirmedBy");
+      expect(d).toMatch(/leave it empty/i);
+    });
+
+    it("is absent from a call with no who-confirmed field", () => {
+      expect(describeRecord(fullExec)).not.toMatch(/speaking with/i);
+      expect(describeRecord(fullExec)).not.toMatch(/ask once/i);
+    });
+
+    it("asks for no recap", () => {
+      expect(describeRecord(whoExec)).not.toMatch(/recap|read .* back|re-confirm/i);
+    });
+  });
+
+  describe("the gate", () => {
+    const settled = (): ToolGate => {
+      const g = new ToolGate(whoExec);
+      g.noteModelAudio();
+      g.noteCallerSpeech("Yes, that works.", true);
+      return g;
+    };
+
+    it("the refusal is a member of the closed union", () => {
+      expect(TOOL_RESULTS).toContain(roleNotName);
+    });
+
+    it.each([
+      "receptionist",
+      "Receptionist",
+      "the receptionist",
+      "The front desk",
+      "front desk staff",
+      "staff",
+      "Staff member",
+      "office staff",
+      "the office",
+      "scheduler",
+      "Scheduling",
+      "someone",
+      "unknown",
+      "N/A",
+      "na",
+      "none",
+      "a representative",
+      "agent",
+      "assistant",
+      "  Receptionist.  ",
+      // Replay, Gemini 3.8, 2026-10-01 (gate-base r3): accepted as a name.
+      "the person I'm speaking with",
+      "The person I’m speaking with",
+      "person I spoke to",
+      "whoever is on the phone",
+      "the person on the line",
+      "you",
+      "this is",
+      "someone here"
+    ])("refuses the role placeholder %j, keeping the record with the name empty", (value) => {
+      const g = settled();
+      expect(g.recordOutcome("completed", { newAppointment: "Tue 10am", confirmedBy: value })).toBe(
+        roleNotName
+      );
+      expect(g.snapshot().outcome?.status).toBe("completed");
+      expect(g.snapshot().outcome?.fields).toEqual({ newAppointment: "Tue 10am", confirmedBy: "" });
+    });
+
+    it("accepts an empty string — the honest answer when they will not say", () => {
+      const g = settled();
+      expect(g.recordOutcome("completed", { newAppointment: "Tue 10am", confirmedBy: "" })).toBe(
+        recorded
+      );
+    });
+
+    it.each([
+      "Sam",
+      "Dr. Patel",
+      "Jackson",
+      "Sam at the front desk",
+      "Maria, the receptionist",
+      "this is Sam",
+      "Sam, the person I spoke with"
+    ])("accepts the name %j", (value) => {
+      const g = settled();
+      expect(g.recordOutcome("completed", { newAppointment: "Tue 10am", confirmedBy: value })).toBe(
+        recorded
+      );
+      expect(g.snapshot().outcome?.fields.confirmedBy).toBe(value);
+    });
+
+    it("does not hold any other field to it", () => {
+      const g = new ToolGate({
+        outcome: {
+          fields: [
+            { name: "note", description: "Anything else worth knowing" },
+            { name: "confirmedBy", description: "Who at the office confirmed it" }
+          ]
+        }
+      });
+      expect(g.recordOutcome("partial", { note: "receptionist", confirmedBy: "Sam" })).toBe(
+        "recorded"
+      );
+    });
+
+    it("does not apply on a call with no who-confirmed field", () => {
+      const g = new ToolGate({
+        outcome: { fields: [{ name: "department", description: "Which department answered" }] }
+      });
+      expect(g.recordOutcome("partial", { department: "front desk" })).toBe("recorded");
+    });
+
+    // A partial or failed call — a voicemail, a refusal — is not refused for a
+    // role: the refusal would make the model ask "who am I speaking with?",
+    // and on a voicemail that question goes into the recording. The role is
+    // still never kept; the field is blanked and the record accepted.
+    it.each(["partial", "failed"] as const)(
+      "on %s, blanks the role and records without refusing",
+      (status) => {
+        const g = settled();
+        expect(g.recordOutcome(status, { newAppointment: "", confirmedBy: "N/A" })).toBe(recorded);
+        expect(g.snapshot().outcome?.fields).toEqual({ newAppointment: "", confirmedBy: "" });
+      }
+    );
+
+    it("a partial record does not spend the one refusal a completed one gets", () => {
+      const g = settled();
+      expect(g.recordOutcome("partial", { newAppointment: "", confirmedBy: "receptionist" })).toBe(
+        recorded
+      );
+      expect(
+        g.recordOutcome("completed", { newAppointment: "Tue 10am", confirmedBy: "receptionist" })
+      ).toBe(roleNotName);
+    });
+
+    // Review 0.4.1 I1: the model says goodbye and calls end_call, which is
+    // refused once for the missing record; it records with a role, which is
+    // refused; it calls end_call again, which is now accepted. The booking
+    // must survive that, with the name empty.
+    it("end_call refused → role refused → end_call accepted keeps the booking, name empty", () => {
+      const g = settled();
+      expect(g.authorizeEnd()).toBe(outcomeFirst);
+      expect(
+        g.recordOutcome("completed", {
+          newAppointment: "2026-10-05T09:30",
+          confirmedBy: "Receptionist"
+        })
+      ).toBe(roleNotName);
+      expect(g.authorizeEnd()).toBe(closing);
+      expect(g.snapshot().outcome?.status).toBe("completed");
+      expect(g.snapshot().outcome?.fields).toEqual({
+        newAppointment: "2026-10-05T09:30",
+        confirmedBy: ""
+      });
+    });
+
+    it("refusal → ask → they give a name → recorded → end_call ok", () => {
+      const g = settled();
+      expect(
+        g.recordOutcome("completed", { newAppointment: "Tue 10am", confirmedBy: "Receptionist" })
+      ).toBe(roleNotName);
+      g.noteModelAudio(); // "And who am I speaking with?"
+      g.noteCallerSpeech("Sam.", true);
+      expect(g.recordOutcome("completed", { newAppointment: "Tue 10am", confirmedBy: "Sam" })).toBe(
+        recorded
+      );
+      expect(g.authorizeEnd()).toBe(closing);
+      expect(g.snapshot().outcome?.fields.confirmedBy).toBe("Sam");
+    });
+
+    it("refusal → ask → they decline → empty is recorded", () => {
+      const g = settled();
+      expect(
+        g.recordOutcome("completed", { newAppointment: "Tue 10am", confirmedBy: "front desk" })
+      ).toBe(roleNotName);
+      g.noteModelAudio();
+      g.noteCallerSpeech("I'd rather not say.", true);
+      expect(g.recordOutcome("completed", { newAppointment: "Tue 10am", confirmedBy: "" })).toBe(
+        recorded
+      );
+    });
+
+    // Bounded like end_call's refusal: a model that writes the role again
+    // after being told once is not refused forever. The record goes through
+    // with the field EMPTY — never the placeholder — so nothing is faked and
+    // nothing loops.
+    it("refuses once; a second placeholder is recorded as empty, never as the role", () => {
+      const g = settled();
+      expect(
+        g.recordOutcome("completed", { newAppointment: "Tue 10am", confirmedBy: "Receptionist" })
+      ).toBe(roleNotName);
+      g.noteModelAudio();
+      g.noteCallerSpeech("Why do you need to know?", true);
+      expect(
+        g.recordOutcome("completed", {
+          newAppointment: "Tue 10am",
+          confirmedBy: "the receptionist"
+        })
+      ).toBe(recorded);
+      expect(g.snapshot().outcome?.fields).toEqual({ newAppointment: "Tue 10am", confirmedBy: "" });
+    });
+
+    it("the confirmation gate still comes first, and the two cannot trap the model", () => {
+      const g = new ToolGate(whoExec);
+      g.noteCallerSpeech("How about Tuesday at ten?", true);
+      g.noteModelAudio(); // "Tuesday at ten works. Goodbye."
+      expect(
+        g.recordOutcome("completed", { newAppointment: "Tue 10am", confirmedBy: "receptionist" })
+      ).toBe(notConfirmed);
+      g.noteModelAudio(); // read-back
+      g.noteCallerSpeech("Yes.", true);
+      expect(
+        g.recordOutcome("completed", { newAppointment: "Tue 10am", confirmedBy: "receptionist" })
+      ).toBe(roleNotName);
+      // The role refusal kept the record (name empty), so end_call closes.
+      expect(g.authorizeEnd()).toBe(closing);
+      expect(g.snapshot().outcome?.fields).toEqual({ newAppointment: "Tue 10am", confirmedBy: "" });
+    });
+
+    it("routeToolCall answers the refusal with the literal and never echoes the value", async () => {
+      const g = settled();
+      const answers: ToolResult[] = [];
+      await routeToolCall({
+        call: {
+          id: "r1",
+          name: "record_outcome",
+          args: {
+            status: "completed",
+            fields: { newAppointment: "X", confirmedBy: "receptionist" }
+          }
+        },
+        gate: g,
+        carrier: {
+          sendDtmf: async () => {},
+          endCall: async () => {},
+          beginNotetaking: async () => {}
+        },
+        callId: "CA-TEST",
+        respond: (r) => answers.push(r)
+      });
+      expect(answers).toEqual([roleNotName]);
+    });
   });
 });

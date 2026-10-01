@@ -10,7 +10,7 @@
       "facts": [
         "The kitchen sink drain pipe has a steady leak causing pooling inside the cabinet.",
         "The service address is 742 Evergreen Terrace.",
-        "The contact name is Alex Mercer and phone number is 555-0143."
+        "The contact name is Jordan Rivera and phone number is 555-0143."
       ],
       "preferences": [
         "Prefers any available morning slot.",
@@ -124,7 +124,26 @@
     "raisedTopic": null,
     "adjacentIndex": null,
     "offersAppointment": true,
-    "reachesSomeoneWhoCanAct": true
+    "reachesSomeoneWhoCanAct": true,
+    "agreement": {
+      "confirmTurn": 7,
+      "fields": {
+        "appointmentStart": [
+          ["2026", "10", "2", "8"],
+          ["friday", "8"],
+          ["oct", "2", "8"],
+          ["october", "2", "8"],
+          ["tomorrow", "8"]
+        ],
+        "appointmentEnd": [
+          ["2026", "10", "2", "11"],
+          ["friday", "11"],
+          ["oct", "2", "11"],
+          ["october", "2", "11"],
+          ["tomorrow", "11"]
+        ]
+      }
+    }
   },
   "script": [
     {
@@ -146,7 +165,8 @@
     },
     {
       "label": "Offer_Window",
-      "text": "Thanks for your patience. I have an opening tomorrow between 8:00 AM and 11:00 AM. Does that arrival window work for you?"
+      "text": "Thanks for your patience. I have an opening tomorrow between 8:00 AM and 11:00 AM. Does that arrival window work for you?",
+      "unpromptedAfterMs": 6000
     },
     {
       "label": "Explain_Billing_Policy",

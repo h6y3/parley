@@ -26,6 +26,8 @@ describe("guardrail prose constants (verbatim from current core)", () => {
         "that information and will follow up with Alex Rivera — then ask whether they can still " +
         "go ahead without it. If they can, carry on and get as much of the task done on this call " +
         "as you can; the missing piece is a follow-up item, not a reason to stop. " +
+        "This never covers a price, fee or commitment beyond what you are authorised to agree " +
+        "to — for those, do not go ahead; say you will confirm with Alex Rivera and call back. " +
         DEFERRAL_CORE
     );
   });

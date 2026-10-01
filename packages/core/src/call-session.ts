@@ -15,6 +15,7 @@ import {
   type MeetingExecution,
   type TranscriptGap
 } from "./meeting.js";
+import { redactCloseReason } from "./redaction.js";
 import { defaultTimeZone, planOpening, renderSystemInstruction, withOpening } from "./render.js";
 import type { TranscriptionProvider, TranscriptionSession } from "./transcription.js";
 import { encodingEquals, formatEncoding } from "./types.js";
@@ -403,6 +404,8 @@ export class CallSession {
    * meeting that never happened. Reading intent off an incidental `undefined`
    * is how that comes back. */
   private speakingPlaneRetired = false;
+  /** Set only when the realtime session closed on us (see `realtimeClose`). */
+  private realtimeCloseInfo?: { code: number; reason: string };
   /** The listening plane's bridge, carrier → transcriber. Set in
    * `beginNotetaking`. */
   private bridge?: AudioBridge;
@@ -705,8 +708,10 @@ export class CallSession {
               // Any words, final or not: Gemini never marks its input
               // transcription final (every caller entry on the 2026-10-01
               // incident call was `isFinal: false`), and keyed to `isFinal`
-              // the gate would refuse every completed record there.
-              if (event.text !== "") this.gate?.noteCallerSpeech();
+              // the gate would refuse every completed record there. The text
+              // goes too, fragments as they came, for the gate's agreement
+              // check — `noteCallerSpeech` says how it joins them.
+              if (event.text !== "") this.gate?.noteCallerSpeech(event.text, event.isFinal);
               this.closeModelEntry();
               this.noteTranscript(event);
               return;
@@ -784,7 +789,7 @@ export class CallSession {
               `realtime error: ${error.code} ${error.message} fatal=${error.fatal}`
             );
           },
-          onClose: (reason) => {
+          onClose: (reason, close) => {
             // WE closed it, at the consent handoff, and the call goes on
             // without a speaking plane. Report it and stop — the hangup below
             // is for a session that died unasked.
@@ -800,6 +805,17 @@ export class CallSession {
             // it said why, the only symptom was a phone that went dead on
             // answer.
             this.params.onDiagnostic?.(`realtime session closed: ${reason}`);
+            // Unexpected means: not the consent handoff (returned above) and
+            // not our own end (`endCall` sets `settled` BEFORE it closes the
+            // session, so our own hangup, drain and caps all arrive here
+            // already settled). Only the unasked close is evidence the client
+            // needs; a normal 1000 after our own end must leave the record clean.
+            if (!this.settled && this.realtimeCloseInfo === undefined) {
+              this.realtimeCloseInfo = {
+                code: close?.code ?? 0,
+                reason: redactCloseReason(close?.reason ?? reason)
+              };
+            }
             void this.endCall("error");
           }
         }
@@ -834,6 +850,8 @@ export class CallSession {
     // `OpeningDelivery`. `opening` was planned before connect, so the prompt
     // suffix and the trigger come from one decision. On a "prompt" provider a
     // two-party call sends nothing here: the callee's own "hello" opens it.
+    // A provider may declare the two shapes separately (Gemini: a two-party
+    // call in the prompt, a meeting as a turn); `planOpening` resolves that.
     if (opening.trigger !== undefined) session.sendOpeningTrigger(opening.trigger);
     this.armTimers();
 
@@ -1475,6 +1493,14 @@ export class CallSession {
    * — the answer-to-first-word evidence a provider A/B reads. */
   get firstModelAudioAtMs(): number | undefined {
     return this.firstModelAudioOffsetMs;
+  }
+
+  /** Why the realtime session died, when it died unasked: the transport's close
+   * code (0 when the transport reported none) and the vendor's reason, redacted
+   * and capped. `undefined` on every call that ended by our own hand. The call
+   * ends `endedBy: "error"` alongside it. */
+  get realtimeClose(): { code: number; reason: string } | undefined {
+    return this.realtimeCloseInfo;
   }
 
   /** Which realtime provider and model this call's speaking plane runs on —

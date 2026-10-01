@@ -35,13 +35,23 @@ export const DEFERRAL_CORE =
  * insurer; the model deferred correctly, then two turns later recorded the call
  * as partial and hung up on a callee who was still mid-booking. A gap is only a
  * reason to stop if it actually blocks them, so the rule now asks whether they
- * can go ahead without the missing piece. */
+ * can go ahead without the missing piece.
+ *
+ * That go-ahead must never reach money or authority. Scenario matrix, Gemini
+ * 3.8, 2026-10-01: quoted $430 against an authorised ceiling of $250, the
+ * model said "I do not have that information… Can we still proceed with
+ * booking the visit?" — this rule's own wording — and booked it, recording
+ * `completed` with the amount left empty. The sentence after it closes that
+ * reading: a price or commitment beyond the brief is a reason to stop and call
+ * back, not a follow-up item. */
 export function deferralRule(principalName: string): string {
   return (
     `If you are asked something this brief does not cover, say plainly that you do not have ` +
     `that information and will follow up with ${principalName} — then ask whether they can ` +
     `still go ahead without it. If they can, carry on and get as much of the task done on ` +
     `this call as you can; the missing piece is a follow-up item, not a reason to stop. ` +
+    `This never covers a price, fee or commitment beyond what you are authorised to agree to — ` +
+    `for those, do not go ahead; say you will confirm with ${principalName} and call back. ` +
     `${DEFERRAL_CORE}`
   );
 }

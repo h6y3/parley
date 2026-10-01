@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redactPhoneNumber, redactSecrets } from "../src/redaction.js";
+import { redactCloseReason, redactPhoneNumber, redactSecrets } from "../src/redaction.js";
 
 describe("redactPhoneNumber", () => {
   it("masks all but the last 4 digits, preserving a leading +", () => {
@@ -92,5 +92,49 @@ describe("redactSecrets diagnostics + prototype safety", () => {
     expect((out as { polluted?: unknown }).polluted).toBeUndefined();
     // And the global prototype is likewise untouched.
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
+
+// Built at runtime so no fixture looks like a real credential to a scanner.
+const fakeGoogleKey = "AIza" + "Sy" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7"; // # noscan
+const fakeOpenAiKey = "sk-" + "proj-" + "a1B2c3D4e5F6g7H8i9J0k1L2"; // # noscan
+const fakeGithubToken = "ghp" + "_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"; // # noscan
+const fakeHexKey = "0123456789abcdef".repeat(2) + "deadbeef"; // # noscan
+
+describe("redactCloseReason", () => {
+  it("masks a +-prefixed phone number and key=value secrets, as before", () => {
+    expect(redactCloseReason("call +14155550142 failed api_key=abc123")).toBe(
+      "call +*******0142 failed api_key=[redacted]"
+    );
+  });
+
+  it("masks a bare run of 10 or more digits, keeping the last four", () => {
+    expect(redactCloseReason("caller 4155550142 rejected")).toBe("caller ******0142 rejected");
+    expect(redactCloseReason("account 14155550142")).toBe("account *******0142");
+  });
+
+  it("leaves a short number alone", () => {
+    expect(redactCloseReason("code 1011 after 300 seconds")).toBe("code 1011 after 300 seconds");
+  });
+
+  it.each([
+    ["a Google API key", fakeGoogleKey],
+    ["an sk- key", fakeOpenAiKey],
+    ["a GitHub token", fakeGithubToken],
+    ["a long hex key", fakeHexKey]
+  ])("replaces %s standing on its own", (_label, secret) => {
+    const out = redactCloseReason(`invalid credential ${secret} for project`);
+    expect(out).toBe("invalid credential [redacted] for project");
+  });
+
+  it("keeps a UUID request id, which is not a credential", () => {
+    const id = "123e4567-e89b-12d3-a456-426614174000";
+    expect(redactCloseReason(`request ${id} rejected`)).toBe(`request ${id} rejected`);
+  });
+
+  it("keeps a vendor's prose reason readable", () => {
+    expect(redactCloseReason("Your prepayment credits are depleted. Please add more.")).toBe(
+      "Your prepayment credits are depleted. Please add more."
+    );
   });
 });

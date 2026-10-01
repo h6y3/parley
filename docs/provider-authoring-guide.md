@@ -92,7 +92,8 @@ export interface RealtimeProvider {
   readonly name: string;
   readonly audio: RealtimeAudioFormat; // { accepts: AudioEncoding[]; emits: AudioEncoding }
   readonly maxSessionSeconds?: number;
-  readonly openingDelivery: "turn" | "prompt"; // OpeningDelivery
+  readonly openingDelivery:
+    OpeningDelivery | { twoParty: OpeningDelivery; meeting: OpeningDelivery }; // "turn" | "prompt"
   readonly continuesAfterToolResponse: boolean;
   connect(params: RealtimeConnectParams): Promise<RealtimeSession>;
 }
@@ -132,7 +133,7 @@ text goes, and it is required: `CallSession`, and the harness runners, pass it t
 
 - **`"turn"`** — the trigger is sent after connect through `sendOpeningTrigger`. Declare this when
   the vendor has a text input its model reads as an input to the session, not as the far end
-  speaking. `GeminiRealtimeProvider` declares `"turn"`; its trigger goes as realtime text input.
+  speaking. `GeminiRealtimeProvider` uses it for meetings; the trigger goes as realtime text input.
 - **`"prompt"`** — the trigger is appended to the one-time `systemInstruction`, and on a
   two-party call `sendOpeningTrigger` is never called: the callee's own "hello" opens the call. On
   a meeting it is called once, with `MEETING_CONNECTED_CUE`, a single short line. Declare this
@@ -142,6 +143,15 @@ text goes, and it is required: `CallSession`, and the harness runners, pass it t
   waiting for the other end to speak" aloud on every run. The Deepgram provider declares
   `"prompt"`, and its `sendOpeningTrigger` refuses anything longer than twice the cue or containing
   a newline.
+- **`{ twoParty, meeting }`** (`OpeningDeliveryByShape`) — one of the two values per call shape;
+  `planOpening` reads `meeting` on a meeting and `twoParty` otherwise, and plans each exactly as
+  the plain value. `GeminiRealtimeProvider` declares `{ twoParty: "prompt", meeting: "turn" }`. A
+  trigger sent as its own turn at connect is a turn the model answers, and with line hiss or
+  silence before the callee's "hello" Gemini answered it into the noise (offline, 3 s of hiss
+  before the hello: speech before the callee in 9/18 runs as a turn, 0/72 in the prompt). With the
+  opening in the prompt its first input is the far end's own audio — a person, a voicemail
+  greeting or an IVR menu — and a silent line gives it nothing to answer. Its meetings keep the
+  trigger as a turn, the only way they have run.
 
 Either way the text is a Parley constant, never caller content, so the system instruction is
 still built once, before connect, and never changed.

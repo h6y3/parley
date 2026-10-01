@@ -21,11 +21,10 @@ else ever reaches the model as instruction-bearing content:
    via `RealtimeSession.sendOpeningTrigger()` immediately after connect. Parley's built-in trigger
    is `"Begin the call naturally now."` (`OPENING_TRIGGER`, `packages/core/src/render.ts`)
    — it never restates the persona, never restates the brief, never carries a structural marker,
-   and is never longer than one sentence. That is the path on a provider declaring
-   `openingDelivery: "turn"` (Gemini). A provider declaring `"prompt"` (Deepgram, whose only
-   post-connect text input is heard as the callee speaking) receives the same fixed text appended
-   to channel 1 instead, and is sent no trigger at all on a two-party call; see `planOpening`
-   (`packages/core/src/render.ts`). Either way it is Parley's constant, never brief content.
+   and is never longer than one sentence. That is the path under `openingDelivery: "turn"`, which
+   Gemini uses for a meeting. Under `"prompt"` — every two-party call on both shipped providers,
+   and a Deepgram meeting — the same fixed text is appended to channel 1 instead, and a two-party
+   call is sent no trigger at all; see `planOpening` (`packages/core/src/render.ts`). Either way it is Parley's constant, never brief content.
 
 `brief.keyterms` is not a third channel. It is a list of words the speech recognizer should
 expect (a name it would otherwise mishear), passed to the realtime provider as a recognition hint
@@ -70,7 +69,7 @@ convention an author has to remember to follow correctly every time.
 
 `CallSession.resolveSystemInstruction()` returns exactly the `systemInstruction` the call sends.
 It calls `renderSystemInstruction()` and then `withOpening()` (both in `packages/core/src/render.ts`).
-`withOpening()` appends the opening on a provider declaring `openingDelivery: "prompt"`. The harness
+`withOpening()` appends the opening wherever the provider's `openingDelivery` resolves to `"prompt"` for the call's shape. The harness
 runners and the payload preview use the same two helpers. `renderSystemInstruction()` builds the
 brief part fresh per call from a `Brief`'s
 pure caller content plus an already-composed `guardrails` array, in a fixed order that a `Brief`
@@ -94,7 +93,9 @@ author cannot reorder:
    an instruction to say it verbatim — never left to inference; the honest-if-asked guardrail
    (when `disclosure.honestIfAsked` is set); and the deferral rule (when `deferral.enabled` is
    set — if asked something the brief doesn't cover, say so and defer to the principal rather than
-   guessing). Near the end comes the closing rail (when `wrapUp.enabled` is set): `Nothing is settled until they
+   guessing, then ask whether they can still go ahead without it; that go-ahead never covers a
+   price, fee or commitment beyond what the agent is authorised to agree to — for those it does not
+   go ahead, and says it will confirm with the principal and call back). Near the end comes the closing rail (when `wrapUp.enabled` is set): `Nothing is settled until they
 have agreed to a specific arrangement in their own words; their offer or your proposal is not
 agreement — accept it, let them confirm, then close. When the purpose is settled, check once whether they need anything else from you to act on it — an
 appointment nobody can act on is not an appointment. Give them whatever this brief covers. If
@@ -105,6 +106,16 @@ recap settled details back to them.` It replaced a rail that asked the model to 
    outcome and thank the callee before saying goodbye; on live calls that produced
    re-confirmations of details already agreed and a recap at the end. These guardrail sentences
    are defined in `packages/policy/src/constants.ts`.
+
+   The rail does not ask for anyone's name, because it is composed from the policy alone and
+   cannot see the outcome fields. When a declared outcome field asks who confirmed the
+   arrangement (`isWhoConfirmedField` in `@parley/core`, decided by the field's name —
+   `confirmedBy`, `contactName`, `spokeWith`, … — with the description only confirming a name
+   such as `contact` or `rep`, never deciding alone), the `record_outcome` description carries the request:
+   ask once, before recording, one short question such as "And who am I speaking with?", and leave
+   the field empty if they will not say. `ToolGate` never keeps a role ("receptionist", "front
+   desk") in that field: it records the field empty, and on a `completed` record it also answers
+   with a refusal, once, so the model asks.
 
    `CallPolicy.identity.style` is one of three values — set via a preset
    (`principalCall`/`representedCall`/`transactionalCall`, `packages/policy/src/presets.ts`) or
@@ -131,7 +142,7 @@ recap settled details back to them.` It replaced a rail that asked the model to 
 2026-09-30 (America/Los_Angeles). When the other person gives a relative date such as
 "tomorrow" or "next Tuesday", work out the calendar date from today before you record it. The
 next 14 days are: Thu Oct 1, Fri Oct 2, …, Wed Oct 14. When you say a date, use the weekday and date together exactly as listed.` The list names the 14 days after today
-   (short weekday, month and day) because on live calls a model told only today's date resolved
+   (short weekday, month and day; a day in a later year than today also names the year, "Fri Jan 1 2027") because on live calls a model told only today's date resolved
    "next Tuesday" to the wrong day. It is computed once at connect from the session clock in the
    zone `PARLEY_TIMEZONE` names (the host's zone when unset), is never caller content, and comes before the opening text a
    `"prompt"`-delivery provider appends (see the provider docs). The harness renders the same

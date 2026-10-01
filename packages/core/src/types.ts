@@ -276,7 +276,19 @@ export interface RealtimeSessionCallbacks {
    * transcript text, no tool arguments. */
   onDiagnostic?: (message: string) => void;
   onError: (error: RealtimeProviderError) => void;
-  onClose: (reason: string) => void;
+  /** `reason` is prose for the diagnostic log. `close`, when the transport
+   * knows it, is the same fact structurally (the WebSocket close code and the
+   * server's reason string) so the call record can carry it: a vendor that
+   * ends a session over billing or quota says so ONLY here, one to two seconds
+   * after pickup, and prose in a log is not something a client can read. */
+  onClose: (reason: string, close?: RealtimeClose) => void;
+}
+
+/** A realtime transport's close, as reported by the socket. Both fields are
+ * optional because a transport may know only one; the call record normalises. */
+export interface RealtimeClose {
+  code?: number;
+  reason?: string;
 }
 
 export interface RealtimeConnectParams {
@@ -363,6 +375,25 @@ export interface RealtimeAudioFormat {
  * (`./render.ts`) decides which, for production and harness alike. */
 export type OpeningDelivery = "turn" | "prompt";
 
+/** An `OpeningDelivery` declared per call shape, for a vendor on which the
+ * two shapes are best opened differently. `planOpening` reads `meeting` on a
+ * call that joins a meeting and `twoParty` on every other call, and plans
+ * each exactly as the plain declaration of that value would be.
+ *
+ * Gemini is the vendor that declares it, `{ twoParty: "prompt", meeting:
+ * "turn" }`. Its two-party opening used to go as its own turn at connect —
+ * before the callee had said a word — and with line hiss or silence ahead of
+ * the "hello" the model answered that turn into the noise ("<no speech
+ * detected>", or a whole introduction to nobody). With the opening in the
+ * prompt the model's first input is the far end's own voice. Its meetings
+ * keep the trigger as a turn because that is the only way they have ever
+ * run, and their silence until people are heard is the consent invariant —
+ * not a behaviour to change as a side effect of a two-party fix. */
+export interface OpeningDeliveryByShape {
+  readonly twoParty: OpeningDelivery;
+  readonly meeting: OpeningDelivery;
+}
+
 /** A provider capable of hosting a realtime, audio-native conversational
  * session. Note what is deliberately absent: there is no method to update
  * `systemInstruction` after connect, and no general-purpose "send an arbitrary
@@ -381,10 +412,13 @@ export interface RealtimeProvider {
   readonly audio: RealtimeAudioFormat;
   /** Longest single session the vendor permits, if it bounds one. */
   readonly maxSessionSeconds?: number;
-  /** How this vendor takes the call's opening — see `OpeningDelivery`.
+  /** How this vendor takes the call's opening — see `OpeningDelivery`. One
+   * value for every call, or one per call shape (`OpeningDeliveryByShape`)
+   * when two-party calls and meetings are opened differently; pass it
+   * straight to `planOpening` either way, never resolve it by hand.
    * Required: a provider that has not decided is exactly how the opening
    * ended up heard as the callee's words. */
-  readonly openingDelivery: OpeningDelivery;
+  readonly openingDelivery: OpeningDelivery | OpeningDeliveryByShape;
   /** Whether the model goes on speaking after a tool answer, in a turn that
    * begins only once the answer is sent.
    *

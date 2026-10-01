@@ -310,8 +310,9 @@ function checkSessionCap(
     //    ends the call outright if it comes first.
     //
     // So the realtime session lives at most
-    // min(maxDurationSeconds, consent.timeoutSeconds + handoff): 900s + 19s at
-    // the very most, well inside Deepgram's 7200s even for a four-hour meeting.
+    // min(maxDurationSeconds, consent.timeoutSeconds + handoff): 900s + 30s
+    // (the handoff is 10s + 15s + 5s today) at the very most, well inside
+    // Deepgram's 7200s even for a four-hour meeting.
     const preConsent =
       execution.meeting.consent.timeoutSeconds + Math.ceil(CONSENT_HANDOFF_MAX_MS / 1000);
     lifetimeSeconds = declared === undefined ? preConsent : Math.min(declared, preConsent);

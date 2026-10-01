@@ -82,7 +82,10 @@ describe.each(providerWireFakes())("realtime provider conformance: $name", (fake
   it.each([false, true])(
     "accepts exactly the opening planOpening sends it (meeting=%s)",
     async (isMeeting) => {
-      expect(["turn", "prompt"]).toContain(provider.openingDelivery);
+      const declared = provider.openingDelivery;
+      const shape =
+        typeof declared === "string" ? declared : isMeeting ? declared.meeting : declared.twoParty;
+      expect(["turn", "prompt"]).toContain(shape);
       const { session } = await connected(fake);
       const plan = planOpening(provider.openingDelivery, isMeeting);
       const before = wire.sent().length;

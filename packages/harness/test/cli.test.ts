@@ -84,7 +84,8 @@ describe("runPreviewCommand", () => {
     const readFile = fakeReadFile({ "brief.json": briefJson });
     const output = runPreviewCommand({ command: "preview", briefPath: "brief.json" }, readFile);
     expect(output).toContain("personal assistant");
-    expect(output).toContain("openingTrigger:");
+    // A two-party call opens in the prompt on both shipped providers.
+    expect(output).toContain("openingTrigger: (none");
     expect(output).not.toContain("recipient:");
     expect(output).not.toContain("meetingBrief");
   });

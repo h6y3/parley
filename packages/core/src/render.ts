@@ -1,4 +1,4 @@
-import type { OpeningDelivery } from "./types.js";
+import type { OpeningDelivery, OpeningDeliveryByShape } from "./types.js";
 
 /** The single opening-trigger line sent once via `RealtimeSession.sendOpeningTrigger`
  * after connect. Plain, short, generic — never restates persona or brief
@@ -124,8 +124,18 @@ export interface OpeningPlan {
  * the system instruction and sends nothing on a two-party call (the callee's
  * "hello" is the opening), or `MEETING_CONNECTED_CUE` on a meeting. See
  * `OpeningDelivery` (`./types.ts`) for why a vendor declares one or the
- * other. Every string returned is a constant in this file. */
-export function planOpening(delivery: OpeningDelivery, isMeeting: boolean): OpeningPlan {
+ * other, and `OpeningDeliveryByShape` for a vendor that declares each call
+ * shape separately. Every string returned is a constant in this file. */
+export function planOpening(
+  declared: OpeningDelivery | OpeningDeliveryByShape,
+  isMeeting: boolean
+): OpeningPlan {
+  // A per-shape declaration picks this call's delivery and is then planned
+  // exactly as that plain value would be — so a provider declaring
+  // `{ twoParty: "prompt", meeting: "turn" }` sends a meeting byte for byte
+  // what a plain `"turn"` provider sends it.
+  const delivery =
+    typeof declared === "string" ? declared : isMeeting ? declared.meeting : declared.twoParty;
   const opening = isMeeting ? MEETING_OPENING_TRIGGER : OPENING_TRIGGER;
   if (delivery === "turn") return { trigger: opening };
   return isMeeting
@@ -159,19 +169,42 @@ export function defaultTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
+/** `PARLEY_TIMEZONE`: the IANA zone the model is told today's date in.
+ * Optional; unset means the host's zone. An invalid name is a boot error that
+ * names only this variable — a bad zone otherwise surfaces on the first call
+ * as a RangeError from inside the connect path. */
+export function resolveTimeZone(env: NodeJS.ProcessEnv): string | undefined {
+  const timeZone = env.PARLEY_TIMEZONE;
+  if (!timeZone) return undefined;
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone });
+  } catch {
+    throw new Error("PARLEY_TIMEZONE is not a valid IANA time zone name");
+  }
+  return timeZone;
+}
+
+/** `YYYY-MM-DD` for an instant in an IANA zone. Read by part type from an
+ * `en-US` formatter rather than from a locale that happens to print ISO order
+ * (`en-CA`), which is ICU data a trimmed Node build may not carry. */
+export function isoDate(now: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(now);
+  const get = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
 /** The one sentence that lets the model turn "next Tuesday" into the ISO date
  * the outcome schema requires. A model has no clock; without this it guesses
  * the year from training data. Parley-authored and computed once at connect —
  * never caller content, so it does not widen the one-shot instruction. */
 export function todaySentence(today: TodayInput): string {
-  // `en-CA` formats the date part as YYYY-MM-DD; the weekday is read from a
-  // second formatter in the same zone rather than parsed back out of a string.
-  const date = new Intl.DateTimeFormat("en-CA", {
-    timeZone: today.timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).format(today.now);
+  const date = isoDate(today.now, today.timeZone);
   const weekday = new Intl.DateTimeFormat("en-US", {
     timeZone: today.timeZone,
     weekday: "long"
@@ -184,7 +217,8 @@ export function todaySentence(today: TodayInput): string {
   );
 }
 
-/** The `count` calendar days after today in `today.timeZone`, as "Thu Oct 1".
+/** The `count` calendar days after today in `today.timeZone`, as "Thu Oct 1"
+ * (with the year, "Fri Jan 1 2027", for a day that falls in a later year than today).
  *
  * Told "Today is Wednesday, 2026-09-30", a think model on live calls resolved
  * "next Tuesday" to October 7th, twice (it is October 6). Weekday arithmetic is
@@ -210,14 +244,22 @@ function nextDays(today: TodayInput, count: number): string[] {
     timeZone: "UTC",
     weekday: "short",
     month: "short",
-    day: "numeric"
+    day: "numeric",
+    year: "numeric"
   });
   const days: string[] = [];
   for (let i = 1; i <= count; i++) {
     const p = label.formatToParts(new Date(Date.UTC(year, month - 1, day + i, 12)));
     const get = (type: Intl.DateTimeFormatPartTypes): string =>
       p.find((x) => x.type === type)?.value ?? "";
-    days.push(`${get("weekday")} ${get("month")} ${get("day")}`);
+    // The year is named only on days outside today's year: "Fri Jan 1 2027"
+    // is unambiguous across a year boundary, and an ordinary list stays as
+    // short as it was.
+    const entryYear = get("year");
+    days.push(
+      `${get("weekday")} ${get("month")} ${get("day")}` +
+        (Number(entryYear) === year ? "" : ` ${entryYear}`)
+    );
   }
   return days;
 }

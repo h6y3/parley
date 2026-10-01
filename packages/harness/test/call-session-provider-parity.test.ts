@@ -531,26 +531,20 @@ describe.each(["gemini", "deepgram"] as const)("CallSession invariants on %s", (
   });
 
   /** Where the opening goes is each provider's declaration, planned once by
-   * `planOpening`. On Deepgram the only post-connect text input is a USER
-   * turn, which its LLM hears as the callee — so the trigger rides in the
-   * Settings prompt and a two-party call injects nothing at all. */
-  it("puts the two-party opening where the provider declares it takes it", async () => {
+   * `planOpening`. On both vendors a two-party opening rides in the one
+   * session setup and NOTHING is sent at connect: the callee's own voice is
+   * the model's first input. On Deepgram the only post-connect text input is
+   * a USER turn, heard as the callee; on Gemini a trigger sent as its own
+   * turn was answered into line hiss before anyone spoke. */
+  it("puts the two-party opening in the setup and sends nothing at connect", async () => {
     const { wire } = await placeCall();
     const sent = JSON.stringify(wire.sent());
     const count = (needle: string): number => sent.split(needle).length - 1;
-    // Exactly once on the wire either way: never both a prompt suffix and a turn.
+    // Exactly once on the wire: never both a prompt suffix and a turn.
     expect(count(OPENING_TRIGGER)).toBe(1);
-    const setup = JSON.stringify(wire.sent()[0]);
-    if (name === "deepgram") {
-      expect(setup).toContain(OPENING_TRIGGER);
-      expect(sent).not.toContain("InjectUserMessage");
-    } else {
-      expect(setup).not.toContain(OPENING_TRIGGER);
-      expect(wire.sent()[1]).toEqual({
-        via: "sendRealtimeInput",
-        input: { text: OPENING_TRIGGER }
-      });
-    }
+    expect(JSON.stringify(wire.sent()[0])).toContain(OPENING_TRIGGER);
+    // The setup is the only message on the wire until the far end is heard.
+    expect(wire.sent()).toHaveLength(1);
   });
 
   it("puts the meeting opening where the provider declares it takes it", async () => {
@@ -632,6 +626,7 @@ describe.each(["gemini", "deepgram"] as const)("CallSession invariants on %s", (
       }
     });
 
+    wire.serverSays("transcript", { speaker: "caller", text: "Yes, that works." });
     wire.serverSays("toolCall", {
       id: "rec-1",
       name: "record_outcome",
@@ -655,6 +650,36 @@ describe.each(["gemini", "deepgram"] as const)("CallSession invariants on %s", (
       result: "recorded"
     });
     expect(session.gateSnapshot().outcome?.fields).toEqual({ price: "$40", date: "" });
+  });
+
+  // Scenario matrix, Gemini 3.8, 2026-10-01: the callee offered, and the model
+  // recorded `completed` before saying a word. The far end's latest words have
+  // to agree, whichever provider carried them.
+  it("a completed record made right after their offer is refused, and kept only as partial", async () => {
+    const { session, wire } = await placeCall({
+      execution: { outcome: { fields: [{ name: "date", description: "The booked date." }] } }
+    });
+
+    wire.serverSays("transcript", {
+      speaker: "caller",
+      text: "We have Thursday at two that I can reserve for you."
+    });
+    wire.serverSays("toolCall", {
+      id: "rec-1",
+      name: "record_outcome",
+      args: { status: "completed", fields: { date: "Thursday 2pm" } }
+    });
+    await flush();
+    expect(wire.toolResponses()).toEqual([
+      {
+        id: "rec-1",
+        name: "record_outcome",
+        result:
+          "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call — without mentioning this"
+      }
+    ]);
+    // Kept, downgraded: arranged, not confirmed (review 0.4.1 I-A).
+    expect(session.gateSnapshot().outcome?.status).toBe("partial");
   });
 
   it("the completed record carries endedBy, dtmf, answeredBy and modelTurnsCompleted", async () => {
@@ -740,5 +765,77 @@ describe.each(["gemini", "deepgram"] as const)("CallSession invariants on %s", (
     // An unanswered tool call stalls the model's turn; the barge-in must not
     // swallow the answer, nor produce a second one.
     expect(wire.toolResponses()).toEqual([{ id: "press-7", name: "press_digits", result: "ok" }]);
+  });
+});
+
+/** A meeting on Gemini is the one call shape the two-party "prompt" opening
+ * does not touch: Gemini meetings never ran with the opening in the prompt,
+ * and saying nothing until people are heard is the consent invariant. So the
+ * meeting's wire is pinned to what the provider sent when it declared plain
+ * `"turn"` — the same session setup and the same trigger, byte for byte. */
+describe("Gemini meeting opening, pinned to its shipped wire", () => {
+  const meeting: CallExecution = {
+    meeting: {
+      consent: { phrase: "go ahead and take notes", timeoutSeconds: 180, onTimeout: "hangUp" }
+    }
+  };
+
+  async function wireOf(asShipped: boolean, execution?: CallExecution): Promise<unknown[]> {
+    const fake = providerWireFakes().find((f) => f.name === "gemini")!;
+    // The same provider instance, re-declared with the delivery Gemini shipped
+    // with — everything else (key, factory, connect) is inherited untouched.
+    const realtime = asShipped
+      ? (Object.assign(Object.create(fake.provider), {
+          openingDelivery: "turn"
+        }) as typeof fake.provider)
+      : fake.provider;
+    const carrier = makeCarrier();
+    const session = new CallSession({
+      brief,
+      guardrails: ["Rule one."],
+      telephony: carrier.telephony,
+      realtime,
+      codec,
+      convert,
+      canConvert,
+      from: "+15555550142",
+      answerWebhookUrl: "https://voice.example.com/twilio/answer",
+      model: "test-model",
+      now: () => Date.UTC(2026, 8, 30, 19, 0, 0),
+      timeZone: "America/Los_Angeles",
+      ...(execution ? { execution } : {})
+    });
+    const attaching = session.attach("CA-parity", socket);
+    fake.wire.ready();
+    const handle = await attaching;
+    const sent = JSON.parse(JSON.stringify(fake.wire.sent())) as unknown[];
+    await handle.stop("remote");
+    return sent;
+  }
+
+  it('sends a meeting exactly the messages the shipped "turn" declaration sent', async () => {
+    const shipped = await wireOf(true, meeting);
+    const now = await wireOf(false, meeting);
+    expect(JSON.stringify(now)).toBe(JSON.stringify(shipped));
+    expect(now.slice(1)).toEqual([
+      { via: "sendRealtimeInput", input: { text: MEETING_OPENING_TRIGGER } }
+    ]);
+    expect(JSON.stringify(now[0])).not.toContain(MEETING_OPENING_TRIGGER);
+    expect(JSON.stringify(now)).not.toContain(MEETING_CONNECTED_CUE);
+  });
+
+  it("sends a two-party call nothing at connect: the setup alone, carrying the opening", async () => {
+    const shipped = await wireOf(true);
+    const now = await wireOf(false);
+    expect(now).toHaveLength(1);
+    expect(JSON.stringify(now[0])).toContain(OPENING_TRIGGER);
+    // The opening moved, and nothing else did: the shipped wire was this
+    // setup without the suffix, plus the trigger as its own turn.
+    const instruction = (m: unknown): string =>
+      (m as { config: { systemInstruction: string } }).config.systemInstruction;
+    expect(instruction(now[0])).toBe(`${instruction(shipped[0])}\n\n${OPENING_TRIGGER}`);
+    expect(shipped.slice(1)).toEqual([
+      { via: "sendRealtimeInput", input: { text: OPENING_TRIGGER } }
+    ]);
   });
 });

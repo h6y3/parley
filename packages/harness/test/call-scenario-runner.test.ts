@@ -89,11 +89,29 @@ function fakeLive(respond: (text: string, n: number) => unknown[]) {
   return { factory, sent };
 }
 
-async function run(s: CallScenario, factory: ReturnType<typeof fakeLive>["factory"]) {
+/** The Gemini transport with every opening sent as a line — the delivery
+ * Gemini declared when these runner-mechanics tests were written, and the one
+ * a meeting still uses. They count sends from the trigger; the shape of the
+ * opening itself is pinned in "the opening trigger matches the shape of the
+ * envelope" below, on the transport as declared. */
+function triggerFirst(factory: ReturnType<typeof fakeLive>["factory"]) {
+  return {
+    ...geminiTransport({ apiKey: "fake", genAIFactory: factory }),
+    openingDelivery: "turn" as const
+  };
+}
+
+async function run(
+  s: CallScenario,
+  factory: ReturnType<typeof fakeLive>["factory"],
+  opts: { asDeclared?: boolean } = {}
+) {
   const trace: ScenarioTraceEvent[] = [];
   const result = await runCallScenario({
     scenario: s,
-    transport: geminiTransport({ apiKey: "fake", genAIFactory: factory }),
+    transport: opts.asDeclared
+      ? geminiTransport({ apiKey: "fake", genAIFactory: factory })
+      : triggerFirst(factory),
     timings: FAST,
     trace: (e) => trace.push(e)
   });
@@ -288,7 +306,7 @@ describe("a line delivered by a press cancels the pending settle", () => {
     );
     const result = await runCallScenario({
       scenario: s,
-      transport: geminiTransport({ apiKey: "fake", genAIFactory: fake.factory }),
+      transport: triggerFirst(fake.factory),
       // The settle outlasts the fake's 5 ms spacing, so the press lands while
       // the settle armed by the completion before it is still pending.
       timings: { ...FAST, settleMs: 40 }
@@ -545,11 +563,26 @@ describe("the opening trigger matches the shape of the envelope", () => {
 
   it("sends the meeting trigger when the envelope declares execution.meeting", async () => {
     const fake = fakeLive(() => []);
-    await run(scenario([{ label: "room", text: "Let's get started." }], meeting), fake.factory);
+    await run(scenario([{ label: "room", text: "Let's get started." }], meeting), fake.factory, {
+      asDeclared: true
+    });
     expect(fake.sent[0]).toBe(MEETING_OPENING_TRIGGER);
   });
 
-  it("still sends the generic trigger for an ordinary two-party call", async () => {
+  /** On Gemini a two-party opening rides in the prompt, so what the far end
+   * says first — here an IVR menu — is the model's first input, and the
+   * model answers that rather than a trigger sent into a line nobody has
+   * spoken on yet. */
+  it("sends no trigger on an ordinary two-party call: the callee's first line is the first input", async () => {
+    const fake = fakeLive(() => []);
+    await run(scenario([{ label: "menu", text: "For service, press one." }]), fake.factory, {
+      asDeclared: true
+    });
+    expect(fake.sent[0]).toBe("For service, press one.");
+    expect(fake.sent).not.toContain(OPENING_TRIGGER);
+  });
+
+  it('still sends the generic trigger to a two-party call on a "turn" transport', async () => {
     const fake = fakeLive(() => []);
     await run(scenario([{ label: "menu", text: "For service, press one." }]), fake.factory);
     expect(fake.sent[0]).toBe(OPENING_TRIGGER);

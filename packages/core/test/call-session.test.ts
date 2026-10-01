@@ -509,8 +509,8 @@ async function attachWith(opts: ToolFakeOpts) {
       await Promise.resolve();
       await Promise.resolve();
     },
-    fireRealtimeClose: async (reason: string) => {
-      realtimeCb.onClose(reason);
+    fireRealtimeClose: async (reason: string, close?: { code?: number; reason?: string }) => {
+      realtimeCb.onClose(reason, close);
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
@@ -603,6 +603,7 @@ describe("CallSession tool channel", () => {
     const f = await attachWith({
       execution: { outcome: { fields: [{ name: "x", description: "d" }] } }
     });
+    f.emitTranscript({ speaker: "caller", text: "Yes, that works.", isFinal: true });
     await f.fireToolCall({
       id: "c1",
       name: "record_outcome",
@@ -736,6 +737,36 @@ describe("CallSession closure", () => {
     await f.fireRealtimeClose("code=1011");
     expect(f.hangups).toHaveLength(1);
     expect(f.handle.endedBy).toBe("error");
+  });
+
+  it("an unexpected realtime close is carried on the call for the record, redacted and capped", async () => {
+    const f = await attachWith({});
+    await f.fireRealtimeClose("code=1011 reason=x", {
+      code: 1011,
+      reason: `Your prepayment credits are depleted. Call +14155550142 token=abc123 ${"x".repeat(400)}`
+    });
+    const close = f.session.realtimeClose;
+    expect(close?.code).toBe(1011);
+    expect(close?.reason.startsWith("Your prepayment credits are depleted.")).toBe(true);
+    expect(close?.reason).not.toContain("4155550142");
+    expect(close?.reason).toContain("+*******0142");
+    expect(close?.reason).not.toContain("abc123");
+    expect(close?.reason.length).toBeLessThanOrEqual(300);
+  });
+
+  it("a realtime close with no detail still records the code as unknown reason text", async () => {
+    const f = await attachWith({});
+    await f.fireRealtimeClose("provider dropped us");
+    expect(f.session.realtimeClose).toEqual({ code: 0, reason: "provider dropped us" });
+  });
+
+  it("our own hangup (model end_call, remote stop, cap) leaves realtimeClose absent", async () => {
+    const f = await attachWith({});
+    await f.session.endCall("model");
+    expect(f.session.realtimeClose).toBeUndefined();
+    const g = await attachWith({});
+    await g.handle.stop();
+    expect(g.session.realtimeClose).toBeUndefined();
   });
 
   it("a carrier hangup failure still closes the media socket and records error", async () => {
@@ -1371,6 +1402,7 @@ describe("CallSession timing diagnostics", () => {
       now: () => t,
       onDiagnostic: (m) => lines.push(m)
     });
+    f.emitTranscript({ speaker: "caller", text: "Yes, that works.", isFinal: true });
     t += 1_200;
     await f.fireToolCall({
       id: "c1",
@@ -1432,7 +1464,7 @@ describe("CallSession feeds the confirmation gate", () => {
     outcome: { fields: [{ name: "x", description: "d" }] }
   };
   const notConfirmed: ToolResult =
-    "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call";
+    "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call — without mentioning this";
   const record = {
     id: "r",
     name: "record_outcome",
@@ -1445,13 +1477,34 @@ describe("CallSession feeds the confirmation gate", () => {
     f.emitModelAudio();
     await f.fireToolCall(record);
     expect(f.responses).toEqual([{ id: "r", result: notConfirmed }]);
-    expect(f.session.gateSnapshot().outcome).toBeUndefined();
+    // Kept, downgraded: arranged, not confirmed (review 0.4.1 I-A).
+    expect(f.session.gateSnapshot().outcome?.status).toBe("partial");
   });
 
   it("their words after the model's audio let it through — final or not (Gemini never marks finals)", async () => {
     const f = await attachWith({ execution: exec });
     f.emitModelAudio();
     f.emitTranscript({ speaker: "caller", text: "Yes, that works.", isFinal: false });
+    await f.fireToolCall(record);
+    expect(f.session.gateSnapshot().outcome?.status).toBe("completed");
+  });
+
+  // The agreement half: the far end's latest words must agree. CallSession
+  // hands the gate the text, fragments and all, as the provider sent it.
+  it("their offer, then a silent record, is refused — fragments read as one utterance", async () => {
+    const f = await attachWith({ execution: exec });
+    f.emitModelAudio();
+    f.emitTranscript({ speaker: "caller", text: "We have Thursday at two", isFinal: false });
+    f.emitTranscript({ speaker: "caller", text: " that I can reserve.", isFinal: false });
+    await f.fireToolCall(record);
+    expect(f.responses).toEqual([{ id: "r", result: notConfirmed }]);
+  });
+
+  it("Gemini's fragmented yes is heard as a yes", async () => {
+    const f = await attachWith({ execution: exec });
+    f.emitModelAudio();
+    f.emitTranscript({ speaker: "caller", text: "Ye", isFinal: false });
+    f.emitTranscript({ speaker: "caller", text: "s.", isFinal: false });
     await f.fireToolCall(record);
     expect(f.session.gateSnapshot().outcome?.status).toBe("completed");
   });

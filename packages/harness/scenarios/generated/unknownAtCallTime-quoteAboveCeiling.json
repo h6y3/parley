@@ -11,7 +11,7 @@
         "The furnace stopped heating last night.",
         "The home address is 742 Evergreen Terrace.",
         "The contact phone number is 555-0199.",
-        "The caller's name is John Doe."
+        "The caller's name is Jordan Rivera."
       ],
       "preferences": [
         "Prefers the earliest available appointment.",
@@ -162,12 +162,12 @@
       "text": "We have an opening tomorrow with an arrival window between 8:00 AM and 12:00 PM. Does that work for you?"
     },
     {
-      "label": "Confirm Booking",
-      "text": "Perfect, I have you booked for tomorrow between 8:00 AM and 12:00 PM."
+      "label": "Hold Off",
+      "text": "Okay, I'll leave that open for now. Call us back once you've checked and we'll find you a time."
     },
     {
       "label": "Ask Further Assistance",
-      "text": "You will receive an automated text confirmation shortly. Is there anything else I can assist you with today?"
+      "text": "Is there anything else I can assist you with today?"
     },
     {
       "label": "Call Wrap-up",
@@ -175,7 +175,7 @@
     },
     {
       "label": "Closing Confirmation",
-      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+      "text": "No, nothing else from us. Talk to you soon \u2014 goodbye."
     }
   ]
 }

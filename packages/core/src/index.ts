@@ -11,9 +11,11 @@ export type {
   CallLifecycleEvent,
   MediaStreamHandle,
   OpeningDelivery,
+  OpeningDeliveryByShape,
   OriginateParams,
   OriginateResult,
   RealtimeAudioFormat,
+  RealtimeClose,
   RealtimeConnectParams,
   RealtimeProvider,
   RealtimeProviderError,
@@ -40,7 +42,7 @@ export {
 
 export type { Brief } from "./brief.js";
 
-export { redactPhoneNumber, redactSecrets } from "./redaction.js";
+export { redactCloseReason, redactPhoneNumber, redactSecrets } from "./redaction.js";
 
 export {
   MEETING_CONNECTED_CUE,
@@ -49,6 +51,8 @@ export {
   planOpening,
   withOpening,
   defaultTimeZone,
+  isoDate,
+  resolveTimeZone,
   renderSystemInstruction
 } from "./render.js";
 export type { OpeningPlan, RenderInput, TodayInput } from "./render.js";
@@ -98,6 +102,7 @@ export {
   buildToolDeclarations,
   findConsentMatch,
   isConsentDenial,
+  isWhoConfirmedField,
   ToolGate,
   routeToolCall
 } from "./execution.js";

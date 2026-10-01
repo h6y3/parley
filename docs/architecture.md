@@ -70,11 +70,13 @@ barge-in event flowing out of the Gemini session fans out to both the audio brid
 and a `clear` command sent back down to Twilio — stopping playback at both layers, not just one.
 
 The `systemInstruction` and the opening-trigger call happen exactly once each, at the top of the
-diagram, before any audio flows. The diagram shows Gemini, which declares
-`openingDelivery: "turn"` and takes the trigger as its own input. A provider declaring `"prompt"`
-(Deepgram, whose only text input is a user turn its model hears as the callee) takes the same
-fixed text appended to its one-time `systemInstruction` instead; on a two-party call nothing is
-sent after connect, and a meeting sends only the short `MEETING_CONNECTED_CUE`. `planOpening`
+diagram, before any audio flows. The diagram shows the `"turn"` delivery, which Gemini uses for a
+meeting: the trigger goes as its own input. On a two-party call Gemini, like Deepgram, uses
+`"prompt"` (Gemini declares `openingDelivery: { twoParty: "prompt", meeting: "turn" }`): the same
+fixed text is appended to the one-time `systemInstruction` and nothing is sent after connect, so
+the callee's own voice is the model's first input. A Deepgram meeting (`"prompt"` throughout,
+because its only text input is a user turn its model hears as the callee) sends only the short
+`MEETING_CONNECTED_CUE`. `planOpening`
 (`packages/core/src/render.ts`) makes that choice for `CallSession` and the harness alike. Nothing in this dataflow allows the brief to re-enter as a
 conversational turn later in the call — see `docs/prompt-guide.md` for why that boundary is
 enforced at the interface level, not just by convention.
@@ -202,10 +204,11 @@ Twilio opens the media WS to /media/:callId ──►
  10. CallSession attaches the media stream FIRST (registers the socket listener), THEN awaits
      realtime.connect(); the provider parses `start` (captures streamSid), `media` →
      AudioFrame{mulaw8k}; the opening (`OPENING_TRIGGER`, or `MEETING_OPENING_TRIGGER` on a
-     meeting) is planned by `planOpening` from the provider's `openingDelivery` — sent once
-     connect resolves on a "turn" provider, appended to the connect-time systemInstruction on a
-     "prompt" provider (which is then sent nothing on a two-party call, and only
-     `MEETING_CONNECTED_CUE` on a meeting)
+     meeting) is planned by `planOpening` from the provider's `openingDelivery` (one value, or
+     one per call shape) — sent once connect resolves under "turn" (a Gemini meeting), appended
+     to the connect-time systemInstruction under "prompt" (every two-party call; a Deepgram
+     meeting), which is then sent nothing on a two-party call and only `MEETING_CONNECTED_CUE`
+     on a meeting
  11. `close` on the media socket → pendingSessions evicts the entry and the session's stop() runs
      FIRST — sealing any gap still open and flushing the listening plane, both of which the
      record has to describe (packages/server/src/media-connection.ts)

@@ -11,7 +11,7 @@
         "The primary system is a whole-home water softener requiring annual filter changes and inspection.",
         "There is also an under-sink reverse osmosis drinking water unit installed in the kitchen.",
         "The service address is 1420 Elmwood Drive.",
-        "The account is under the name Alex Rivera."
+        "The account is under the name Jordan Rivera."
       ],
       "preferences": [
         "Prefers having all water treatment equipment inspected during the same appointment to avoid separate visits.",
@@ -129,7 +129,24 @@
     "raisedTopic": "the second unit",
     "adjacentIndex": 0,
     "offersAppointment": true,
-    "reachesSomeoneWhoCanAct": true
+    "reachesSomeoneWhoCanAct": true,
+    "agreement": {
+      "confirmTurn": 8,
+      "fields": {
+        "appointmentStart": [
+          ["2026", "10", "8", "9"],
+          ["thursday", "9"],
+          ["oct", "8", "9"],
+          ["october", "8", "9"]
+        ],
+        "appointmentEnd": [
+          ["2026", "10", "8", "11"],
+          ["thursday", "11"],
+          ["oct", "8", "11"],
+          ["october", "8", "11"]
+        ]
+      }
+    }
   },
   "script": [
     {
@@ -147,7 +164,7 @@
     },
     {
       "label": "Acknowledge Primary System",
-      "text": "Thank you, Alex. I have pulled up your file and see your primary whole-house softener."
+      "text": "Thank you. I have pulled up your file and see your primary whole-house softener."
     },
     {
       "label": "Raise Second Unit",
@@ -155,7 +172,7 @@
     },
     {
       "label": "Confirm Scope",
-      "text": "Got it, I will add the reverse osmosis filter replacement and sanitization to the service ticket."
+      "text": "Got it, I will note that on the service ticket."
     },
     {
       "label": "Explain Billing Policy",
@@ -163,11 +180,11 @@
     },
     {
       "label": "Offer Specific Window",
-      "text": "Our next available opening for your neighborhood is this Thursday between 8:00 AM and 11:00 AM."
+      "text": "Our next available opening for your neighborhood is next Thursday, the eighth, between 9:00 AM and 11:00 AM. Does that work for you?"
     },
     {
       "label": "Book Appointment",
-      "text": "Perfect, I have you locked in for this Thursday between 8:00 AM and 11:00 AM."
+      "text": "Perfect, I have you booked for Thursday the eighth between 9:00 AM and 11:00 AM."
     },
     {
       "label": "Ask Additional Assistance",

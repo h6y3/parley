@@ -37,9 +37,10 @@ export function geminiTransport(opts: {
     // Gemini sends `turnComplete` for every turn, including an empty one, so
     // the continuation after a tool answer always ends with its own event.
     completesAfterToolResponse: true,
-    // As `GeminiRealtimeProvider` declares: realtime text input is an input to
-    // the session, not the far end speaking, so the trigger goes as a line.
-    openingDelivery: "turn",
+    // As `GeminiRealtimeProvider` declares: a two-party opening rides in the
+    // prompt and the callee's first line is the first input; a meeting's
+    // trigger still goes as a line. The parity test holds the two equal.
+    openingDelivery: { twoParty: "prompt", meeting: "turn" },
     async connect({ systemInstruction, tools, on }) {
       const ai = factory({ apiKey: opts.apiKey, httpOptions: { apiVersion: "v1beta" } });
       // The SDK's `live.connect` awaits `setupComplete`, and a refused setup

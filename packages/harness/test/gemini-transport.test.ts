@@ -54,10 +54,10 @@ const noop = {
 describe("the Gemini scenario transport's opening delivery", () => {
   it("declares what the production provider declares, so the runner plans the same opening", () => {
     const production = new GeminiRealtimeProvider({ apiKey: "k" }).openingDelivery;
-    expect(production).toBe("turn");
+    expect(production).toEqual({ twoParty: "prompt", meeting: "turn" });
     expect(
       geminiTransport({ apiKey: "k", genAIFactory: fakeGenAI().factory }).openingDelivery
-    ).toBe(production);
+    ).toEqual(production);
   });
 });
 

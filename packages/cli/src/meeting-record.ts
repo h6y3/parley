@@ -480,6 +480,20 @@ const meetingRecordFields = z.object({
         "answer-to-first-word time, measured the same way for every provider. Absent when the " +
         "model never produced audio at all, which is a different fact from a slow first word; " +
         "also absent on a record written before this field existed."
+    ),
+  realtimeClose: z
+    .object({
+      code: z.number().describe("The WebSocket close code; 0 when the transport reported none."),
+      reason: z
+        .string()
+        .describe("The vendor's close reason, redacted and capped at 300 characters.")
+    })
+    .optional()
+    .describe(
+      "Present only when the realtime session closed unasked — not at the consent handoff and " +
+        "not as part of Parley's own hangup — e.g. a vendor ending it over depleted credits or " +
+        "quota. endedReason/status read as an error alongside it. Absent on every call that " +
+        "ended by our own hand."
     )
 });
 

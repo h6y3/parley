@@ -132,12 +132,14 @@
       "text": "Thank you for calling Apex Plumbing. For new installations, press 1. For billing, press 2."
     },
     {
-      "label": "Automated Fallback",
-      "text": "Your selection was not recognized. Please hold while we connect you to an operator."
+      "label": "Operator Connect",
+      "text": "Connecting you to an operator. Please hold.",
+      "afterPress": "0"
     },
     {
       "label": "Operator Greeting",
-      "text": "Apex Plumbing front desk, this is Marcus speaking. How can I help you today?"
+      "text": "Apex Plumbing front desk, this is Marcus speaking. How can I help you today?",
+      "unpromptedAfterMs": 4000
     },
     {
       "label": "Service Inquiry Response",
@@ -153,23 +155,23 @@
     },
     {
       "label": "Transfer Initiation",
-      "text": "Please hold for just a moment while I patch you through to scheduling."
+      "text": "Please hold for just a moment while I patch you through to scheduling.",
+      "unpromptedAfterMs": 3000
     },
     {
       "label": "Queue Message",
-      "text": "You are being transferred to the scheduling queue. All dispatchers are currently on other calls."
+      "text": "You are being transferred to the scheduling queue. All dispatchers are currently on other calls.",
+      "unpromptedAfterMs": 5000
     },
     {
       "label": "System Failure Message",
-      "text": "We apologize, but our appointment booking system is currently down for maintenance."
+      "text": "We apologize, but our appointment booking system is currently down for maintenance.",
+      "unpromptedAfterMs": 4000
     },
     {
       "label": "Call Termination",
-      "text": "We cannot schedule visits at this time. Please call back tomorrow morning. Goodbye."
-    },
-    {
-      "label": "Closing Confirmation",
-      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+      "text": "We cannot schedule visits at this time. Please call back tomorrow morning. Goodbye.",
+      "unpromptedAfterMs": 4000
     }
   ]
 }

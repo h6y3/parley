@@ -188,7 +188,10 @@ describe("GeminiRealtimeProvider", () => {
     });
 
     capturedCallbacks?.onclose({ code: 1000, reason: "done" });
-    expect(callbacks.onClose).toHaveBeenCalledWith("code=1000 reason=done");
+    expect(callbacks.onClose).toHaveBeenCalledWith("code=1000 reason=done", {
+      code: 1000,
+      reason: "done"
+    });
   });
 });
 
@@ -199,8 +202,14 @@ describe("declared audio format", () => {
     expect(provider.maxSessionSeconds).toBeUndefined();
   });
 
-  it('takes the opening as its own turn ("turn" delivery)', () => {
-    expect(new GeminiRealtimeProvider({ apiKey: "fake" }).openingDelivery).toBe("turn");
+  // Two-party: the opening rides in the system instruction and nothing is
+  // sent at connect — a separate trigger turn answered line hiss before the
+  // callee spoke. A meeting keeps the trigger as its own turn, as it shipped.
+  it("takes a two-party opening in the prompt and a meeting's as its own turn", () => {
+    expect(new GeminiRealtimeProvider({ apiKey: "fake" }).openingDelivery).toEqual({
+      twoParty: "prompt",
+      meeting: "turn"
+    });
   });
 
   // BLOCKING functions: the model continues its turn after the response and

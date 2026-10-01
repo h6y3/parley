@@ -128,7 +128,24 @@
     "raisedTopic": null,
     "adjacentIndex": null,
     "offersAppointment": true,
-    "reachesSomeoneWhoCanAct": true
+    "reachesSomeoneWhoCanAct": true,
+    "agreement": {
+      "confirmTurn": 8,
+      "fields": {
+        "appointmentStart": [
+          ["2026", "10", "7", "13"],
+          ["wednesday", "1"],
+          ["oct", "7", "1"],
+          ["october", "7", "1"]
+        ],
+        "appointmentEnd": [
+          ["2026", "10", "7", "15"],
+          ["wednesday", "3"],
+          ["oct", "7", "3"],
+          ["october", "7", "3"]
+        ]
+      }
+    }
   },
   "script": [
     {
@@ -154,11 +171,12 @@
     },
     {
       "label": "Second agent greeting",
-      "text": "Hello, this is Elena in dispatch. Mark passed along your address and the issue with your water softener."
+      "text": "Hello, this is Elena in dispatch. Mark passed along your address and the issue with your water softener.",
+      "unpromptedAfterMs": 5000
     },
     {
       "label": "Offer arrival window",
-      "text": "I have an opening available this Wednesday between 1:00 PM and 3:00 PM. Would that window work for you?"
+      "text": "I have an opening available Wednesday the seventh, between 1:00 PM and 3:00 PM. Would that window work for you?"
     },
     {
       "label": "Request contact phone",
@@ -166,7 +184,7 @@
     },
     {
       "label": "Confirm booking",
-      "text": "All set! You are confirmed for Wednesday between 1:00 PM and 3:00 PM at 412 Maple Ridge Lane for the 160 dollars service call."
+      "text": "All set! You are confirmed for Wednesday the seventh between 1:00 PM and 3:00 PM at 412 Maple Ridge Lane for the 160 dollar service call."
     },
     {
       "label": "Closing",

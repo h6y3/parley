@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url";
 import { canConvert, convert, createAudioCodec } from "@parley/audio";
+import { resolveTimeZone } from "@parley/core";
 import { runHarnessCli } from "@parley/harness";
 import {
   createDeepgramRealtimeProvider,
@@ -114,20 +115,7 @@ function buildTranscription():
   return { provider: createDeepgramTranscriptionProvider({ apiKey }), convert };
 }
 
-/** `PARLEY_TIMEZONE`: the IANA zone the model is told today's date in.
- * Optional; unset means the host's zone. An invalid name is a boot error that
- * names only this variable — a bad zone otherwise surfaces on the first call
- * as a RangeError from inside the connect path. */
-export function resolveTimeZone(env: NodeJS.ProcessEnv): string | undefined {
-  const timeZone = env.PARLEY_TIMEZONE;
-  if (!timeZone) return undefined;
-  try {
-    new Intl.DateTimeFormat(undefined, { timeZone });
-  } catch {
-    throw new Error("PARLEY_TIMEZONE is not a valid IANA time zone name");
-  }
-  return timeZone;
-}
+export { resolveTimeZone };
 
 async function serve(realtimeProviderKind: RealtimeProviderKind): Promise<void> {
   const timeZone = resolveTimeZone(process.env);

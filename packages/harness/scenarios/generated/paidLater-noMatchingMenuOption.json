@@ -133,9 +133,9 @@
       "text": "Thank you for calling Apex Auto Centre. For new installations, press 1. For billing and account enquiries, press 2."
     },
     {
-      "label": "Billing Department Agent",
-      "text": "Hello, thank you for calling billing, my name is Marcus. How can I assist with your account today?",
-      "afterPress": "2"
+      "label": "Operator (Billing)",
+      "text": "Hello, you've reached the billing office \u2014 the operator line rings through to us. My name is Marcus. How can I help?",
+      "afterPress": "0"
     },
     {
       "label": "Misroute Explanation",
@@ -147,11 +147,13 @@
     },
     {
       "label": "Hold Music / Notification",
-      "text": "Please hold while I connect your call to the service department."
+      "text": "Please hold while I connect your call to the service department.",
+      "unpromptedAfterMs": 3000
     },
     {
       "label": "Reception Greeting",
-      "text": "Apex Auto front desk, Brenda speaking. Are you calling to book or enquire about an existing job?"
+      "text": "Apex Auto front desk, Brenda speaking. Are you calling to book or enquire about an existing job?",
+      "unpromptedAfterMs": 5000
     },
     {
       "label": "Service Availability Update",
@@ -171,7 +173,7 @@
     },
     {
       "label": "Closing Confirmation",
-      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+      "text": "No, that's everything I need from you. Thanks for calling, goodbye."
     }
   ]
 }

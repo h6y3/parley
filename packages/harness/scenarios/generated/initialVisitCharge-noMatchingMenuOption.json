@@ -132,20 +132,19 @@
       "text": "Thank you for calling Apex Heating and Cooling."
     },
     {
-      "label": "IVR_Menu_1",
-      "text": "For new installations, press 1."
+      "label": "IVR_Menu",
+      "text": "For new installations, press 1. For billing and payment inquiries, press 2.",
+      "unpromptedAfterMs": 2500
     },
     {
-      "label": "IVR_Menu_2",
-      "text": "For billing and payment inquiries, press 2."
-    },
-    {
-      "label": "IVR_Fallback",
-      "text": "Your response was not recognized. Please hold while we connect you to an agent."
+      "label": "IVR_Operator",
+      "text": "Connecting you to an agent. Please hold.",
+      "afterPress": "0"
     },
     {
       "label": "Agent_Greeting",
-      "text": "Billing and accounts department, this is Brenda speaking."
+      "text": "Billing and accounts department, this is Brenda speaking.",
+      "unpromptedAfterMs": 4000
     },
     {
       "label": "Agent_Pricing_Info",
@@ -161,19 +160,18 @@
     },
     {
       "label": "IVR_Queue_Message",
-      "text": "All service dispatchers are currently assisting other callers."
+      "text": "All service dispatchers are currently assisting other callers.",
+      "unpromptedAfterMs": 5000
     },
     {
       "label": "IVR_Voicemail_Notice",
-      "text": "The scheduling department mailbox is currently full and cannot take new recordings."
+      "text": "The scheduling department mailbox is currently full and cannot take new recordings.",
+      "unpromptedAfterMs": 4000
     },
     {
       "label": "IVR_Disconnect",
-      "text": "Thank you for calling Apex Heating and Cooling. Goodbye."
-    },
-    {
-      "label": "Closing Confirmation",
-      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+      "text": "Thank you for calling Apex Heating and Cooling. Goodbye.",
+      "unpromptedAfterMs": 4000
     }
   ]
 }

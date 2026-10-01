@@ -65,6 +65,13 @@ export interface CompletedCallRecord {
    * evidence. Absent when the model never spoke, which is a different fact
    * from a slow first word and must not read as one. */
   firstModelAudioMs?: number;
+  /** Present ONLY when the realtime session closed unasked: the WebSocket
+   * close code (0 if the transport reported none) and the vendor's reason,
+   * redacted and capped at 300 characters (`CallSession.realtimeClose`).
+   * `endedBy` is `"error"` alongside it. Absent on every call that ended by our
+   * own hand — the field's presence is the signal, so a client can tell
+   * "the vendor cut us off (credits, quota)" from a short call. */
+  realtimeClose?: { code: number; reason: string };
 }
 
 /** Correlate an inbound media WebSocket to its pending CallSession by the
@@ -149,6 +156,7 @@ export async function handleMediaConnection(
       ...(session.firstModelAudioAtMs !== undefined
         ? { firstModelAudioMs: session.firstModelAudioAtMs }
         : {}),
+      ...(session.realtimeClose ? { realtimeClose: session.realtimeClose } : {}),
       brief: session.meetingBrief,
       ...(session.operation ? { operation: session.operation } : {}),
       ...(session.expectedOutcomeFields

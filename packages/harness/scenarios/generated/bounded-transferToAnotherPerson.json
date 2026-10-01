@@ -124,13 +124,29 @@
     "raisedTopic": null,
     "adjacentIndex": null,
     "offersAppointment": true,
-    "reachesSomeoneWhoCanAct": true
+    "reachesSomeoneWhoCanAct": true,
+    "agreement": {
+      "confirmTurn": 9,
+      "fields": {
+        "appointmentStart": [
+          ["2026", "10", "8", "9"],
+          ["thursday", "9"],
+          ["oct", "8", "9"],
+          ["october", "8", "9"]
+        ],
+        "appointmentEnd": [
+          ["2026", "10", "8", "12"],
+          ["thursday", "12"],
+          ["oct", "8", "12"],
+          ["october", "8", "12"]
+        ]
+      }
+    }
   },
   "script": [
     {
       "label": "Automated IVR",
-      "text": "Thank you for calling Apex Appliance Repair. For service scheduling, press 1. For billing, press 2.",
-      "afterPress": ""
+      "text": "Thank you for calling Apex Appliance Repair. For service scheduling, press 1. For billing, press 2."
     },
     {
       "label": "Representative 1 (Intake)",
@@ -139,43 +155,36 @@
     },
     {
       "label": "Representative 1 (Intake)",
-      "text": "I can certainly help you get someone out to look at your leaking dishwasher.",
-      "afterPress": ""
+      "text": "I can certainly help you get someone out to look at your leaking dishwasher."
     },
     {
       "label": "Representative 1 (Intake)",
-      "text": "Our diagnostic fee and initial service visit is exactly 160 dollars.",
-      "afterPress": ""
+      "text": "Our diagnostic fee and initial service visit is exactly 160 dollars."
     },
     {
       "label": "Representative 1 (Intake)",
-      "text": "Let me transfer you over to our field dispatcher, Mark, who handles booking the specific technician routes.",
-      "afterPress": ""
+      "text": "Let me transfer you over to our field dispatcher, Mark, who handles booking the specific technician routes. One moment."
     },
     {
       "label": "Representative 2 (Dispatcher)",
       "text": "Hi there, this is Mark in dispatch. Sarah told me you need dishwasher service.",
-      "afterPress": ""
+      "unpromptedAfterMs": 5000
     },
     {
       "label": "Representative 2 (Dispatcher)",
-      "text": "Could you please provide your service address?",
-      "afterPress": ""
+      "text": "Could you please provide your service address?"
     },
     {
       "label": "Representative 2 (Dispatcher)",
-      "text": "Thank you. I have an opening this Thursday between 8:00 AM and 12:00 PM.",
-      "afterPress": ""
+      "text": "Thank you. I have an opening next Thursday, the eighth, between 9:00 AM and 12:00 PM. Does that work for you?"
     },
     {
       "label": "Representative 2 (Dispatcher)",
-      "text": "I will go ahead and lock that arrival window in for you.",
-      "afterPress": ""
+      "text": "I will go ahead and lock that arrival window in for you."
     },
     {
       "label": "Representative 2 (Dispatcher)",
-      "text": "You are all set for Thursday morning, and our tech will call thirty minutes before arriving.",
-      "afterPress": ""
+      "text": "Okay, you are all set for Thursday the eighth between 9 and 12, and our tech will call thirty minutes before arriving."
     },
     {
       "label": "Closing Confirmation",

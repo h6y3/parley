@@ -1,13 +1,14 @@
 import { readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  defaultTimeZone,
+  isoDate,
   type Brief,
   type MeetingExecution,
   type RealtimeProvider,
   type TodayInput
 } from "@parley/core";
 import { representedCall, type CallMode } from "@parley/policy";
+import { harnessTimeZone } from "./time-zone.js";
 import { DEFAULT_GEMINI_MODEL, GeminiRealtimeProvider } from "@parley/realtime-gemini";
 import { DEFAULT_DEEPGRAM_THINK, createDeepgramRealtimeProvider } from "@parley/realtime-deepgram";
 import { buildPayloadPreview, formatPayloadPreview } from "./payload-preview.js";
@@ -270,17 +271,11 @@ function isCalendarDate(raw: string): boolean {
  * Noon UTC is that date in every zone from UTC-12 to UTC+11; midnight UTC
  * covers UTC+0 to UTC+14. Between them they cover every zone in use, and the
  * zone's own reading of the instant is what decides, not arithmetic here. */
-export function pinnedToday(date: string, timeZone: string = defaultTimeZone()): TodayInput {
+export function pinnedToday(date: string, timeZone: string = harnessTimeZone()): TodayInput {
   const [y, m, d] = date.split("-").map(Number) as [number, number, number];
-  const inZone = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  });
   for (const hour of [12, 0]) {
     const now = new Date(Date.UTC(y, m - 1, d, hour));
-    if (inZone.format(now) === date) return { now, timeZone };
+    if (isoDate(now, timeZone) === date) return { now, timeZone };
   }
   throw new Error(`--today ${date} does not fall on a single day in ${timeZone}`);
 }
@@ -469,7 +464,18 @@ export function runPreviewCommand(
 ): string {
   const brief = loadBrief(args.briefPath, readFile);
   const meetingBrief = loadMeetingBrief(args.briefPath, readFile);
-  return formatPayloadPreview(buildPayloadPreview(brief, HARNESS_POLICY, meetingBrief));
+  const envelope = JSON.parse(readFile(args.briefPath)) as {
+    execution?: { meeting?: unknown };
+  };
+  // The shape a real call on a shipped provider takes: both open a two-party
+  // call in the prompt; Gemini opens a meeting with a turn (Deepgram, in the
+  // prompt plus a cue), so the preview shows the Gemini one.
+  return formatPayloadPreview(
+    buildPayloadPreview(brief, HARNESS_POLICY, meetingBrief, undefined, {
+      openingDelivery: { twoParty: "prompt", meeting: "turn" },
+      isMeeting: envelope?.execution?.meeting !== undefined
+    })
+  );
 }
 
 /** Every scenario the harness carries, LISTED — including the meeting set.
@@ -505,7 +511,8 @@ export async function runTextPreviewCommand(
   const result = await doRunTextPreview({
     apiKey: args.apiKey,
     systemInstruction: preview.systemInstruction,
-    openingTrigger: preview.openingTrigger,
+    // Built with the default "turn" shape, which always has a trigger.
+    openingTrigger: preview.openingTrigger!,
     userTurns: DERAIL_SCENARIOS.filter((scenario) => scenario.calleeLine).map(
       (scenario) => scenario.calleeLine
     )
@@ -1099,7 +1106,8 @@ async function authorOnce(
                 properties: {
                   label: { type: "string" },
                   text: { type: "string" },
-                  afterPress: { type: "string" }
+                  afterPress: { type: "string" },
+                  unpromptedAfterMs: { type: "integer" }
                 },
                 required: ["label", "text"]
               }

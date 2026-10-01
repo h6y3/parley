@@ -125,7 +125,24 @@
     "raisedTopic": "the second unit",
     "adjacentIndex": 0,
     "offersAppointment": true,
-    "reachesSomeoneWhoCanAct": true
+    "reachesSomeoneWhoCanAct": true,
+    "agreement": {
+      "confirmTurn": 8,
+      "fields": {
+        "appointmentStart": [
+          ["2026", "10", "8", "13"],
+          ["thursday", "1"],
+          ["oct", "8", "1"],
+          ["october", "8", "1"]
+        ],
+        "appointmentEnd": [
+          ["2026", "10", "8", "16"],
+          ["thursday", "4"],
+          ["oct", "8", "4"],
+          ["october", "8", "4"]
+        ]
+      }
+    }
   },
   "script": [
     {
@@ -134,7 +151,7 @@
     },
     {
       "label": "Agent Greeting",
-      "text": "Thanks for holding, you have reached service scheduling. My name is Jordan, how can I help you today?",
+      "text": "Thanks for holding, you have reached service scheduling. My name is Dana, how can I help you today?",
       "afterPress": "1"
     },
     {
@@ -159,11 +176,11 @@
     },
     {
       "label": "Window Offer",
-      "text": "We have an opening this Thursday between 1:00 PM and 4:00 PM that I can reserve for you."
+      "text": "We have an opening next Thursday, the eighth, between 1:00 PM and 4:00 PM that I can reserve for you. Would that work?"
     },
     {
       "label": "Booking Finalization",
-      "text": "Excellent, I have locked in that Thursday afternoon window between 1:00 PM and 4:00 PM for you."
+      "text": "Great, you're booked for Thursday the eighth between 1:00 PM and 4:00 PM."
     },
     {
       "label": "Closing",

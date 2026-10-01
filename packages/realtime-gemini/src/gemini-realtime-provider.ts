@@ -67,10 +67,27 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
   /** Gemini Live takes 16 kHz PCM in and speaks 24 kHz PCM out, so
    * CallSession converts both directions against a mu-law carrier. */
   readonly audio: RealtimeAudioFormat = { accepts: [PCM_16K], emits: PCM_24K };
-  /** The trigger goes as realtime text input, which Gemini Live treats as an
-   * input to the session, not as the far end speaking — so it is sent as its
-   * own turn, as it always has been. */
-  readonly openingDelivery = "turn" as const;
+  /** A two-party call's opening rides in the system instruction and nothing
+   * is sent at connect; a meeting's goes as its own turn, as it always has.
+   *
+   * Two-party: sent as its own turn at connect, the trigger is a turn the
+   * model answers — and with line hiss or silence before the callee's
+   * "hello" it answered into the noise. Measured offline (Gemini 3.8, 3 s of
+   * hiss before the hello): audible speech before the callee in 9/18 runs as
+   * a turn, 0/72 in the prompt; end-of-hello to first audio also fell, median
+   * 1566 → 1316 ms. With nothing sent, the model's first input is the far
+   * end's own audio: a person's "hello", a voicemail greeting or an IVR menu
+   * is speech, Gemini's activity detection ends that turn, and the model
+   * answers it under the same opening text — greet a person, leave the
+   * message, work the menu once it has finished. A line that stays silent
+   * gives it no turn to take, so it says nothing, which is what the opening
+   * asks for anyway; the call's own silence timers end that call as before.
+   *
+   * Meeting: `MEETING_OPENING_TRIGGER` is still sent as a turn, byte for byte
+   * as before. Gemini meetings have never run any other way, and saying
+   * nothing until people are heard is the consent invariant — a two-party
+   * finding is not evidence for changing it. See `OpeningDeliveryByShape`. */
+  readonly openingDelivery = { twoParty: "prompt", meeting: "turn" } as const;
   /** Every function is declared `behavior: BLOCKING`, so the model holds its
    * turn while a call is outstanding and, once the response arrives, CONTINUES
    * that turn — speaking the words that go with the call — and ends it with
@@ -212,7 +229,11 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
         },
         onclose: (event) => {
           params.callbacks.onClose(
-            `code=${event?.code ?? "unknown"} reason=${event?.reason?.trim() || "none"}`
+            `code=${event?.code ?? "unknown"} reason=${event?.reason?.trim() || "none"}`,
+            {
+              ...(typeof event?.code === "number" ? { code: event.code } : {}),
+              ...(event?.reason?.trim() ? { reason: event.reason.trim() } : {})
+            }
           );
         }
       }

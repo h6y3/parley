@@ -71,6 +71,13 @@ export class FakeAgentSocket {
     this.sent.push({ type: "AudioFrame", byteLength: data.length });
   }
 
+  /** Far-side close with an explicit code and reason (a server-initiated
+   * termination, as opposed to `close()`, our own). */
+  emitClose(code: number, reason: string): void {
+    this.closed = true;
+    this.emit("close", code, Buffer.from(reason));
+  }
+
   close(): void {
     this.closed = true;
     this.emit("close", 1000, Buffer.from("done"));
@@ -112,7 +119,7 @@ export interface ConnectProviderOptions {
   onTurnComplete?: () => void;
   onDiagnostic?: (message: string) => void;
   onToolCall?: (call: ToolCallRequest) => void;
-  onClose?: (reason: string) => void;
+  onClose?: (reason: string, close?: { code?: number; reason?: string }) => void;
   speakerRole?: "caller" | "participant";
   keyterms?: readonly string[];
   tools?: readonly ToolDeclaration[];

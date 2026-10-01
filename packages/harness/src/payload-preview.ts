@@ -1,17 +1,21 @@
 import {
-  defaultTimeZone,
   planOpening,
   type TodayInput,
   renderSystemInstruction,
   type Brief,
   type MeetingExecution,
+  type OpeningDelivery,
+  type OpeningDeliveryByShape,
   withOpening
 } from "@parley/core";
 import { composePolicy, type CallPolicy } from "@parley/policy";
+import { harnessTimeZone } from "./time-zone.js";
 
 export interface PayloadPreview {
   systemInstruction: string;
-  openingTrigger: string;
+  /** The line sent as its own input at connect; absent when the opening rides
+   * in `systemInstruction` and nothing is sent (a "prompt" two-party call). */
+  openingTrigger?: string;
   /** `execution.meeting.brief`, when the envelope declared one — carried
    * straight into the preview for an operator to audit, NEVER folded into
    * `systemInstruction`: the model is never told any of this (see
@@ -19,6 +23,13 @@ export interface PayloadPreview {
    * downstream readout, not for the call itself). Absent both for a
    * non-meeting brief file and for a meeting whose caller supplied none. */
   meetingBrief?: MeetingExecution["brief"];
+}
+
+/** Which call a preview stands for. Absent fields give the "turn" two-party
+ * shape. */
+export interface PreviewShape {
+  openingDelivery?: OpeningDelivery | OpeningDeliveryByShape;
+  isMeeting?: boolean;
 }
 
 /** Prints and returns EXACTLY what a given Brief + CallPolicy would send as
@@ -33,7 +44,8 @@ export function buildPayloadPreview(
   brief: Brief,
   policy: CallPolicy,
   meetingBrief?: MeetingExecution["brief"],
-  today: TodayInput = { now: new Date(), timeZone: defaultTimeZone() }
+  today: TodayInput = { now: new Date(), timeZone: harnessTimeZone() },
+  shape: PreviewShape = {}
 ): PayloadPreview {
   const rendered = renderSystemInstruction({
     persona: brief.persona,
@@ -43,16 +55,17 @@ export function buildPayloadPreview(
     // As on a real call: the preview must show the sentence the model gets.
     today
   });
-  // The preview shows the "turn" shape — Gemini's, and the one the text
-  // preview runs — planned and joined by the same helpers a real call uses.
-  // On a "prompt" provider the same trigger text is appended to the
-  // systemInstruction instead of being sent as a line (see `planOpening`).
-  const opening = planOpening("turn", false);
+  // Planned and joined by the same helpers a real call uses. The default is
+  // the "turn" shape — what the text preview and the scenario runs feed on, as
+  // they plan the opening themselves. A caller showing a real call passes that
+  // provider's delivery and whether it is a meeting: a "prompt" two-party call
+  // then carries the opening inside the systemInstruction and sends nothing at
+  // connect (see `planOpening`).
+  const opening = planOpening(shape.openingDelivery ?? "turn", shape.isMeeting ?? false);
   const systemInstruction = withOpening(rendered, opening);
-  const openingTrigger = opening.trigger!;
   return {
     systemInstruction,
-    openingTrigger,
+    ...(opening.trigger !== undefined ? { openingTrigger: opening.trigger } : {}),
     ...(meetingBrief ? { meetingBrief } : {})
   };
 }
@@ -68,7 +81,9 @@ export function formatPayloadPreview(preview: PayloadPreview): string {
     `systemInstruction (${preview.systemInstruction.length} chars):`,
     preview.systemInstruction,
     "",
-    `openingTrigger: "${preview.openingTrigger}"`,
+    preview.openingTrigger !== undefined
+      ? `openingTrigger: "${preview.openingTrigger}"`
+      : "openingTrigger: (none — the opening is part of the systemInstruction)",
     ""
   ];
   // A meeting brief is audited SEPARATELY from the call payload above it,

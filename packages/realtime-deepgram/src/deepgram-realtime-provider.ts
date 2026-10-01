@@ -562,6 +562,7 @@ export function createDeepgramRealtimeProvider(
         closed = true;
         stopKeepAlive();
         turn.cancel();
+        doneAt = undefined;
         if (!ready) {
           // A session that never came up has nothing to report closed: the
           // rejected connect is the whole signal (a no-op if it already failed).
@@ -570,7 +571,11 @@ export function createDeepgramRealtimeProvider(
         }
         ready = false;
         callbacks.onClose(
-          `code=${code ?? "unknown"} reason=${reason?.toString().trim() || "none"}`
+          `code=${code ?? "unknown"} reason=${reason?.toString().trim() || "none"}`,
+          {
+            ...(typeof code === "number" ? { code } : {}),
+            ...(reason?.toString().trim() ? { reason: reason.toString().trim() } : {})
+          }
         );
       }) as never);
 
@@ -625,6 +630,7 @@ export function createDeepgramRealtimeProvider(
           closed = true;
           stopKeepAlive();
           turn.cancel();
+          doneAt = undefined;
           socket.close();
         }
       };

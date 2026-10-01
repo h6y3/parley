@@ -140,9 +140,19 @@ export type ToolResult =
    * the far end last did — so nobody has agreed to what it last said. See
    * `ToolGate.recordOutcome`. It says what to do instead, because the model
    * reads it and goes on speaking, and "do not end the call" because the
-   * refused record has just left nothing for `end_call` to close on. */
-  | "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call"
+   * refused record has just left nothing for `end_call` to close on. It ends
+   * "without mentioning this", like every refusal the model reads before
+   * speaking on: scenario matrix, Gemini 3.8, 2026-10-01, the model answered
+   * this refusal aloud — "I'm sorry, I understand I need to wait for you to
+   * confirm the arrangement before proceeding." */
+  | "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call — without mentioning this"
   | "refused: invalid arguments"
+  /** A who-confirmed field (`isWhoConfirmedField`) holding a role —
+   * "receptionist", "front desk" — where a person's name belongs. See
+   * `ToolGate.recordOutcome`. Names both ways out, because the model reads it
+   * and goes on speaking: ask, or record the field empty — and, like the
+   * confirmation refusal above, without narrating the refusal itself. */
+  | "refused: that is a role, not a name — ask who you are speaking with, or leave it empty if they will not say — without mentioning this"
   | "refused: that amount is above the limit for this call"
   /** Nobody has answered a question, because none has been asked: the model
    * has not completed a turn, or has said nothing at all. Distinct from the
@@ -164,8 +174,9 @@ export const TOOL_RESULTS: readonly ToolResult[] = Object.freeze([
   "refused: could not send",
   "refused: record the outcome first — call record_outcome now without mentioning it",
   "refused: incomplete outcome",
-  "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call",
+  "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call — without mentioning this",
   "refused: invalid arguments",
+  "refused: that is a role, not a name — ask who you are speaking with, or leave it empty if they will not say — without mentioning this",
   "refused: that amount is above the limit for this call",
   "refused: the agent has not asked for consent yet",
   "refused: the go-ahead phrase has not been spoken"
@@ -184,6 +195,318 @@ export interface ToolDeclaration {
   name: ToolName;
   description: string;
   parametersJsonSchema: Record<string, unknown>;
+}
+
+/** Name words that make a field something other than a person, whatever its
+ * description says: a date, an amount, a number, free-text notes. */
+const NOT_A_PERSON_NAME_WORDS: ReadonlySet<string> = new Set([
+  "date",
+  "time",
+  "day",
+  "window",
+  "amount",
+  "price",
+  "cost",
+  "fee",
+  "number",
+  "id",
+  "notes",
+  "note",
+  "comment",
+  "comments",
+  "summary",
+  "details"
+]);
+
+/** Field names that by themselves ask for a person — matched on the name's
+ * words, so `confirmedBy`, `confirmed_by` and `confirmed-by` are one name. */
+const PERSON_FIELD_NAME =
+  /^(?:confirmed by|contact (?:name|person)|(?:spoke|spoken|speaking|talked|talking) (?:with|to)|(?:person|staff|agent|rep|representative|employee) name|name of (?:the )?person)$/;
+
+/** Name words that MIGHT be a person and need the description to say so —
+ * `contact`, `rep`, `agreedWith`. */
+const PERSONISH_NAME_WORDS: ReadonlySet<string> = new Set([
+  "name",
+  "person",
+  "contact",
+  "rep",
+  "representative",
+  "staff",
+  "agent",
+  "employee",
+  "who",
+  "by",
+  "with"
+]);
+
+/** Whether an outcome field asks for the person who confirmed the arrangement
+ * — `confirmedBy` "Who at the office confirmed it" is the shape that shipped.
+ *
+ * Live, Gemini 3.8, 2026-10-01, several calls: the model never asked who it
+ * was speaking with and wrote "receptionist", "Receptionist" or "" into that
+ * field; Deepgram calls on the same job asked and got real names. A field
+ * like this is what makes the call's closing ask for a name, and what the
+ * gate holds to a name rather than a role.
+ *
+ * Decided from the field's NAME, split into words. The description is free
+ * text a client writes per call, and it mentions people in fields that are
+ * not one — "Delivery date as confirmed by the store", "Anything the person
+ * you spoke with mentioned" (review 0.4.1, I2). A match there would ask an
+ * off-script question on a delivery call and blank a client's own `notes`.
+ * So the description can only CONFIRM a name that already looks like a
+ * person (`contact`, `rep`, `agreedWith`), never decide alone; and a name
+ * with a date, amount, number or notes word in it is never a person. */
+export function isWhoConfirmedField(field: { name: string; description: string }): boolean {
+  const words = field.name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .toLowerCase()
+    .trim()
+    .split(/\s+/);
+  if (words.some((w) => NOT_A_PERSON_NAME_WORDS.has(w))) return false;
+  if (PERSON_FIELD_NAME.test(words.join(" "))) return true;
+  if (!words.some((w) => PERSONISH_NAME_WORDS.has(w))) return false;
+  const text = field.description.toLowerCase();
+  return (
+    /\bconfirmed by\b/.test(text) ||
+    /\bwho\b[^.;]*\bconfirm(?:s|ed)?\b/.test(text) ||
+    /\b(?:speaking|spoke|spoken|talking|talked) (?:with|to)\b/.test(text) ||
+    /\bname of (?:the )?person\b/.test(text)
+  );
+}
+
+/** Words that, with nothing else beside them, describe a role or stand in for
+ * an unknown — never a person. A who-confirmed value made ONLY of these is
+ * refused ("the receptionist", "front desk staff", "N/A"); one with any other
+ * word in it is a name, or carries one ("Sam at the front desk", "Maria, the
+ * receptionist"), and is accepted. Articles and "at" are here so a role
+ * phrase stays a role phrase.
+ *
+ * From the live values (2026-10-01: "receptionist", "Receptionist", "Staff
+ * member") and the offline replays the same day ("Dental office staff", "Dr.
+ * Nguyen's office"). The last two carry a word not listed here and pass: a
+ * list cannot recognise every way of naming a role, and widening it toward
+ * business words would start refusing names. The prose that tells the model
+ * to ask is the primary fix; this is the backstop for the plain cases.
+ *
+ * The filler words after "at" — pronouns, "speaking with", "on the phone" —
+ * make a description of the conversation a placeholder too: replay, Gemini
+ * 3.8, 2026-10-01, `confirmedBy` "the person I'm speaking with" was accepted
+ * as a name. None of them is a name, so one beside a name ("this is Sam",
+ * "Sam, the person I spoke with") still leaves the name to pass. */
+const ROLE_PLACEHOLDER_WORDS: ReadonlySet<string> = new Set([
+  "receptionist",
+  "front",
+  "desk",
+  "staff",
+  "member",
+  "office",
+  "scheduler",
+  "scheduling",
+  "team",
+  "someone",
+  "unknown",
+  "n/a",
+  "na",
+  "none",
+  "representative",
+  "rep",
+  "agent",
+  "assistant",
+  "employee",
+  "person",
+  "the",
+  "a",
+  "an",
+  "at",
+  "i",
+  "im",
+  "am",
+  "me",
+  "you",
+  "who",
+  "whom",
+  "whoever",
+  "here",
+  "this",
+  "that",
+  "is",
+  "was",
+  "speaking",
+  "speak",
+  "spoke",
+  "spoken",
+  "talking",
+  "talked",
+  "with",
+  "to",
+  "on",
+  "phone",
+  "line",
+  "call"
+]);
+
+/** True when a who-confirmed value is a role, not a name. Empty is never a
+ * role: it is the honest answer when they would not say. */
+function isRolePlaceholder(value: string): boolean {
+  const words = placeholderWords(value);
+  return words.length > 0 && words.every((w) => ROLE_PLACEHOLDER_WORDS.has(w));
+}
+
+/** A value's words as the placeholder list spells them: lower case, an
+ * apostrophe dropped inside a word ("I'm" is "im"), anything else not a
+ * letter or "/" a break. */
+function placeholderWords(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/['\u2018\u2019]/g, "")
+    .replace(/[^a-z/\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/** Whether `latest` — the far end's latest words — answers with the name in
+ * a who-confirmed value: any word of the value of two letters or more that is
+ * not a role or filler word (`ROLE_PLACEHOLDER_WORDS`), found as a whole word.
+ * Filler is left out so "this is Sam" is matched on "Sam", never on "is". */
+function namesIn(value: string, latest: string): boolean {
+  const names = placeholderWords(value).filter(
+    (w) => w.length >= 2 && !ROLE_PLACEHOLDER_WORDS.has(w)
+  );
+  if (names.length === 0) return false;
+  const heard = new Set(placeholderWords(latest));
+  return names.some((w) => heard.has(w));
+}
+
+/** Words and phrases that, in the far end's latest words, read as agreement
+ * to what was proposed — the second half of the completed-record confirmation
+ * rule (see `ToolGate.recordOutcome`). Matched case-insensitively as whole
+ * words or phrases, after `NOT_AGREEMENT` is struck out. A hyphen in an entry
+ * matches a hyphen, a space or nothing ("mm-hmm", "mm hmm", "mmhmm"); an
+ * apostrophe is optional ("that's", "thats").
+ *
+ * Past and settled forms only where the bare verb is an OFFER: "booked",
+ * "reserved", "scheduled" and "confirmed" are agreement, but "I can reserve"
+ * and "I can book you in" — the very lines the scenario matrix caught being
+ * recorded as completed — are not. Bare "right" is left out ("Right now the
+ * earliest is…" opens an offer) in favour of "that's right"; bare "done" too
+ * ("I can have it done by Thursday"); bare "good" too ("good morning").
+ *
+ * The backchannels ("mm-hmm", "uh-huh") and the short settled forms ("ten
+ * works", "fine", "noted", "received") were added after review 0.4.1 (I-A):
+ * after a read-back, a bare "Mm-hmm." is often the whole of the callee's
+ * answer, and an automated line ("your request has been received") says no
+ * yes at all.
+ *
+ * A miss costs one confirmation turn (the rule is one-shot per call, and a
+ * refused record is kept as `partial`); a false hit costs only what the audio
+ * rule alone already allowed. So the list leans toward recognising agreement,
+ * and this is not a classifier — tune it from transcripts, not from
+ * imagination. */
+const AGREEMENT_SIGNALS: readonly string[] = [
+  "yes",
+  "yeah",
+  "yep",
+  "yup",
+  "sure",
+  "ok",
+  "okay",
+  "alright",
+  "all right",
+  "mm-hmm",
+  "mm-hm",
+  "mhm",
+  "mhmm",
+  "uh-huh",
+  "fine",
+  "works",
+  "works for",
+  "that'll work",
+  "that will work",
+  "sounds good",
+  "that's good",
+  "that is good",
+  "perfect",
+  "great",
+  "correct",
+  "that's right",
+  "that is right",
+  "exactly",
+  "confirmed",
+  "booked",
+  "rebooked",
+  "scheduled",
+  "rescheduled",
+  "reserved",
+  "received",
+  "noted",
+  "on the books",
+  "you're all set",
+  "all set",
+  "see you",
+  "see him then",
+  "see her then",
+  "see them then",
+  "it's a deal",
+  "absolutely",
+  "definitely",
+  "of course",
+  "will do",
+  "all done",
+  "got it"
+];
+
+/** Agreement that only counts in one position: "… it is" closing a sentence
+ * ("Tuesday at ten it is.") and nowhere else ("Whatever it is, we can't").
+ * Tested against each sentence on its own. */
+const AGREEMENT_SENTENCE_ENDINGS: readonly RegExp[] = [/(?<![a-z'])it\s+is[.!]*\s*$/];
+
+/** Collocations that contain an agreement word without agreeing: a negation
+ * ("not sure", "isn't booked", "can't say yes", "won't work"), "make sure", a
+ * full calendar ("fully booked", "booked up", "we're booked"), and an empty
+ * one ("nothing works", "nothing on the books"). Struck out before
+ * `AGREEMENT_SIGNALS` is matched. A negation eats its verb's hedges and
+ * reporting verbs too ("can't really say yes"), not just the next word. */
+const NEGATION_REACH =
+  "(?:(?:yet|quite|really|exactly|actually|just|say|said|be|been)\\s+)*[a-z']+";
+const NOT_AGREEMENT: readonly RegExp[] = [
+  new RegExp(`\\b(?:not|never|no longer)\\s+${NEGATION_REACH}`, "g"),
+  new RegExp(`\\b[a-z]+n't\\s+${NEGATION_REACH}`, "g"),
+  /\bmake\s+sure\b/g,
+  /\bfully\s+booked\b/g,
+  /\bbooked\s+(?:up|solid)\b/g,
+  // The callee is the business: "we're booked" is its calendar, not the caller's slot.
+  /\b(?:we|they|i)(?:'re|'m|\s+are|\s+am|\s+were|'ve\s+been|\s+have\s+been)\s+(?:all\s+|pretty\s+|completely\s+|totally\s+|really\s+)?booked\b/g,
+  /\b(?:nothing|neither|none)(?:\s+of\s+(?:those|them|these))?\s+works?\b/g,
+  /\b(?:nothing|anything)\s+on\s+the\s+books\b/g
+];
+
+const AGREEMENT_PATTERN = new RegExp(
+  "(?<![a-z'])(?:" +
+    AGREEMENT_SIGNALS.map((phrase) =>
+      phrase
+        .split(" ")
+        .map((word) => word.replace(/'/g, "'?").replace(/-/g, "[-\\s]?"))
+        .join("\\s+")
+    ).join("|") +
+    ")(?![a-z'])"
+);
+
+/** Whether the far end's words carry an agreement signal.
+ *
+ * A sentence ending in "?" is set aside first: a signal inside a question is
+ * the callee's own offer asking for OUR yes ("I can book you Wednesday, is
+ * that okay?" — review 0.4.1), not theirs. Unpunctuated fragments read as
+ * one statement, as before. */
+function hasAgreementSignal(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/[\u2018\u2019]/g, "'");
+  const sentences = normalized.match(/[^.!?]+[.!?]*/g) ?? [];
+  return sentences.some((sentence) => {
+    if (sentence.trimEnd().endsWith("?")) return false;
+    let s = sentence;
+    for (const pattern of NOT_AGREEMENT) s = s.replace(pattern, " ");
+    return AGREEMENT_PATTERN.test(s) || AGREEMENT_SENTENCE_ENDINGS.some((ending) => ending.test(s));
+  });
 }
 
 /** Instructions for USING a tool live in its description, never in
@@ -312,6 +635,24 @@ export function buildToolDeclarations(execution: CallExecution): ToolDeclaration
         `${execution.spendCeiling.field} empty and set status to partial; recording an amount above ` +
         `${execution.spendCeiling.limit} will be refused.`
       : "";
+    // Ask once, never fake. Only on a call that declares a who-confirmed
+    // field (`isWhoConfirmedField`) — elsewhere a question about names is
+    // noise the model would act on. It lives here, not in the wrap-up rail,
+    // for the same reason the end_call consequence does: this description
+    // exists if and only if the field does, and the rail is composed from
+    // policy alone, with no sight of the outcome fields. It is a question,
+    // not a recap — WRAP_UP_RULE (`@parley/policy`) forbids reading settled
+    // details back, and nothing here asks for that. Live, Gemini 3.8,
+    // 2026-10-01: with no such sentence the model never asked and wrote
+    // "receptionist"; the gate below refuses that once.
+    const whoFields = execution.outcome.fields.filter(isWhoConfirmedField).map((f) => f.name);
+    const askName =
+      whoFields.length > 0
+        ? ` ${whoFields.join(" and ")} needs the name of the person you are speaking with: if you ` +
+          `do not know it, ask once before you record — one short question, such as "And who am I ` +
+          `speaking with?". If they will not say, leave it empty. A role such as "receptionist" ` +
+          `is not a name and will be refused.`
+        : "";
     decls.push({
       name: "record_outcome",
       description:
@@ -362,7 +703,7 @@ export function buildToolDeclarations(execution: CallExecution): ToolDeclaration
         // structured field somebody downstream will act on.
         `field, set it to an empty string. Never guess, estimate, or write a placeholder such as 0 ` +
         `or N/A — an empty string is the right answer for something this call did not establish.` +
-        `${ceilingNote}`,
+        `${askName}${ceilingNote}`,
       parametersJsonSchema: {
         type: "object",
         properties: {
@@ -417,12 +758,29 @@ export class ToolGate {
   private refusedPresses = 0;
   private outcome?: RecordedOutcome;
   private endRefusedOnce = false;
+  /** Whether a who-confirmed role placeholder has already been refused once.
+   * See `recordOutcome`. */
+  private roleRefusedOnce = false;
   private notetakingBegan = false;
   /** Whether the model has produced audio since the far end last spoke —
    * true from the model's first audio frame until the far end's next words.
    * Starts false: before anyone has said anything, nothing has been proposed
    * either. See `recordOutcome`. */
   private modelSpokeSinceCaller = false;
+  /** The far end's words since the model last produced audio, joined as they
+   * arrived. See `noteCallerSpeech`. */
+  private callerWords = "";
+  /** The far end's words in the window before `callerWords` — what they said
+   * between the model's previous audio and its latest. Read only when the
+   * latest words are the answer to "who am I speaking with?"; see
+   * `recordOutcome`. */
+  private previousCallerWords = "";
+  /** Whether the last far-end transcript was final — a whole utterance, so
+   * the next one starts a new word. */
+  private callerWordsFinal = false;
+  /** Whether the agreement half of the completed-record rule has had its one
+   * say this call — it refused once, or it passed. See `recordOutcome`. */
+  private agreementChecked = false;
 
   constructor(
     private readonly execution: CallExecution,
@@ -466,12 +824,29 @@ export class ToolGate {
    * the audio it describes, and the audio precedes the tool call it leads to. */
   noteModelAudio(): void {
     this.modelSpokeSinceCaller = true;
+    // Audio arrives frame by frame: only the first frame after the far end
+    // spoke closes their window. Later frames find it empty and must not
+    // overwrite the one kept.
+    if (this.callerWords !== "") this.previousCallerWords = this.callerWords;
+    this.callerWords = "";
+    this.callerWordsFinal = false;
   }
 
   /** The far end said something (a non-empty transcript, final or not — Gemini
-   * never marks its input transcription final). */
-  noteCallerSpeech(): void {
+   * never marks its input transcription final).
+   *
+   * `text` accumulates into the far end's current utterance — everything they
+   * have said since the model last produced audio — which the agreement half of
+   * the completed-record rule reads. Providers deliver it two ways: Gemini as
+   * non-final FRAGMENTS of one utterance, which carry their own spacing and can
+   * split a word ("Ye" + "s, that works"), so they are joined exactly as they
+   * came; Deepgram (and the harness's scripted lines) as whole FINAL
+   * utterances, so a space is put between one and the next. */
+  noteCallerSpeech(text: string, isFinal = false): void {
     this.modelSpokeSinceCaller = false;
+    if (this.callerWordsFinal && this.callerWords !== "") this.callerWords += " ";
+    this.callerWords += text;
+    this.callerWordsFinal = isFinal;
   }
 
   authorizeEnd(): ToolResult {
@@ -520,11 +895,52 @@ export class ToolGate {
     // `partial` and `failed` claim none and are never held to it. A meeting
     // is not a two-party negotiation, and is not gated.
     //
-    // It cannot trap the model: `end_call`'s refusal is one-shot, so a model
-    // that never gets its confirmation still hangs up on its second
-    // `end_call` — with no completed record, which is the true state.
+    // It cannot trap the model, and it cannot lose the outcome: the refused
+    // record is kept, downgraded to `partial` (see `keepUnconfirmed`), so a
+    // callee who hangs up during the read-back still leaves "arranged, not
+    // confirmed" behind, and `end_call`'s record-first rule is met by that
+    // honest partial rather than by nothing.
     if (status === "completed" && !this.execution.meeting && this.modelSpokeSinceCaller) {
-      return "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call";
+      this.keepUnconfirmed(kept);
+      return "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call — without mentioning this";
+    }
+
+    // The audio rule's blind spot: the model records BEFORE it speaks.
+    // Scenario matrix, Gemini 3.8, 2026-10-01, 4–6 of 43 model-ended runs: the
+    // callee offered "We have an opening this Thursday between 1:00 PM and
+    // 4:00 PM that I can reserve for you.", the model recorded `completed`,
+    // ended the call, and only then said "Thank you, that works perfectly.
+    // Goodbye." Nothing was said after the callee, so the audio rule passed
+    // it. The callee's latest words have to agree as well (AGREEMENT_SIGNALS).
+    //
+    // One-shot, unlike the audio rule: a word list cannot be relied on to
+    // recognise every way of saying yes, so a miss costs exactly one extra
+    // confirmation turn per call and can never trap the model. It is also
+    // spent once it has PASSED: a completed record that got past it and was
+    // then refused for something else (a role for a name, an amount over the
+    // ceiling) comes back after an answer — "Sam." — that agrees to nothing
+    // because the agreement was already given.
+    //
+    // The same answer can also come FIRST. Replay, Gemini 3.8, 2026-10-01,
+    // 8/8 runs: "Yes, Monday at 9:26 works." — the model asked who it was
+    // speaking with — "Sam." — and the first completed record, confirmedBy
+    // "Sam", was refused and kept as partial. So when the latest words hold
+    // the recorded who-confirmed name, they are the name answer, and the
+    // window before them (one, never further back) may carry the agreement
+    // instead. A name answer after an offer ("We have Thursday 1 to 4." —
+    // "Sam here.") still has no yes before it, and is refused as before.
+    if (status === "completed" && !this.execution.meeting && !this.agreementChecked) {
+      this.agreementChecked = true;
+      const nameAnswer = this.whoFieldNames().some((name) =>
+        namesIn(kept[name] ?? "", this.callerWords)
+      );
+      const agreed =
+        hasAgreementSignal(this.callerWords) ||
+        (nameAnswer && hasAgreementSignal(this.previousCallerWords));
+      if (!agreed) {
+        this.keepUnconfirmed(kept);
+        return "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call — without mentioning this";
+      }
     }
 
     // Refuse BEFORE writing anything. A partial record — the appointment kept,
@@ -535,6 +951,31 @@ export class ToolGate {
       const amount = readAmount(kept[ceiling.field]);
       if (amount !== null && amount > ceiling.limit)
         return "refused: that amount is above the limit for this call";
+    }
+
+    // A role is not a name. Live, Gemini 3.8, 2026-10-01: `confirmedBy`
+    // "Receptionist" on several calls, with nobody asked. The role is never
+    // kept: the field is blanked, and an empty field is the documented "not
+    // established".
+    //
+    // Only a `completed` record is REFUSED for it, and only once. The record
+    // is written first, name empty, and the refusal returned after: a refusal
+    // that wrote nothing lost the whole booking when the model then ended the
+    // call (end_call's one refusal already spent on "record first") or the
+    // callee hung up during the follow-up question (review 0.4.1, I1). A later
+    // record with a real name replaces it. A `partial` or `failed` record is
+    // blanked and accepted with no refusal: on a voicemail, the refusal would
+    // have the model ask "who am I speaking with?" into the recording.
+    //
+    // One-shot, like end_call's refusal, so it cannot loop: a model that
+    // writes a role again after being told once is recorded with that field
+    // EMPTY, never the placeholder.
+    const roles = this.whoFieldNames().filter((name) => isRolePlaceholder(kept[name] ?? ""));
+    for (const name of roles) kept[name] = "";
+    if (roles.length > 0 && status === "completed" && !this.roleRefusedOnce) {
+      this.roleRefusedOnce = true;
+      this.outcome = { status, fields: kept, recordedAt: this.now() };
+      return "refused: that is a role, not a name — ask who you are speaking with, or leave it empty if they will not say — without mentioning this";
     }
 
     this.outcome = { status, fields: kept, recordedAt: this.now() };
@@ -622,6 +1063,40 @@ export class ToolGate {
     };
   }
 
+  /** Keep a `completed` record the confirmation rule refused, as `partial`.
+   *
+   * Review 0.4.1 (I-A): a refusal that wrote nothing lost the outcome
+   * whenever the callee hung up before the read-back was answered — the live
+   * 0.4.0 Gemini pattern ("That works perfectly … Goodbye.", refused, read
+   * back to someone who had already heard goodbye) and every automated
+   * completion with no yes in it. Downstream then saw no result for a booking
+   * that happened, and could retry or double-book. `partial` is the true
+   * state — arranged, not confirmed — and a later accepted record replaces
+   * it, so a confirmed `completed` upgrades it.
+   *
+   * Never kept when it would weaken what is already there or what another
+   * rule forbids: a `completed` record accepted earlier stands (a model that
+   * records again after its goodbye must not downgrade a confirmed booking),
+   * and an amount over the spend ceiling is not written at all, the same as
+   * that rule's own refusal. A who-confirmed role is blanked, as everywhere. */
+  private keepUnconfirmed(kept: Record<string, string>): void {
+    if (this.outcome?.status === "completed") return;
+    const ceiling = this.execution.spendCeiling;
+    if (ceiling) {
+      const amount = readAmount(kept[ceiling.field]);
+      if (amount !== null && amount > ceiling.limit) return;
+    }
+    const fields = { ...kept };
+    for (const name of this.whoFieldNames()) {
+      if (isRolePlaceholder(fields[name] ?? "")) fields[name] = "";
+    }
+    this.outcome = { status: "partial", fields, recordedAt: this.now() };
+  }
+
+  private whoFieldNames(): string[] {
+    return (this.execution.outcome?.fields ?? []).filter(isWhoConfirmedField).map((f) => f.name);
+  }
+
   private refusePress(result: ToolResult): ToolResult {
     this.refusedPresses += 1;
     return result;
@@ -637,10 +1112,17 @@ export class ToolGate {
  * complete. */
 function readAmount(raw: string | undefined): number | null {
   if (raw === undefined) return null;
-  const cleaned = raw.replace(/[^0-9.]/g, "");
-  if (cleaned === "") return null;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
+  // Each number on its own, thousands separators included ("$1,250" is
+  // 1250), and the HIGHEST one is what the ceiling sees. Stripping every
+  // non-digit and reading what was left joined a range into one number —
+  // "$150-$200" read as 150200, refused on every attempt and on every status
+  // (review 0.4.1). A range is held to its high end, which is what the caller
+  // may be charged; a stray second number reads high, never low, so this can
+  // only refuse more than the amount warrants, never less.
+  const numbers = raw.match(/\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?/g);
+  if (!numbers) return null;
+  const values = numbers.map((n) => Number(n.replace(/,/g, ""))).filter(Number.isFinite);
+  return values.length > 0 ? Math.max(...values) : null;
 }
 
 /** Lowercase and collapse every run of whitespace to one space. Speech

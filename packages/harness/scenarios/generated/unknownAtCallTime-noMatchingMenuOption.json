@@ -140,7 +140,8 @@
     },
     {
       "label": "Receptionist greeting",
-      "text": "Apex Pest Solutions, this is Brenda. How can I assist you?"
+      "text": "Apex Pest Solutions, this is Brenda. How can I assist you?",
+      "unpromptedAfterMs": 4000
     },
     {
       "label": "Acknowledge issue",
@@ -156,23 +157,23 @@
     },
     {
       "label": "Hold announcement",
-      "text": "Please remain on the line while your call is being transferred."
+      "text": "Please remain on the line while your call is being transferred.",
+      "unpromptedAfterMs": 4000
     },
     {
       "label": "Queue notice",
-      "text": "All scheduling specialists are currently assisting other customers. Please continue to hold."
+      "text": "All scheduling specialists are currently assisting other customers. Please continue to hold.",
+      "unpromptedAfterMs": 5000
     },
     {
       "label": "System message",
-      "text": "The scheduling queue is currently full and cannot take additional calls."
+      "text": "The scheduling queue is currently full and cannot take additional calls.",
+      "unpromptedAfterMs": 6000
     },
     {
       "label": "Voicemail prompt",
-      "text": "Please leave a message with your name and telephone number, and someone will call you back within two business days. Goodbye."
-    },
-    {
-      "label": "Closing Confirmation",
-      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+      "text": "Please leave a message with your name and telephone number, and someone will call you back within two business days. Goodbye.",
+      "unpromptedAfterMs": 4000
     }
   ]
 }

@@ -139,6 +139,17 @@ describe("DeepgramRealtimeProvider handshake", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("reports the close code and reason structurally, beside the prose", async () => {
+    const socket = new FakeAgentSocket();
+    const onClose = vi.fn();
+    await connectProvider(socket, { onClose });
+    socket.emitClose(1011, "credits depleted");
+    expect(onClose).toHaveBeenCalledWith("code=1011 reason=credits depleted", {
+      code: 1011,
+      reason: "credits depleted"
+    });
+  });
+
   it("rejects if the socket closes before SettingsApplied", async () => {
     const socket = new FakeAgentSocket();
     const promise = startConnect(socket);
@@ -547,6 +558,19 @@ describe("a turn is complete only when its audio stops", () => {
     await session.close();
     await vi.advanceTimersByTimeAsync(10 * DEEPGRAM_TURN_QUIET_MS);
     expect(onTurnComplete).not.toHaveBeenCalled();
+  });
+
+  it("a frame arriving after close is not reported as audio resuming after a stale done", async () => {
+    const socket = new FakeAgentSocket();
+    const onDiagnostic = vi.fn();
+    const session = await connectProvider(socket, { onDiagnostic });
+    socket.emitAgent({ type: "AgentAudioDone" });
+    await session.close();
+    await vi.advanceTimersByTimeAsync(50);
+    socket.emitBinary(audio());
+    expect(
+      onDiagnostic.mock.calls.filter((c) => String(c[0]).startsWith("deepgram audio resumed"))
+    ).toHaveLength(0);
   });
 
   it("a socket closed by the far side during the window fires nothing", async () => {

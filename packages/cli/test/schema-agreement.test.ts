@@ -169,6 +169,9 @@ describe("the zod schema and the committed JSON Schema agree", () => {
         ok: true
       },
       { fields: { firstModelAudioMs: 1234 }, ok: true },
+      { fields: { realtimeClose: { code: 1011, reason: "credits depleted" } }, ok: true },
+      { fields: { realtimeClose: { code: 1011 } }, ok: false },
+      { fields: { realtimeClose: { reason: "x" } }, ok: false },
       { fields: { firstModelAudioMs: -1 }, ok: false },
       { fields: { firstModelAudioMs: "1234" }, ok: false },
       { fields: { realtime: { provider: "deepgram" } }, ok: false },

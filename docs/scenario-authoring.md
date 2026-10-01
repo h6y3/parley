@@ -358,14 +358,16 @@ says to stay silent until the other end speaks, and whoever picks up hears
 anything said during the ring. At `0` there is no window and no check.
 
 Where the opening goes follows the transport's `openingDelivery`, planned by
-`planOpening` exactly as a real call's is. On the Gemini transport (`"turn"`)
-the trigger is sent as a line at connect. On the Deepgram transport
-(`"prompt"`) it is appended to the Settings prompt, and a two-party scenario
+`planOpening` exactly as a real call's is. A two-party scenario on either
+transport (`"prompt"`) appends the trigger to the session's one prompt and
 sends nothing at connect — so at `0` there is no trigger to follow and the first
-line goes out after `settleMs`. A meeting scenario on Deepgram
-sends the short `MEETING_CONNECTED_CUE` in its place. Comparing a Deepgram
-matrix from before this change against one after it compares two different
-openings; expect the ring-time codes to move for that reason.
+line goes out after `settleMs`. A meeting scenario on Gemini (which declares
+`{ twoParty: "prompt", meeting: "turn" }`) sends the trigger as a line at
+connect; on Deepgram it rides in the Settings prompt and the short
+`MEETING_CONNECTED_CUE` is sent in its place. Gemini two-party scenarios moved
+from `"turn"` to `"prompt"` in 0.4.1, so comparing a Gemini matrix from before
+that against one after it compares two different openings; expect the
+ring-time codes (`spoke-before-callee` above all) to move for that reason.
 
 ### One runner, any transport
 
@@ -639,12 +641,105 @@ what you just said — …"), offline as on a call: the runner counts each
 delivered line as the callee speaking and each `modelAudio` as the model
 speaking. A script that relied on the model recording in the same turn as it
 read the arrangement back now needs a confirming line after the read-back.
+That confirming line must also SAY yes: once per call, a `completed` record is
+refused when the callee's latest words carry no agreement signal ("yes", "that
+works", "you're all set", "booked" — the list is `AGREEMENT_SIGNALS` in
+`@parley/core`'s `execution.ts`). An offer ("I can reserve Thursday for you")
+is not agreement, so a model that records straight after it is refused, offline
+as on a call. A refused `completed` record is still stored, as `partial`, so a
+call that ends after the refusal keeps an honest outcome. A script whose
+confirming line agrees without any listed word costs the model one extra
+read-back (one-shot); "Mm-hm" and "Uh-huh" are on the list.
+0.4.1 adds one more: on a job with a who-confirmed outcome field (`confirmedBy`),
+the model is told to ask who it is speaking with before recording, and a role
+recorded there ("receptionist") is refused once ("refused: that is a role, not a
+name — …"). A script that never gives a name now needs a line answering that
+question, or the model may close on its second try with the field empty. A
+refused record is not an accepted one, so `unsupported-outcome` never sees the
+role; list the name forms under `params.agreement.fields` to score it.
 Expect the closing-related codes
 (`no-end-call`, `outcome-missing`, `awaiting-closure`, and `endedBecause`) to move
 on the first matrix after it. A script whose closing answer was written for the
 old confirm-and-thank exchange may now go unasked, or be delivered after the
 model has already hung up. Read those cells' transcripts before treating the
 movement as a regression.
+
+### It happened: the 0.4.1 refit
+
+The first matrix on 0.4.1 (24 scenarios x 4, Gemini 3.8, ring 3000 ms,
+`--today 2026-10-01`) failed mostly on the fixtures, and every cause was one of
+the shapes above. The committed scenarios were refit as follows, and
+`test/committed-scenarios.test.ts` now checks the fixture side of each one
+offline, so a regenerated cell cannot bring it back unnoticed.
+
+- **Holds that only ended when the caller spoke.** 44 of 96 runs ended
+  `stalled`. The model stayed silent on "one moment", on a transfer and on a
+  recorded greeting before the menu, which is what the patience and IVR rails
+  tell it to do, and the next line waited for a reply that was never coming.
+  Every line that is not a reply now carries `unpromptedAfterMs`: the menu after
+  a preamble (2.5 s), the operator after "please hold" (4 s), the second person
+  after a transfer (5 s), the person back from a lookup (6 s), and each recorded
+  queue message after the last. `authorPrompt` asks for it on those lines and
+  the author schema accepts it.
+- **A gate on a key a correct model never presses.** All 16 runs of the
+  no-matching-option cells stalled. One gated its operator on `2`, which is
+  billing, while the model correctly pressed `0`. The others played "your
+  selection was not recognized, please hold" with no gate and no timer. Every
+  gate now names the press `deriveExpectations` expects (`0` on those cells),
+  and the line it releases is the operator picking up. `authorPrompt` names the
+  key.
+- **Ring presses count.** A press made during the ring is spent from
+  `maxPresses` exactly as on a real call. `ToolGate` is the production gate and
+  the harness does not exempt anything from it. One run pressed `1` four times
+  before the menu played and had no budget left for the `0` it needed. That run
+  is the model's failure, reported as `press-wrong`. A ring press never opens a
+  gate, as described under "A gated line waits for its own press" above.
+- **An offer dated in the past.** The reference offered "Tuesday, August
+  twenty-fifth" against a pinned 2026-10-01. Dates in the committed scripts are
+  now written for **`--today 2026-10-01`**, a Thursday: "tomorrow" is Friday
+  the 2nd, and offers name the day of the month ("Tuesday the sixth", "next
+  Thursday, the eighth"), so none of them is ambiguous on the pinned day. Run
+  the matrix with that flag. Scripts are fixed text and the runner substitutes
+  nothing, so a different date makes "tomorrow" a different day and the
+  declared agreement forms stop matching. Check dates by hand when promoting a
+  regenerated cell.
+- **No declared agreement.** Every cell that settles an arrangement (12
+  generated, plus the reference) now declares `params.agreement`. The confirming
+  line comes after the offer and agrees in plain words ("Okay, you're booked
+  for …", "You're all set for …"). The test asks `ToolGate` itself whether a
+  `completed` record would be accepted after that line, so the fixture cannot
+  drift from `AGREEMENT_SIGNALS`. A line that only asks "Shall I finalize?" is
+  an offer. The forms accept the ISO date, the weekday, the month and day, and
+  "tomorrow" where the callee said it. The reference also declares a
+  `confirmedBy` field and accepts only `sam`, the name its representative gives
+  in the greeting. That is the only committed coverage of the 0.4.1
+  who-confirmed rule. No generated cell declares a who-confirmed field, so none
+  needs a line answering "who am I speaking with?". Add one if a cell gains
+  such a field.
+- **Over the ceiling is `partial`.** The four `quoteAboveCeiling` cells expect
+  `partial`, no amount and no agreement. `record_outcome`'s own description
+  says to set status to partial if and only if the price is above the limit,
+  and the deferral rail says to call back rather than go ahead. The baseline
+  recorded `failed` on 5 of 16 such runs, and that stays a model failure. The
+  callee still offers a window and asks "Shall I finalize?", but nothing after
+  that books the visit or says "you're all set". A model that agrees anyway is
+  left with no agreement to record against. A brief fact in
+  `bounded-quoteAboveCeiling` granting "up to $500" contradicted the policy's
+  250 ceiling and was removed. Brief names that contradicted the principal
+  (John Doe, Alex Mercer) now read Jordan Rivera.
+
+Expect `stalled`, `outcome-missing` and `no-end-call` to fall, and
+`premature-record` and `unsupported-outcome` to appear for the first time,
+because before this no fixture could raise them. A 2026-10-01 matrix and a
+refit one are not comparable.
+
+The command, from the repository root:
+
+    parley harness scenario --file packages/harness/scenarios/generated --runs 4 \
+      --concurrency 4 --first-line-delay-ms 3000 --today 2026-10-01 --transcript <dir>
+
+Run it again with `--file packages/harness/scenarios/reference-service-visit.json`
+for the seed.
 
 ## What the harness cannot see
 

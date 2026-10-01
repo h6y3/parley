@@ -7,7 +7,12 @@ import {
   planOpening,
   withOpening
 } from "../src/render.js";
-import type { OpeningDelivery, RealtimeConnectParams, RealtimeProvider } from "../src/types.js";
+import type {
+  OpeningDelivery,
+  OpeningDeliveryByShape,
+  RealtimeConnectParams,
+  RealtimeProvider
+} from "../src/types.js";
 import {
   brief,
   guardrails,
@@ -30,7 +35,7 @@ function occurrences(haystack: string, needle: string): number {
  * sent, not the one `resolveSystemInstruction` would render. */
 function withDelivery(
   realtime: RealtimeProvider,
-  openingDelivery: OpeningDelivery
+  openingDelivery: OpeningDelivery | OpeningDeliveryByShape
 ): { provider: RealtimeProvider; connectParams: () => RealtimeConnectParams } {
   let captured: RealtimeConnectParams | undefined;
   return {
@@ -54,6 +59,18 @@ describe("planOpening", () => {
     ["prompt", true, { promptSuffix: MEETING_OPENING_TRIGGER, trigger: MEETING_CONNECTED_CUE }]
   ] as const)("%s delivery, meeting=%s", (delivery, isMeeting, expected) => {
     expect(planOpening(delivery, isMeeting)).toEqual(expected);
+  });
+
+  /** A provider can declare each call shape separately — Gemini takes a
+   * two-party opening in the prompt and a meeting's as a turn. Each shape is
+   * planned exactly as the plain declaration of that shape would be. */
+  it.each([
+    [{ twoParty: "prompt", meeting: "turn" }, false, "prompt"],
+    [{ twoParty: "prompt", meeting: "turn" }, true, "turn"],
+    [{ twoParty: "turn", meeting: "prompt" }, false, "turn"],
+    [{ twoParty: "turn", meeting: "prompt" }, true, "prompt"]
+  ] as const)("%o, meeting=%s plans as %s", (byShape, isMeeting, same) => {
+    expect(planOpening(byShape, isMeeting)).toEqual(planOpening(same, isMeeting));
   });
 
   it("never carries caller content: every text it returns is a Parley constant", () => {
@@ -121,6 +138,46 @@ describe("CallSession opening delivery", () => {
     expect(instruction).not.toContain(OPENING_TRIGGER);
     expect(f.openingTrigger).toHaveBeenCalledTimes(1);
     expect(f.openingTrigger).toHaveBeenCalledWith(MEETING_CONNECTED_CUE);
+  });
+
+  it("per-shape declaration: a two-party call takes the twoParty delivery", async () => {
+    const f = fakes();
+    const p = withDelivery(f.realtime, { twoParty: "prompt", meeting: "turn" });
+    const cs = new CallSession({
+      brief,
+      guardrails,
+      telephony: f.telephony,
+      realtime: p.provider,
+      codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
+      from: "+14155550000",
+      answerWebhookUrl: "https://example.test/answer",
+      model: "test-model",
+      ...clock
+    });
+    expect(cs.resolveSystemInstruction()).toBe(`${rendered}\n\n${OPENING_TRIGGER}`);
+    await cs.attach("call-1", new FakeSocket());
+    expect(p.connectParams().systemInstruction).toBe(`${rendered}\n\n${OPENING_TRIGGER}`);
+    expect(f.openingTrigger).not.toHaveBeenCalled();
+  });
+
+  it('per-shape declaration: a meeting takes the meeting delivery, exactly as a plain "turn" provider\'s', async () => {
+    const plain = makeMeetingFakes();
+    const plainP = withDelivery(plain.params.realtime, "turn");
+    await new CallSession({ ...plain.params, realtime: plainP.provider }).attach(
+      "CA1",
+      new FakeSocket()
+    );
+
+    const f = makeMeetingFakes();
+    const p = withDelivery(f.params.realtime, { twoParty: "prompt", meeting: "turn" });
+    await new CallSession({ ...f.params, realtime: p.provider }).attach("CA1", new FakeSocket());
+
+    expect(p.connectParams().systemInstruction).toBe(plainP.connectParams().systemInstruction);
+    expect(p.connectParams().systemInstruction).not.toContain(MEETING_OPENING_TRIGGER);
+    expect(f.openingTrigger.mock.calls).toEqual(plain.openingTrigger.mock.calls);
+    expect(f.openingTrigger.mock.calls).toEqual([[MEETING_OPENING_TRIGGER]]);
   });
 
   it('"turn": the prompt is the rendered brief alone and the trigger goes as a turn, as before', async () => {

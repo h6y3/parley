@@ -10,7 +10,7 @@
       "facts": [
         "The central heating unit stopped heating and is blowing room-temperature air.",
         "The home address is 742 Evergreen Terrace.",
-        "The homeowner's name is Alex Mercer.",
+        "The homeowner's name is Jordan Rivera.",
         "The callback number is 555-0198."
       ],
       "preferences": [
@@ -129,7 +129,26 @@
     "raisedTopic": null,
     "adjacentIndex": null,
     "offersAppointment": true,
-    "reachesSomeoneWhoCanAct": true
+    "reachesSomeoneWhoCanAct": true,
+    "agreement": {
+      "confirmTurn": 8,
+      "fields": {
+        "appointmentStart": [
+          ["2026", "10", "2", "8"],
+          ["friday", "8"],
+          ["oct", "2", "8"],
+          ["october", "2", "8"],
+          ["tomorrow", "8"]
+        ],
+        "appointmentEnd": [
+          ["2026", "10", "2", "11"],
+          ["friday", "11"],
+          ["oct", "2", "11"],
+          ["october", "2", "11"],
+          ["tomorrow", "11"]
+        ]
+      }
+    }
   },
   "script": [
     {
@@ -147,15 +166,16 @@
     },
     {
       "label": "Front Desk Rep (Greg)",
-      "text": "Thank you. Let me transfer you directly to our lead dispatcher, Karen, to lock in your appointment time."
+      "text": "Thank you. Let me transfer you directly to our lead dispatcher, Karen, to lock in your appointment time. One moment."
     },
     {
       "label": "Dispatcher (Karen)",
-      "text": "Hello Alex, this is Karen in dispatch. Greg noted that your heating unit is blowing cold air."
+      "text": "Hello, this is Karen in dispatch. Greg noted that your heating unit is blowing cold air.",
+      "unpromptedAfterMs": 5000
     },
     {
       "label": "Dispatcher (Karen)",
-      "text": "I have an opening with our technician Mark tomorrow between 8:00 AM and 11:00 AM."
+      "text": "I have an opening with our technician Mark tomorrow between 8:00 AM and 11:00 AM. Does that work for you?"
     },
     {
       "label": "Dispatcher (Karen)",
@@ -167,7 +187,7 @@
     },
     {
       "label": "Dispatcher (Karen)",
-      "text": "You are all set for tomorrow, between 8:00 AM and 11:00 AM at 742 Evergreen Terrace. Is there anything else I can assist you with today?"
+      "text": "Okay, you are all set for tomorrow, between 8:00 AM and 11:00 AM at 742 Evergreen Terrace. Is there anything else I can assist you with today?"
     },
     {
       "label": "Dispatcher (Karen)",

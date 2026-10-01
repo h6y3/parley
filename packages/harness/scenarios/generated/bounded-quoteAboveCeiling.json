@@ -15,7 +15,6 @@
       ],
       "preferences": [
         "I prefer an afternoon appointment slot.",
-        "I am prepared to pay standard service rates up to $500.",
         "I prefer text message reminders for service arrivals."
       ]
     },
@@ -160,15 +159,15 @@
     },
     {
       "label": "Offer Window",
-      "text": "We have a technician available in your area this Thursday between 1:00 PM and 4:00 PM. Would that arrival window work for you?"
+      "text": "We have a technician available in your area next Thursday, the eighth, between 1:00 PM and 4:00 PM. Would that arrival window work for you?"
     },
     {
-      "label": "Confirm Booking",
-      "text": "Great, I have you locked in for this Thursday between 1:00 PM and 4:00 PM."
+      "label": "Hold Off",
+      "text": "Okay. I'll put a note on the account with that quote, and you can give us a call back once you've had a chance to check."
     },
     {
       "label": "Additional Assistance",
-      "text": "You will receive a confirmation text shortly. Is there anything else I can help you with today?"
+      "text": "Is there anything else I can help you with today?"
     },
     {
       "label": "Closing",
@@ -176,7 +175,7 @@
     },
     {
       "label": "Closing Confirmation",
-      "text": "No, that's everything I need from you \u2014 you're all set. Thanks for calling, goodbye."
+      "text": "No, nothing else from us. Talk to you soon \u2014 goodbye."
     }
   ]
 }

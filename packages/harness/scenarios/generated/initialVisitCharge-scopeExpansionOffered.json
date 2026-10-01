@@ -128,7 +128,26 @@
     "raisedTopic": "the second unit",
     "adjacentIndex": 0,
     "offersAppointment": true,
-    "reachesSomeoneWhoCanAct": true
+    "reachesSomeoneWhoCanAct": true,
+    "agreement": {
+      "confirmTurn": 7,
+      "fields": {
+        "appointmentStart": [
+          ["2026", "10", "2", "9"],
+          ["friday", "9"],
+          ["oct", "2", "9"],
+          ["october", "2", "9"],
+          ["tomorrow", "9"]
+        ],
+        "appointmentEnd": [
+          ["2026", "10", "2", "11"],
+          ["friday", "11"],
+          ["oct", "2", "11"],
+          ["october", "2", "11"],
+          ["tomorrow", "11"]
+        ]
+      }
+    }
   },
   "script": [
     {
@@ -162,7 +181,7 @@
     },
     {
       "label": "Final Booking Confirmation",
-      "text": "You are all set for tomorrow between 9:00 AM and 11:00 AM. Thank you for choosing Apex, and have a great day!"
+      "text": "Okay, you are all set for tomorrow between 9:00 AM and 11:00 AM. Thank you for choosing Apex, and have a great day!"
     },
     {
       "label": "Closing Confirmation",

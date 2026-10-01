@@ -198,6 +198,9 @@ export function buildScenarioRequest(seed: CallScenario, cell: MatrixCell): Scen
  * author by hand. */
 export function authorPrompt(request: ScenarioRequest): string {
   const { cell, params } = request;
+  const ceiling = request.envelope.policy.authority.spend?.limit;
+  const aboveCeiling =
+    params.quotedAmount !== null && ceiling !== undefined && params.quotedAmount > ceiling;
   const quote =
     params.quotedAmount === null
       ? cell.costStructure === "paidLater"
@@ -212,21 +215,44 @@ export function authorPrompt(request: ScenarioRequest): string {
     `The call opens with an automated menu offering, in order: ` +
       params.menu.map((m) => `${m.option} on ${m.digit}`).join(", ") +
       `.`,
+    // The press that reaches the next line is named, because a script gated
+    // on a key the caller never presses holds forever. One generated cell
+    // gated its operator on "2" — billing — while the tree's only way out was
+    // 0, so every run that pressed 0 correctly stalled at that line, 16 of 16
+    // across a matrix.
     params.correctDigit === null
-      ? `NO option on that menu leads to service scheduling — the caller has to get past it another way.`
-      : `Option ${params.correctDigit} reaches a human in service scheduling.`,
+      ? `NO option on that menu leads to service scheduling — the caller has to get past it ` +
+        `another way: pressing 0 reaches an operator. The turn answering that press sets ` +
+        `afterPress to "0".`
+      : `Option ${params.correctDigit} reaches a human in service scheduling. The turn answering ` +
+        `that press sets afterPress to "${params.correctDigit}".`,
     quote,
     params.raisedTopic ? `Partway through, the representative raises ${params.raisedTopic}.` : ``,
-    params.offersAppointment
-      ? `The representative offers one specific arrival window and can book it.`
-      : params.reachesSomeoneWhoCanAct
-        ? `Nobody offers a specific arrival window, but the caller does reach someone who takes the`
-        : `NOBODY on this call is able to act on the request — whoever the caller reaches cannot help,`,
+    params.offersAppointment && aboveCeiling
+      ? `The representative offers one specific arrival window, but nothing is booked on this ` +
+        `call: after the caller answers, the representative leaves it open for them to call ` +
+        `back, and no later turn says the visit is booked or that the caller is all set.`
+      : params.offersAppointment
+        ? `The representative offers one specific arrival window and can book it. A LATER, ` +
+          `separate turn confirms the booking in plain words, naming the window — "Okay, ` +
+          `you're booked for …" or "You're all set for …". A question such as "Shall I ` +
+          `finalize it?" is an offer, not that confirmation.`
+        : params.reachesSomeoneWhoCanAct
+          ? `Nobody offers a specific arrival window, but the caller does reach someone who takes the`
+          : `NOBODY on this call is able to act on the request — whoever the caller reaches cannot help,`,
     params.offersAppointment
       ? ``
       : params.reachesSomeoneWhoCanAct
         ? `request and acts on it.`
         : `and nothing is arranged by the end of the call.`,
+    // The caller is told to stay quiet through holds, transfers and recorded
+    // announcements, and it does — so a script that only advances when the
+    // caller speaks waits forever on a hold that never ends. 44 of 96 runs of
+    // one matrix stalled that way, the model doing exactly what it was told.
+    `A turn that is NOT a reply to the caller — the menu after a recorded greeting, the`,
+    `person coming back after "one moment", a second person picking up after a transfer,`,
+    `the next recorded queue announcement — sets unpromptedAfterMs to how long after the`,
+    `previous turn it is heard (2000 to 6000). Never set it on a turn that sets afterPress.`,
     cell.complication === "transferToAnotherPerson"
       ? `Partway through, the caller is transferred to a second person.`
       : ``,

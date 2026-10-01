@@ -128,7 +128,24 @@
     "raisedTopic": null,
     "adjacentIndex": null,
     "offersAppointment": true,
-    "reachesSomeoneWhoCanAct": true
+    "reachesSomeoneWhoCanAct": true,
+    "agreement": {
+      "confirmTurn": 9,
+      "fields": {
+        "appointmentStart": [
+          ["2026", "10", "6", "8"],
+          ["tuesday", "8"],
+          ["oct", "6", "8"],
+          ["october", "6", "8"]
+        ],
+        "appointmentEnd": [
+          ["2026", "10", "6", "11"],
+          ["tuesday", "11"],
+          ["oct", "6", "11"],
+          ["october", "6", "11"]
+        ]
+      }
+    }
   },
   "script": [
     {
@@ -137,7 +154,8 @@
     },
     {
       "label": "Automated Menu",
-      "text": "For service, press 1. For new installations, press 2. For billing, press 3."
+      "text": "For service, press 1. For new installations, press 2. For billing, press 3.",
+      "unpromptedAfterMs": 2500
     },
     {
       "label": "Representative Greeting",
@@ -158,11 +176,13 @@
     },
     {
       "label": "Silence While Checking",
-      "text": "...Still looking through the available slots here, thank you for your patience..."
+      "text": "...Still looking through the available slots here, thank you for your patience...",
+      "unpromptedAfterMs": 6000
     },
     {
       "label": "Offer Appointment Window",
-      "text": "I have an opening for this Tuesday between 8:00 AM and 11:00 AM. Would that time window work for you?"
+      "text": "Thanks for holding. I have an opening Tuesday the sixth, between 8:00 AM and 11:00 AM. Would that time window work for you?",
+      "unpromptedAfterMs": 6000
     },
     {
       "label": "Ask Address",
@@ -170,7 +190,7 @@
     },
     {
       "label": "Booking Confirmation",
-      "text": "You are all set for Tuesday between 8:00 AM and 11:00 AM. Our technician will call you when they are on their way."
+      "text": "You are all set for Tuesday the sixth between 8:00 AM and 11:00 AM. Our technician will call you when they are on their way."
     },
     {
       "label": "Closing",

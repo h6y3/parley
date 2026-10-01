@@ -126,7 +126,26 @@
     "raisedTopic": null,
     "adjacentIndex": null,
     "offersAppointment": true,
-    "reachesSomeoneWhoCanAct": true
+    "reachesSomeoneWhoCanAct": true,
+    "agreement": {
+      "confirmTurn": 9,
+      "fields": {
+        "appointmentStart": [
+          ["2026", "10", "2", "14"],
+          ["friday", "2"],
+          ["oct", "2", "2"],
+          ["october", "2", "2"],
+          ["tomorrow", "2"]
+        ],
+        "appointmentEnd": [
+          ["2026", "10", "2", "16"],
+          ["friday", "4"],
+          ["oct", "2", "4"],
+          ["october", "2", "4"],
+          ["tomorrow", "4"]
+        ]
+      }
+    }
   },
   "script": [
     {
@@ -152,15 +171,16 @@
     },
     {
       "label": "AGENT1_INITIATE_TRANSFER",
-      "text": "Let me transfer you directly to Brenda in our local dispatch unit to get your technician assigned."
+      "text": "Let me transfer you directly to Brenda in our local dispatch unit to get your technician assigned. One moment."
     },
     {
       "label": "AGENT2_GREETING",
-      "text": "Hello, this is Brenda in dispatch. Mark passed along your details for the kitchen sink repair."
+      "text": "Hello, this is Brenda in dispatch. Mark passed along your details for the kitchen sink repair.",
+      "unpromptedAfterMs": 5000
     },
     {
       "label": "AGENT2_OFFER_WINDOW",
-      "text": "I can book a technician to arrive at your home tomorrow between two and four in the afternoon."
+      "text": "I can book a technician to arrive at your home tomorrow between two and four in the afternoon. Does that work for you?"
     },
     {
       "label": "AGENT2_ASK_NAME",
@@ -168,7 +188,7 @@
     },
     {
       "label": "AGENT2_CONFIRM_BOOKING",
-      "text": "You are booked for tomorrow between two and four PM, and the technician will call thirty minutes prior to arrival."
+      "text": "Okay, you are booked for tomorrow between two and four PM, and the technician will call thirty minutes prior to arrival."
     },
     {
       "label": "AGENT2_SIGN_OFF",
