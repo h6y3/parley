@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { MEETING_OPENING_TRIGGER, OPENING_TRIGGER } from "@parley/core";
 import { runCallScenario, type ScenarioTraceEvent } from "../src/call-scenario-runner.js";
+import { geminiTransport } from "../src/transports/gemini-transport.js";
 import { callScenarioSchema } from "../src/call-scenario.js";
 import type { CallScenario, ScenarioTurn } from "../src/call-scenario.js";
 
@@ -89,9 +92,8 @@ function fakeLive(respond: (text: string, n: number) => unknown[]) {
 async function run(s: CallScenario, factory: ReturnType<typeof fakeLive>["factory"]) {
   const trace: ScenarioTraceEvent[] = [];
   const result = await runCallScenario({
-    apiKey: "fake",
     scenario: s,
-    genAIFactory: factory,
+    transport: geminiTransport({ apiKey: "fake", genAIFactory: factory }),
     timings: FAST,
     trace: (e) => trace.push(e)
   });
@@ -99,15 +101,20 @@ async function run(s: CallScenario, factory: ReturnType<typeof fakeLive>["factor
 }
 
 describe("the script advances on events, never on a timer", () => {
-  it("sends no script turn at all to a model that never answers", async () => {
-    // The old runner seeded its activity flag to true, so the first scripted
-    // line went out on a 12s timer whether or not the model had said anything.
+  it("sends no reply line to a model that never answers", async () => {
+    // The old runner seeded its activity flag to true, so scripted lines went
+    // out on a 12s timer whether or not the model had said anything. The first
+    // line is pickup, not a reply, and goes out on the ring (see "with no
+    // ring" below); every line after it waits for the model.
     const fake = fakeLive(() => []);
     const result = await run(
-      scenario([{ label: "menu", text: "For service, press one." }]),
+      scenario([
+        { label: "menu", text: "For service, press one." },
+        { label: "again", text: "Please make a selection." }
+      ]),
       fake.factory
     );
-    expect(fake.sent).toHaveLength(1); // the opening trigger, and nothing else
+    expect(fake.sent).toEqual([OPENING_TRIGGER, "For service, press one."]);
     expect(result.endedBecause).toBe("stalled");
   });
 
@@ -115,12 +122,15 @@ describe("the script advances on events, never on a timer", () => {
     // A model mid-utterance has not finished. Advancing because a duration
     // elapsed is what let a scripted callee talk over it, and the transcript
     // then reads as though the model ignored what it was never allowed to hear.
-    const fake = fakeLive((_t, n) => (n === 1 ? [speak("Hello, this is")] : []));
+    const fake = fakeLive((_t, n) => (n === 2 ? [speak("Hello, this is")] : []));
     const result = await run(
-      scenario([{ label: "menu", text: "For service, press one." }]),
+      scenario([
+        { label: "menu", text: "For service, press one." },
+        { label: "again", text: "Please make a selection." }
+      ]),
       fake.factory
     );
-    expect(fake.sent).toHaveLength(1);
+    expect(fake.sent).toEqual([OPENING_TRIGGER, "For service, press one."]);
     expect(result.transcript).toBe("Hello, this is");
     expect(result.endedBecause).toBe("stalled");
   });
@@ -137,6 +147,86 @@ describe("the script advances on events, never on a timer", () => {
     const result = await run(s, fake.factory);
     expect(fake.sent.slice(1)).toEqual(["one", "two"]);
     expect(result.endedBecause).toBe("script-exhausted");
+  });
+});
+
+describe("with no ring, the phone is answered at once", () => {
+  // `firstLineDelayMs: 0` used to mean "the first line waits on the model's
+  // first completed turn". The opening trigger tells the model to say nothing,
+  // and Gemini sends no `turnComplete` for a turn it never takes — so the
+  // better the model obeyed, the more runs stalled before "Hello." went out:
+  // 8 of 10 on one billed batch, every one scored `stalled` with an empty
+  // transcript. Zero is a ring of zero, not a different rule.
+  it("delivers the first line to a model that stays silent after the trigger", async () => {
+    const fake = fakeLive(() => []);
+    const result = await run(
+      scenario([
+        { label: "hello", text: "Hello." },
+        { label: "next", text: "Anything else?" }
+      ]),
+      fake.factory
+    );
+    expect(fake.sent).toEqual([OPENING_TRIGGER, "Hello."]);
+    expect(result.turnsDelivered).toBe(1);
+    expect(result.endedBecause).toBe("stalled");
+  });
+
+  it("does not deliver the first line twice when the model also completes a turn", async () => {
+    const fake = fakeLive(() => [speak("ok"), complete()]);
+    const s = scenario(
+      [
+        { label: "a", text: "one" },
+        { label: "b", text: "two" }
+      ],
+      { closure: undefined }
+    );
+    const result = await run(s, fake.factory);
+    expect(fake.sent).toEqual([OPENING_TRIGGER, "one", "two"]);
+    expect(result.endedBecause).toBe("script-exhausted");
+  });
+});
+
+describe("a tool call is stamped with where in the script it landed", () => {
+  // A record made on the callee's offer and one made after the callee agreed
+  // look identical in `toolCalls` without this, and the evaluator cannot tell
+  // a premature close from a correct one.
+  it("records how many lines had gone out, and the trace carries the arguments", async () => {
+    const fake = fakeLive((_t, n) =>
+      n === 3
+        ? [
+            toolCall("record_outcome", {
+              status: "completed",
+              fields: { agreedAmount: "", appointmentStart: "Tuesday 10" }
+            }),
+            complete()
+          ]
+        : [complete()]
+    );
+    const s = scenario(
+      [
+        { label: "a", text: "one" },
+        { label: "b", text: "two" },
+        { label: "c", text: "three" }
+      ],
+      {
+        closure: undefined,
+        ivr: undefined,
+        outcome: {
+          fields: [
+            { name: "agreedAmount", description: "a" },
+            { name: "appointmentStart", description: "s" }
+          ]
+        }
+      }
+    );
+    const result = await run(s, fake.factory);
+    const rec = result.toolCalls.find((c) => c.name === "record_outcome");
+    expect(rec?.turnsDelivered).toBe(2);
+    const traced = result.trace.find((e) => e.type === "tool-call");
+    expect(traced).toMatchObject({
+      name: "record_outcome",
+      args: { status: "completed", fields: { appointmentStart: "Tuesday 10" } }
+    });
   });
 });
 
@@ -171,6 +261,123 @@ describe("a held turn is released by the press, not by a poll", () => {
     expect(fake.sent.slice(1)).toEqual(["For service, press one."]);
     expect(result.endedBecause).toBe("stalled");
     expect(Date.now() - started).toBeLessThan(FAST.wallClockMs);
+  });
+});
+
+/** A stale completion must not deliver a line. Measured in the parity Step 0
+ * probe: a completion armed the settle timer, a press then released the
+ * gated line, and the settle — never cleared — fired 466 ms later and sent
+ * the NEXT line with no model reply between the two. */
+describe("a line delivered by a press cancels the pending settle", () => {
+  it("never delivers line N+1 on the settle a completion armed before the press delivered N", async () => {
+    const fake = fakeLive((_t, n) =>
+      n === 1
+        ? [complete()]
+        : n === 2
+          ? // Completes (arming the settle), then presses before it fires.
+            [speak("Okay."), complete(), toolCall("press_digits", { digits: "1" })]
+          : []
+    );
+    const s = scenario(
+      [
+        { label: "menu", text: "For service, press one." },
+        { label: "agent", text: "Service, this is Dave.", afterPress: "1" },
+        { label: "lookup", text: "Let me look that up." }
+      ],
+      { closure: undefined }
+    );
+    const result = await runCallScenario({
+      scenario: s,
+      transport: geminiTransport({ apiKey: "fake", genAIFactory: fake.factory }),
+      // The settle outlasts the fake's 5 ms spacing, so the press lands while
+      // the settle armed by the completion before it is still pending.
+      timings: { ...FAST, settleMs: 40 }
+    });
+    expect(fake.sent.slice(1)).toEqual(["For service, press one.", "Service, this is Dave."]);
+    expect(result.turnsDelivered).toBe(2);
+  });
+});
+
+/** A gated line waits for ITS press. Generated and hand-written scripts gate
+ * several lines on the same key, and a cumulative "has 1 ever been pressed"
+ * stayed true for the rest of the call — so any tool call, `record_outcome`
+ * included, released the next gated line, on Deepgram mid-utterance. */
+describe("a gated turn opens only on a press made since it became current", () => {
+  const press = (id: string, digits: string) => ({
+    toolCall: { functionCalls: [{ id, name: "press_digits", args: { digits } }] }
+  });
+  const outcome = {
+    toolCall: {
+      functionCalls: [
+        { id: "outcome", name: "record_outcome", args: { status: "partial", fields: {} } }
+      ]
+    }
+  };
+  const doublyGated: ScenarioTurn[] = [
+    { label: "menu", text: "For service, press one." },
+    { label: "agent", text: "Service, this is Dave.", afterPress: "1" },
+    { label: "billing", text: "For billing questions, press one.", afterPress: "1" }
+  ];
+
+  it("record_outcome after an earlier press does not release the next gated line", async () => {
+    const fake = fakeLive((_t, n) =>
+      n === 1 ? [complete()] : n === 2 ? [press("p1", "1")] : n === 3 ? [outcome] : []
+    );
+    const result = await run(scenario(doublyGated, { closure: undefined }), fake.factory);
+    expect(fake.sent.slice(1)).toEqual(["For service, press one.", "Service, this is Dave."]);
+    expect(result.toolCalls.map((c) => c.name)).toEqual(["press_digits", "record_outcome"]);
+    expect(result.endedBecause).toBe("stalled");
+  });
+
+  it("a completed turn does not release it on a press made before it became current", async () => {
+    const fake = fakeLive((_t, n) =>
+      n === 1
+        ? [complete()]
+        : n === 2
+          ? [press("p1", "1")]
+          : // The post-press continuation's completion, then a real reply.
+            n === 3
+            ? [complete(), speak("Hi Dave."), complete()]
+            : []
+    );
+    const result = await run(scenario(doublyGated, { closure: undefined }), fake.factory);
+    expect(fake.sent.slice(1)).toEqual(["For service, press one.", "Service, this is Dave."]);
+    expect(result.trace.filter((e) => e.type === "turn-held").map((e) => e.label)).toEqual([
+      "billing"
+    ]);
+  });
+
+  it("a fresh press releases it", async () => {
+    const fake = fakeLive((_t, n) =>
+      n === 1 ? [complete()] : n === 2 ? [press("p1", "1")] : n === 3 ? [press("p2", "1")] : []
+    );
+    const result = await run(scenario(doublyGated, { closure: undefined }), fake.factory);
+    expect(fake.sent.slice(1)).toEqual(doublyGated.map((t) => t.text));
+    expect(result.snapshot.dtmf?.pressed).toEqual(["1", "1"]);
+  });
+
+  it("the reference seed plays through on the one press its menu asks for", async () => {
+    // It gated every post-menu line on "1", which only ever worked because
+    // the cumulative gate stayed open. Only the line the press reaches is
+    // gated now.
+    const seed = callScenarioSchema.parse(
+      JSON.parse(
+        readFileSync(
+          fileURLToPath(new URL("../scenarios/reference-service-visit.json", import.meta.url)),
+          "utf8"
+        )
+      )
+    );
+    const fake = fakeLive((_t, n) =>
+      n === 2
+        ? [press("p1", "1")]
+        : n === 3
+          ? [complete(), speak("Hi Sam."), complete()] // continuation, then reply
+          : [speak("Okay."), complete()]
+    );
+    const result = await run(seed, fake.factory);
+    expect(result.turnsDelivered).toBe(seed.script.length);
+    expect(result.snapshot.dtmf?.pressed).toEqual(["1"]);
   });
 });
 
@@ -271,26 +478,46 @@ describe("the consent gate sees what the scripted room actually said", () => {
   };
 
   it("ADMITS begin_notetaking after the phrase has been delivered and a model turn has completed", async () => {
+    // Silent on the trigger, as it says; asks once the room is live; acts on
+    // the answer.
     const { factory } = fakeLive((_text, n) =>
       n === 1
-        ? [speak("Any objection to my taking notes?"), complete()]
-        : [toolCall("begin_notetaking", {}), complete()]
+        ? []
+        : n === 2
+          ? [speak("Any objection to my taking notes?"), complete()]
+          : [toolCall("begin_notetaking", {}), complete()]
     );
     const result = await run(
-      scenario([{ label: "go-ahead", text: "Sure, go ahead and take notes." }], meeting),
+      scenario(
+        [
+          { label: "live", text: "Okay, everyone is here." },
+          { label: "go-ahead", text: "Sure, go ahead and take notes." }
+        ],
+        meeting
+      ),
       factory
     );
     expect(result.toolCalls.map((c) => c.result)).toContain("ok");
   });
 
   it("REFUSES it when the phrase was never spoken — the gate, not the script, decides", async () => {
+    // Silent on the trigger, as it says; asks once the room is live; acts on
+    // the answer.
     const { factory } = fakeLive((_text, n) =>
       n === 1
-        ? [speak("Any objection to my taking notes?"), complete()]
-        : [toolCall("begin_notetaking", {}), complete()]
+        ? []
+        : n === 2
+          ? [speak("Any objection to my taking notes?"), complete()]
+          : [toolCall("begin_notetaking", {}), complete()]
     );
     const result = await run(
-      scenario([{ label: "go-ahead", text: "Sure, that's fine with everyone." }], meeting),
+      scenario(
+        [
+          { label: "live", text: "Okay, everyone is here." },
+          { label: "go-ahead", text: "Sure, that's fine with everyone." }
+        ],
+        meeting
+      ),
       factory
     );
     expect(result.toolCalls.map((c) => c.result)).toEqual([

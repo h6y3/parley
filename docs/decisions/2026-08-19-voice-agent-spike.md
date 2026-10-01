@@ -1,7 +1,68 @@
 # Voice Agent spike — Deepgram Voice Agent as a second `RealtimeProvider`
 
-**Status:** inconclusive — the offline half is done; the deciding evidence (a live A/B) was
-deliberately not gathered in this task. See "Recommendation" for the single named open question.
+**Status:** resolved 2026-09-29 for support, still open for the default. Deepgram is a supported,
+selectable realtime provider; encoding negotiation is built; the flag is no longer refused. Whether
+Deepgram should become the daemon's _default_ is still undecided, and the live A/B below is still
+the evidence that decides it. See "Resolution — 2026-09-29".
+
+## Resolution — 2026-09-29
+
+The two blockers this record ended on are both closed, and the third outcome its
+recommendation listed ("keep both behind `--realtime-provider`") is now the shipped state.
+The sections below are kept as written, as the historical record of what the spike found; where
+they say the flag is refused, that was true on 2026-08-19 and is not true now.
+
+**What is supported.** Both `gemini` and `deepgram` are supported realtime providers.
+`parley serve` builds every provider whose key is set; `--realtime-provider` chooses which one a
+call gets when its envelope does not say (still `gemini`, and that default does not change
+silently). A call can choose per envelope with `execution.realtime.provider`. The Deepgram
+provider is `@parley/realtime-deepgram`; release 0.4.0 is the first to ship it as supported.
+
+**Encoding negotiation is resolved.** A `RealtimeProvider` now declares
+`audio: { accepts, emits }` and `CallSession` bridges each direction between the carrier's
+encoding (`TelephonyProvider.mediaEncoding`) and the provider's, with no conversion at all when
+they already match (Deepgram and Twilio both speak `mulaw@8000`). An unbridgeable pairing is
+refused before a phone rings. The codec's hard-wired assumption of Gemini's
+formats that made every inbound frame throw and every outbound frame noise is gone from the
+codec.
+
+**Defects found in the provider itself, and fixed.** The offline invariant suite exercised the
+provider directly, so it could not see these. The opening trigger was sent as
+`InjectAgentMessage`, which Deepgram speaks verbatim, so the callee would have heard the private
+instruction read aloud; it is now a user turn the model answers. The trigger guard capped the line
+at 120 characters, well under the production trigger, so every call would have thrown at the
+opening. Turn completion (`AgentAudioDone`) was unhandled, so farewell drains fell back to caps
+and meetings misclassified. `connect` resolved on socket open rather than `SettingsApplied`, and
+vendor `Error` / `Warning` messages were silent. The provider now handles all of these and never
+sends `InjectAgentMessage`, `UpdatePrompt`, `UpdateThink`, `UpdateSpeak` or `UpdateListen`.
+
+**Offline latency evidence (a throwaway probe, 2026-09-29).** The production system instruction
+and opening trigger, the same recorded caller turns streamed in real time, measured from the end
+of the caller's speech to the first agent audio byte (carrier latency, equal for all
+configurations, excluded):
+
+| Configuration                | Runs | Median  | Notes                                                             |
+| ---------------------------- | ---- | ------- | ----------------------------------------------------------------- |
+| Deepgram + a smaller Claude  | 6    | ~0.96 s | Ignored a one-sentence-purpose instruction; barge-in cut it early |
+| Deepgram + a small GPT model | 8    | 1.13 s  | Concise, on-brief, silent during the opening trigger              |
+| Gemini 3.8 Live              | 12   | 1.39 s  | Spoke during the trigger silence in 1 of 3 sessions               |
+
+The shipped Deepgram default is `gpt-4o-mini` (provider `open_ai`, Deepgram-managed) at speed
+1.25: the model Deepgram's own telephony reference agents use, in the Standard pricing tier
+($0.075 a minute against $0.163 for Advanced), and measured at about 0.5 to 0.96 s from callee
+text to first audio with the production prompt against about 1.15 to 1.77 s for
+`claude-sonnet-4-6`. The speech after the meeting-connected cue was measured on a smaller Claude
+model and has not been checked on the default, so meetings stay on the Gemini provider with
+`execution.realtime.provider` until it is.
+Speech recognition
+misheard a proper name, which is what `brief.keyterms` is for. Small samples: these are leads, not
+a verdict, and they measure everything except what a person hears.
+
+**What is still open: making Deepgram the default.** Latency parity on a probe is not the live
+A/B this record names. Before the default changes, place the same brief through both providers on
+a number under the operator's control and compare the four points listed under "Live A/B" below.
+Until then the default stays `gemini`, and choosing Deepgram is an explicit, per-daemon or
+per-call decision. Design and evidence: `docs/superpowers/specs/2026-09-29-realtime-provider-parity-design.md`.
 
 **Question this spike exists to answer:** does an ASR→LLM→TTS pipeline sound acceptable on a phone
 line where Gemini Live is native speech-to-speech?
@@ -77,8 +138,8 @@ implementation closes the socket directly rather than inventing one.
 **Managed `think` providers — verified.** A supplementary search-based check (not a page fetch)
 found that `open_ai`, `anthropic`, `google`, and `nvidia` are Deepgram-_managed_ `think` providers
 — no `endpoint` and no separate vendor API key required, only the Deepgram key already on the
-connection. This is why `DEFAULT_DEEPGRAM_LLM_MODEL = "gpt-4o-mini"` (matching the doc's literal
-example) is safe to ship as a default: a caller supplying only `DEEPGRAM_API_KEY` gets a working
+connection. This is why `DEFAULT_DEEPGRAM_LLM_MODEL = "gpt-4o-mini"` (superseded — see
+Resolution) (matching the doc's literal example) is safe to ship as a default: a caller supplying only `DEEPGRAM_API_KEY` gets a working
 `think` leg, not a second credential requirement discovered at runtime. This fact came from search
 result summaries rather than a direct page fetch and is accordingly weighted lower than the
 schema-derived facts above, though it is corroborated by the example's own `open_ai` usage with no
@@ -94,11 +155,11 @@ English-female-voice set was enumerated; none is a phonetic near-miss either (no
 
 Nearest alternatives by Deepgram's own one-line character description:
 
-| Identifier           | Character                                  | Why it's listed                     |
-| -------------------- | ------------------------------------------ | ----------------------------------- |
-| `aura-2-cordelia-en` | Approachable, Warm, Polite                 | shipped as `DEFAULT_DEEPGRAM_VOICE` |
-| `aura-2-helena-en`   | Caring, Natural, Positive, Friendly, Raspy | next-nearest                        |
-| `aura-2-juno-en`     | Natural, Engaging, Melodic, Breathy        | next-nearest                        |
+| Identifier           | Character                                  | Why it's listed                                                   |
+| -------------------- | ------------------------------------------ | ----------------------------------------------------------------- |
+| `aura-2-cordelia-en` | Approachable, Warm, Polite                 | shipped as `DEFAULT_DEEPGRAM_VOICE` (superseded — see Resolution) |
+| `aura-2-helena-en`   | Caring, Natural, Positive, Friendly, Raspy | next-nearest                                                      |
+| `aura-2-juno-en`     | Natural, Engaging, Melodic, Breathy        | next-nearest                                                      |
 
 `aura-2-cordelia-en` is a **provisional default for this spike, not a decision made on the
 project owner's behalf** — the preference named a voice that does not exist, and this is exactly
@@ -175,7 +236,9 @@ spike's authorized scope. Reporting a result here would mean fabricating one; in
 recorded as unobtained, matching the task's explicit instruction not to write a confident sentence
 that cannot be supported.
 
-## The flag is refused today — an encoding contract the interface does not have
+## The flag was refused on 2026-08-19 — an encoding contract the interface did not have
+
+_Resolved on 2026-09-29; kept as the record of the finding. See "Resolution" above._
 
 **`parley serve --realtime-provider deepgram` throws rather than serving**
 (`packages/cli/src/args.ts`), and this is the finding the offline invariant
@@ -183,7 +246,7 @@ suite could not reach, because it exercises the provider directly rather than
 through a `CallSession`.
 
 `RealtimeProvider` has no encoding negotiation. `CallSession`'s realtime sink
-sends `codec.decodeInbound(frame)` unconditionally, and `AudioCodec` is
+sent the codec's inbound decode unconditionally, and `AudioCodec` was
 documented as "carrier inbound → model input: 8kHz μ-law → 16kHz PCM" — so
 what reaches the provider is always `pcm@16000`, the rate Gemini Live wants.
 `DeepgramRealtimeProvider.sendAudio` throws on anything that is not
@@ -193,7 +256,7 @@ call:
 - **inbound:** every frame throws inside the sink fan-out, is caught and
   reported as a diagnostic — roughly fifty a second, for the whole call — and
   the agent hears nothing at all;
-- **outbound:** the provider emits `mulaw@8000`, and `encodeOutbound` is
+- **outbound:** the provider emits `mulaw@8000`, and the codec's outbound encode was
   documented as "model output → carrier outbound: 24kHz PCM → 8kHz μ-law", so
   it treats mu-law bytes as PCM samples and the callee hears noise.
 
@@ -247,7 +310,7 @@ back-to-back, on one bridge, and record for each:
 
 ## Recommendation
 
-**Needs more work — and there are now TWO named items, not one.** The live A/B
+**As of 2026-08-19: needs more work — and there were then TWO named items, not one. The first is closed (see "Resolution — 2026-09-29"); the second is not.** The live A/B
 below is still the question the spike exists to answer; ahead of it sits
 encoding negotiation on `RealtimeProvider`, without which the flag cannot carry
 a call at all and the A/B has nothing to measure. The offline

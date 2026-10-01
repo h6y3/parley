@@ -1,15 +1,19 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import {
+  AudioContractError,
+  CALL_MAX_DURATION_SECONDS,
   CallSession,
+  CONSENT_HANDOFF_MAX_MS,
   type AudioCodec,
+  type AudioEncoding,
   type FrameConverter,
-  type RealtimeProvider,
   type TelephonyProvider,
   type TranscriptionProvider
 } from "@parley/core";
-import { parseCallEnvelope, composePolicy } from "@parley/policy";
+import { parseCallEnvelope, composePolicy, type CallEnvelope } from "@parley/policy";
 import type { NumberAllowlist, HostAllowlist } from "./allowlist.js";
 import type { PendingSessions } from "./pending-sessions.js";
+import type { BuiltRealtime, RealtimeProviderKind, RealtimeRegistry } from "./realtime-registry.js";
 
 export interface HttpRequest {
   method: string;
@@ -27,11 +31,19 @@ export interface HttpResponse {
 
 export interface ServerDeps {
   telephony: TelephonyProvider;
-  realtime: RealtimeProvider;
+  /** Every realtime provider this daemon can speak through, and the one a call
+   * gets when its envelope does not choose (`execution.realtime`). Each entry
+   * carries the model it connects with, so there is no daemon-wide `model`: a
+   * model belongs to a provider, and a daemon holding two providers has no
+   * single model to name. */
+  realtime: RealtimeRegistry;
   codec: AudioCodec;
+  /** The speaking plane's frame converter and its capability check —
+   * `CallSessionParams.convert` / `canConvert`, passed through untouched. */
+  convert: FrameConverter;
+  canConvert: (from: AudioEncoding, to: AudioEncoding) => boolean;
   from: string;
   publicHost: string;
-  model: string;
   numberAllowlist: NumberAllowlist;
   hostAllowlist: HostAllowlist;
   pending: PendingSessions;
@@ -42,6 +54,9 @@ export interface ServerDeps {
    * or absent at runtime means the daemon refuses to dial for anyone — see
    * `authorizeCall`. */
   callToken: string | undefined;
+  /** IANA zone the model is told "today" in — `CallSessionParams.timeZone`,
+   * passed through. Absent means the host's own zone. */
+  timeZone?: string;
   /** The listening plane, matching the shape `CallSessionParams.transcription`
    * already takes. Optional because meeting support is optional — a
    * deployment with no transcription provider configured can still place
@@ -164,6 +179,14 @@ async function handleCall(req: HttpRequest, deps: ServerDeps): Promise<HttpRespo
       });
     }
   }
+  // Resolve the provider, then check the call fits its session — both ahead of
+  // the allowlist, the reservation and the dial. These are refusals about THIS
+  // daemon's configuration, so they come before anything that consumes a
+  // caller's retry budget or places a billed call.
+  const chosen = resolveRealtime(envelope, deps.realtime);
+  if ("refusal" in chosen) return chosen.refusal;
+  const tooLong = checkSessionCap(envelope, chosen.kind, chosen.built);
+  if (tooLong) return tooLong;
   const { brief } = envelope;
   // Dual wire shape: a typed `policy` is composed here; already-composed raw
   // `guardrails[]` are passed straight through. `@parley/policy` remains a
@@ -187,27 +210,38 @@ async function handleCall(req: HttpRequest, deps: ServerDeps): Promise<HttpRespo
     brief,
     guardrails,
     telephony: deps.telephony,
-    realtime: deps.realtime,
+    realtime: chosen.built.provider,
     codec: deps.codec,
+    convert: deps.convert,
+    canConvert: deps.canConvert,
     from: deps.from,
     answerWebhookUrl: `https://${deps.publicHost}/twilio/answer`,
     // Dead code since V1: OriginateParams declared this field and nothing ever
     // set it, so no lifecycle event has ever reached a CallSession.
     statusCallbackUrl: `https://${deps.publicHost}/twilio/status`,
-    model: deps.model,
+    model: chosen.built.model,
     // Never call content — only why a transport ended. A realtime session that
     // dies on connect hangs up the phone the moment the callee answers, and
     // writes no call record (records are written on a clean end), so without
     // this the only evidence anywhere is a caller saying it went dead.
     onDiagnostic: (message) => console.error(`[call] ${message}`),
     ...(envelope.execution ? { execution: envelope.execution } : {}),
-    ...(deps.transcription ? { transcription: deps.transcription } : {})
+    ...(deps.transcription ? { transcription: deps.transcription } : {}),
+    ...(deps.timeZone ? { timeZone: deps.timeZone } : {})
   });
   let result;
   try {
     result = await session.originate();
-  } catch {
+  } catch (err) {
     if (brief.operation) deps.pending.releaseOperation(brief.operation);
+    // Refused before dialling: this daemon's realtime provider and carrier
+    // cannot be bridged, so no call will ever succeed here. That is our
+    // configuration, not the carrier failing (502) — say so, and name the
+    // missing path so the operator can see which half to change. The
+    // encodings are declarations, never call content.
+    if (err instanceof AudioContractError) {
+      return json(503, { error: `audio contract: ${err.message}` });
+    }
     return json(502, { error: "origination error" });
   }
   if (result.status === "failed" || !result.providerCallId) {
@@ -216,6 +250,81 @@ async function handleCall(req: HttpRequest, deps: ServerDeps): Promise<HttpRespo
   }
   deps.pending.set(result.providerCallId, session, brief.operation);
   return json(202, { callId: result.providerCallId });
+}
+
+/** The provider the envelope names, or the daemon's default when it names none.
+ *
+ * A named provider this daemon has not built is REFUSED, never swapped for the
+ * default. The caller chose it for a reason — an A/B arm, a session length only
+ * one vendor allows — and a call quietly placed on the other vendor answers a
+ * question nobody asked while its record looks like an answer to the one they
+ * did. 503, like the missing-transcription-plane refusal: the envelope is
+ * valid, this daemon is just not configured to honor it. */
+function resolveRealtime(
+  envelope: CallEnvelope,
+  registry: RealtimeRegistry
+): { kind: RealtimeProviderKind; built: BuiltRealtime } | { refusal: HttpResponse } {
+  const kind = envelope.execution?.realtime?.provider ?? registry.default;
+  const built = registry.providers[kind];
+  if (!built) {
+    return {
+      refusal: json(503, { error: `realtime provider "${kind}" is not configured on this daemon` })
+    };
+  }
+  return { kind, built };
+}
+
+/** Refuse, before dialling, a call whose speaking plane could outlive the
+ * chosen provider's longest session. A vendor ending the session mid-call
+ * leaves a live, billing phone line with nothing on our end of it — a worse
+ * way to learn this than a 422 now. A provider that declares no
+ * `maxSessionSeconds` bounds nothing and is never refused here. */
+function checkSessionCap(
+  envelope: CallEnvelope,
+  kind: RealtimeProviderKind,
+  built: BuiltRealtime
+): HttpResponse | null {
+  const cap = built.provider.maxSessionSeconds;
+  if (cap === undefined) return null;
+  const execution = envelope.execution;
+  const declared = execution?.limits?.maxDurationSeconds;
+  let lifetimeSeconds: number;
+  if (execution?.meeting !== undefined) {
+    // A meeting's speaking plane does not live as long as the meeting: it is
+    // retired at consent, and the listening plane (a transcription session,
+    // not this provider) carries the rest. So what has to fit is the
+    // PRE-CONSENT window — and that window is bounded, far below
+    // MEETING_MAX_DURATION_SECONDS:
+    //
+    //  - `CallSession.armTimers` (@parley/core call-session.ts) arms
+    //    `consentTimer` in `attach`, right after the realtime session
+    //    connects, for `consent.timeoutSeconds` — which the envelope schema
+    //    caps at 900 (@parley/policy schema.ts, `meeting.consent`). When it
+    //    fires, `endCall("consentTimeout")` hangs up and closes the session.
+    //  - The only thing that clears it early is `beginNotetaking`, which then
+    //    retires the speaking plane (`speakingPlaneRetired`, `speaking.close()`)
+    //    within CONSENT_HANDOFF_MAX_MS — the transcriber-connect, turn-finish
+    //    and drain timeouts it waits on. Every other exit is `endCall`, which
+    //    clears the timer and closes the session itself.
+    //  - A declared `limits.maxDurationSeconds` arms `durationTimer`, which
+    //    ends the call outright if it comes first.
+    //
+    // So the realtime session lives at most
+    // min(maxDurationSeconds, consent.timeoutSeconds + handoff): 900s + 19s at
+    // the very most, well inside Deepgram's 7200s even for a four-hour meeting.
+    const preConsent =
+      execution.meeting.consent.timeoutSeconds + Math.ceil(CONSENT_HANDOFF_MAX_MS / 1000);
+    lifetimeSeconds = declared === undefined ? preConsent : Math.min(declared, preConsent);
+  } else {
+    // An ordinary call keeps its speaking plane for its whole length. With no
+    // declared cap CallSession arms no duration timer at all, so the call is
+    // measured at the ordinary-call ceiling, CALL_MAX_DURATION_SECONDS — the
+    // longest a caller can ask for — rather than at "unbounded", which would
+    // refuse every uncapped call on any provider that declares a limit.
+    lifetimeSeconds = declared ?? CALL_MAX_DURATION_SECONDS;
+  }
+  if (lifetimeSeconds <= cap) return null;
+  return json(422, { error: `call duration exceeds ${kind} session limit of ${cap}s` });
 }
 
 /** Host-allowlist + signature check, shared by every Twilio-originated route.

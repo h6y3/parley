@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { CallSession } from "../src/call-session.js";
 import type { AudioSink } from "../src/call-session.js";
 import { MIXED_SOURCE, MULAW_8K } from "../src/index.js";
-import { makeSessionParams, FakeSocket } from "./helpers/call-session-harness.js";
+import {
+  makeRealtimeSessionStub,
+  makeSessionParams,
+  FakeSocket
+} from "./helpers/call-session-harness.js";
 
 describe("CallSession audio sinks", () => {
   it("fans one inbound frame out to EVERY registered sink", async () => {
@@ -143,5 +147,19 @@ describe("CallSession audio sinks", () => {
     expect([...session.phases]).toEqual([]);
     socket.pushInbound({ encoding: MULAW_8K, data: Buffer.alloc(160) }, MIXED_SOURCE);
     expect(seen).toEqual([]);
+  });
+});
+
+describe("CallSession realtime diagnostics", () => {
+  it("forwards a provider onDiagnostic to the session onDiagnostic", async () => {
+    const diagnostics: string[] = [];
+    const realtimeSession = makeRealtimeSessionStub();
+    const session = new CallSession({
+      ...makeSessionParams({ realtimeSession }),
+      onDiagnostic: (message) => diagnostics.push(message)
+    });
+    await session.attach("CA1", new FakeSocket());
+    realtimeSession.callbacks?.onDiagnostic?.("gemini goAway: timeLeft=5s");
+    expect(diagnostics).toContain("gemini goAway: timeLeft=5s");
   });
 });

@@ -1,7 +1,11 @@
+import type { OpeningDelivery } from "./types.js";
+
 /** The single opening-trigger line sent once via `RealtimeSession.sendOpeningTrigger`
  * after connect. Plain, short, generic — never restates persona or brief
  * (design spec §4.1). This is Parley's ONLY fixed trigger string. Lives here
- * rather than in @parley/policy because it is generic, not policy. */
+ * rather than in @parley/policy because it is generic, not policy. On a
+ * provider declaring `openingDelivery: "prompt"` the same text is appended to
+ * the system instruction instead — see `planOpening` below. */
 /** Sent the moment the media stream attaches — which is BEFORE the far end has
  * made a sound.
  *
@@ -93,11 +97,140 @@ export const MEETING_OPENING_TRIGGER =
   "the waiting is over and you speak next: say once who you are and why you are here, then ask " +
   "whether it is all right for you to take notes.";
 
+/** The opening on a `"prompt"`-delivery provider's MEETING — the one line
+ * sent after connect there. `MEETING_OPENING_TRIGGER` itself rides in the
+ * system instruction; this only marks the moment it describes, because a
+ * bridge at connect is hold music or silence, and a model handed nothing at
+ * all may never take a first turn in which to start listening for the room.
+ *
+ * A statement of fact, not an instruction: on such a vendor it arrives as a
+ * USER turn, heard as someone on the line, so it asks for nothing and reads as
+ * exactly what it is. One short line, no newline, no caller content. */
+export const MEETING_CONNECTED_CUE = "The meeting line is connected.";
+
+/** What `planOpening` decided: text to append to the one-time system
+ * instruction, and the line to send as the opening. Either may be absent. */
+export interface OpeningPlan {
+  promptSuffix?: string;
+  trigger?: string;
+}
+
+/** The one place the opening is decided — for `CallSession`, the scenario
+ * runner and the audio runner alike. A harness choosing differently from
+ * production would measure a call nobody makes.
+ *
+ * `"turn"` is the long-standing behaviour, byte for byte: the trigger for the
+ * call's shape, sent as its own input. `"prompt"` moves that same text into
+ * the system instruction and sends nothing on a two-party call (the callee's
+ * "hello" is the opening), or `MEETING_CONNECTED_CUE` on a meeting. See
+ * `OpeningDelivery` (`./types.ts`) for why a vendor declares one or the
+ * other. Every string returned is a constant in this file. */
+export function planOpening(delivery: OpeningDelivery, isMeeting: boolean): OpeningPlan {
+  const opening = isMeeting ? MEETING_OPENING_TRIGGER : OPENING_TRIGGER;
+  if (delivery === "turn") return { trigger: opening };
+  return isMeeting
+    ? { promptSuffix: opening, trigger: MEETING_CONNECTED_CUE }
+    : { promptSuffix: opening };
+}
+
+/** The full system instruction a connect sends: the rendered brief, plus the
+ * opening when `planOpening` put it in the prompt. The one place the two are
+ * joined — for `CallSession`, the scenario runner and the audio runner alike —
+ * so what a harness reports as "the prompt" is byte for byte what a real call
+ * on the same provider sends. The suffix is a Parley constant (`planOpening`
+ * returns nothing else), so the result is still rendered brief plus fixed
+ * text. */
+export function withOpening(rendered: string, opening: OpeningPlan): string {
+  return opening.promptSuffix !== undefined ? `${rendered}\n\n${opening.promptSuffix}` : rendered;
+}
+
+/** The instant and the zone the model is told "today" in. `now` is a `Date`
+ * so the caller's injected clock (`CallSessionParams.now`, the harness's
+ * runner clock) is what decides the date, never a hidden `new Date()` here. */
+export interface TodayInput {
+  now: Date;
+  /** An IANA zone name (`America/Los_Angeles`). Weekday and date are computed
+   * in it, so a call placed at 23:30 local is not dated by UTC's tomorrow. */
+  timeZone: string;
+}
+
+/** The host's own zone — the default when nothing configures one. */
+export function defaultTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+/** The one sentence that lets the model turn "next Tuesday" into the ISO date
+ * the outcome schema requires. A model has no clock; without this it guesses
+ * the year from training data. Parley-authored and computed once at connect —
+ * never caller content, so it does not widen the one-shot instruction. */
+export function todaySentence(today: TodayInput): string {
+  // `en-CA` formats the date part as YYYY-MM-DD; the weekday is read from a
+  // second formatter in the same zone rather than parsed back out of a string.
+  const date = new Intl.DateTimeFormat("en-CA", {
+    timeZone: today.timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(today.now);
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: today.timeZone,
+    weekday: "long"
+  }).format(today.now);
+  return (
+    `Today is ${weekday}, ${date} (${today.timeZone}). When the other person gives a relative ` +
+    `date such as "tomorrow" or "next Tuesday", work out the calendar date from today before ` +
+    `you record it. The next 14 days are: ${nextDays(today, 14).join(", ")}. ` +
+    `When you say a date, use the weekday and date together exactly as listed.`
+  );
+}
+
+/** The `count` calendar days after today in `today.timeZone`, as "Thu Oct 1".
+ *
+ * Told "Today is Wednesday, 2026-09-30", a think model on live calls resolved
+ * "next Tuesday" to October 7th, twice (it is October 6). Weekday arithmetic is
+ * what a language model does worst, so the sentence hands over the calendar
+ * rather than asking for one to be computed.
+ *
+ * Today's date is read in the call's zone with `formatToParts`; the following
+ * days are then stepped as UTC calendar dates at noon and formatted in UTC, so
+ * a DST change in the call's zone can neither skip nor repeat a day. The locale
+ * is pinned to `en-US` and every part is read by type, so the host's locale
+ * never shapes the text. */
+function nextDays(today: TodayInput, count: number): string[] {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: today.timeZone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric"
+  }).formatToParts(today.now);
+  const part = (type: Intl.DateTimeFormatPartTypes): number =>
+    Number(parts.find((p) => p.type === type)?.value);
+  const [year, month, day] = [part("year"), part("month"), part("day")];
+  const label = new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    weekday: "short",
+    month: "short",
+    day: "numeric"
+  });
+  const days: string[] = [];
+  for (let i = 1; i <= count; i++) {
+    const p = label.formatToParts(new Date(Date.UTC(year, month - 1, day + i, 12)));
+    const get = (type: Intl.DateTimeFormatPartTypes): string =>
+      p.find((x) => x.type === type)?.value ?? "";
+    days.push(`${get("weekday")} ${get("month")} ${get("day")}`);
+  }
+  return days;
+}
+
 export interface RenderInput {
   persona: string;
   objective: string;
   facts: readonly string[];
   guardrails: readonly string[];
+  /** When present, one Parley-authored sentence stating today's date is
+   * appended as the last section. Absent leaves the output byte-identical to
+   * what it was before this field existed. */
+  today?: TodayInput;
 }
 
 /** Policy-agnostic assembler. Orders persona, then objective+facts, then
@@ -114,5 +247,6 @@ export function renderSystemInstruction(input: RenderInput): string {
   if (objectiveAndFacts) sections.push(objectiveAndFacts);
   const guardrails = input.guardrails.join(" ").trim();
   if (guardrails) sections.push(guardrails);
+  if (input.today) sections.push(todaySentence(input.today));
   return sections.join("\n\n");
 }

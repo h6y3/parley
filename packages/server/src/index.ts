@@ -10,3 +10,4 @@ export type { CompletedCallRecord } from "./media-connection.js";
 export { wrapWsSocket } from "./ws-adapter.js";
 export { createParleyServer } from "./server.js";
 export type { ParleyServerConfig } from "./server.js";
+export type { BuiltRealtime, RealtimeProviderKind, RealtimeRegistry } from "./realtime-registry.js";

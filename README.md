@@ -15,14 +15,14 @@ what happened. Your agent keeps the memory, planning, and relationship with the 
 the call.
 
 If a harness can run a command or make an authenticated HTTP request, it can invoke Parley. That
-includes local coding agents such as Claude Code and Codex, personal-agent harnesses such as
-OpenClaw, and ChatGPT-powered or custom applications. These are composable entry points, not native
+includes local coding agents such as Claude Code and Codex, self-hosted personal-agent harnesses,
+and ChatGPT-powered or custom applications. These are composable entry points, not native
 product integrations or endorsements.
 
 ## Bring your own agent
 
 ```text
-Claude Code · Codex · OpenClaw · your ChatGPT-powered app · your own harness
+Claude Code · Codex · a personal-agent harness · your ChatGPT-powered app · your own harness
                               │
                               │  CLI or authenticated HTTP
                               │  one typed call envelope
@@ -229,8 +229,8 @@ See [Scenario Authoring](docs/scenario-authoring.md), especially
 | [`@parley/policy`](packages/policy)                                 | Versioned call-envelope schema, policy composition, and call presets                     |
 | [`@parley/audio`](packages/audio)                                   | Audio conversion, framing, barge-in buffering, and DTMF synthesis                        |
 | [`@parley/telephony-twilio`](packages/telephony-twilio)             | Twilio origination, signed webhooks, Media Streams, drain, and hangup                    |
-| [`@parley/realtime-gemini`](packages/realtime-gemini)               | Default Gemini Live speaking-plane provider                                              |
-| [`@parley/realtime-deepgram`](packages/realtime-deepgram)           | Experimental Deepgram speaking-plane provider                                            |
+| [`@parley/realtime-gemini`](packages/realtime-gemini)               | Default Gemini Live speaking-plane provider (`gemini-3.8-live`)                          |
+| [`@parley/realtime-deepgram`](packages/realtime-deepgram)           | Deepgram Voice Agent speaking-plane provider                                             |
 | [`@parley/transcription-deepgram`](packages/transcription-deepgram) | Silent meeting transcription provider                                                    |
 | [`@parley/server`](packages/server)                                 | Authenticated call API, answer webhook, media WebSocket, and operation reservations      |
 | [`@parley/cli`](packages/cli)                                       | `serve`, `call`, `doctor`, and `harness` commands                                        |

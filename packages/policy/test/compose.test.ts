@@ -51,7 +51,7 @@ describe("composePolicy", () => {
     expect(g).toContain("nothing beyond it: A table for four at 7pm is fine.");
     expect(g).toContain("only this number: +15551234567");
     expect(g).toContain("Pronounce the last name Rivera as ree-VAIR-uh.");
-    expect(g).toContain("confirm the single key outcome");
+    expect(g).toContain("say one short goodbye, and end the call");
     expect(g).toContain("leave a short message");
     expect(g).toContain("Custom note.");
   });
@@ -106,7 +106,7 @@ describe("new prose-plane rails", () => {
   it("emits the preferences rail before the deferral rail", () => {
     const out = composePolicy(newRailBase(), ["Prefers morning appointments."]);
     const prefIdx = out.findIndex((r) => r.includes("standing preferences"));
-    const deferIdx = out.findIndex((r) => r.includes("will need to follow up with"));
+    const deferIdx = out.findIndex((r) => r.includes("then ask whether they can still go ahead"));
     expect(prefIdx).toBeGreaterThanOrEqual(0);
     expect(deferIdx).toBeGreaterThanOrEqual(0);
     expect(prefIdx).toBeLessThan(deferIdx);

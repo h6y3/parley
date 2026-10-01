@@ -14,13 +14,9 @@ describe("parseParleyArgs", () => {
     // must never change without a deliberate edit here.
     expect(parseParleyArgs(["serve"]).realtimeProvider).toBe("gemini");
   });
-  // The flag produced a call on which the agent heard silence and the callee
-  // heard noise, while ~50 caught diagnostics a second went to the log: the
-  // realtime sink always sends pcm@16000 and the Deepgram provider accepts only
-  // mulaw@8000, and RealtimeProvider has nowhere to negotiate that.
-  it("REFUSES `serve --realtime-provider deepgram` until RealtimeProvider can negotiate encodings", () => {
-    expect(() => parseParleyArgs(["serve", "--realtime-provider", "deepgram"])).toThrow(
-      /no encoding negotiation/
+  it("accepts `serve --realtime-provider deepgram` as the default provider", () => {
+    expect(parseParleyArgs(["serve", "--realtime-provider", "deepgram"]).realtimeProvider).toBe(
+      "deepgram"
     );
   });
   it("rejects an unrecognized --realtime-provider value", () => {

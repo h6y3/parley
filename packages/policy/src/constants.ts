@@ -31,10 +31,18 @@ export const DEFERRAL_CORE =
   "you do not have it is always the right answer there: whatever you say, the other person will " +
   "write down and act on.";
 
+/** Live evidence: a callee asked whether the principal was still with a particular
+ * insurer; the model deferred correctly, then two turns later recorded the call
+ * as partial and hung up on a callee who was still mid-booking. A gap is only a
+ * reason to stop if it actually blocks them, so the rule now asks whether they
+ * can go ahead without the missing piece. */
 export function deferralRule(principalName: string): string {
   return (
     `If you are asked something this brief does not cover, say plainly that you do not have ` +
-    `that information and will need to follow up with ${principalName}. ${DEFERRAL_CORE}`
+    `that information and will follow up with ${principalName} — then ask whether they can ` +
+    `still go ahead without it. If they can, carry on and get as much of the task done on ` +
+    `this call as you can; the missing piece is a follow-up item, not a reason to stop. ` +
+    `${DEFERRAL_CORE}`
   );
 }
 
@@ -79,16 +87,39 @@ export function callbackRule(principalName: string, callbackNumber: string): str
  * on, closed as though it were done. It answered every question it was asked;
  * nothing asked it to find out what the OTHER side still needed.
  *
+ * The ritual after that check is gone. It said "confirm the single key outcome
+ * in one short sentence, thank them and say goodbye", and on live calls the
+ * model obeyed it literally: it asked the callee to re-confirm a date they had
+ * already agreed ("Yeah. We already covered that."), recapped the call, and
+ * thanked them again around every tool answer. The rail now names the three
+ * acts in the order they happen — record, one goodbye, end — and forbids the
+ * re-confirmation and the recap outright, because "keep it brief" left both to
+ * the model's judgment and it judged them polite.
+ *
  * Deliberately tool-neutral: it says treat the thing as unfinished, not "set
- * status to partial". `record_outcome` may not be declared on a given call, and
- * telling a model to use a tool it does not have is its own defect. */
+ * status to partial", and "record the outcome" / "end the call" rather than
+ * naming `record_outcome` / `end_call`. Either tool may be undeclared on a
+ * given call, and telling a model to use a tool it does not have is its own
+ * defect; the tool descriptions carry the tool-specific instructions, and the
+ * voicemail rails already say "end the call" in the same generic sense.
+ *
+ * The rail opens with what counts as settled. On a live call the model
+ * recorded the outcome and hung up in the very turn the callee merely offered
+ * a time ("what about Tuesday at two?") — it read the offer as the agreement
+ * and closed before the callee had confirmed anything. Offline replays of that
+ * call on Gemini 3.8, ten runs each: without the sentence the model closed on
+ * the offer in 7 runs, with it in 3. The sentence tells it to accept the offer,
+ * let the callee confirm in their own words, and only then close. */
 export const WRAP_UP_RULE =
-  "Before ending the call, ask whether they need anything else from you to complete what you have " +
-  "arranged — an appointment nobody can act on is not an appointment. Give them whatever this " +
-  "brief covers. If they need something it does not cover, say plainly that you will follow up, " +
-  "and treat what you arranged as unfinished rather than done. Then confirm the single key " +
-  "outcome in one short sentence, thank them and say goodbye. Keep it brief — do not re-list " +
-  "every detail or over-recap.";
+  "Nothing is settled until they have agreed to a specific arrangement in their own words; " +
+  "their offer or your proposal is not agreement — accept it, let them confirm, then close. " +
+  "When the purpose is settled, check once whether they need anything else from you to act on " +
+  "it — an appointment nobody can act on is not an appointment. Give them whatever this " +
+  "brief covers. If something this brief does not cover stops them acting on it — ask, never " +
+  "assume — say plainly that you will follow up, and treat what you arranged as unfinished " +
+  "rather than done. Then record the outcome, say one " +
+  "short goodbye, and end the call. Do not ask them to re-confirm details they have already " +
+  "confirmed, and do not recap settled details back to them.";
 
 export function honestIfAsked(principalName: string): string {
   return (

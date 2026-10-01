@@ -32,5 +32,9 @@
   "transcriptPath": "fixtures/meetings/roadmap-sync/transcript.jsonl",
   "gapMs": 34000,
   "coveredMs": 191000,
-  "modelTurnsCompleted": 2
+  "modelTurnsCompleted": 2,
+  "realtime": {
+    "provider": "gemini",
+    "model": "gemini-3.8-live"
+  }
 }

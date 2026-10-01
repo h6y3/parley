@@ -144,6 +144,46 @@ describe("the zod schema and the committed JSON Schema agree", () => {
     expect(validator.validate(record, committed).valid).toBe(true);
   });
 
+  /** `realtime` and `firstModelAudioMs` are read by the provider A/B, in the
+   * consumer, against the committed file. Additive and optional, so the case
+   * worth pinning is the one a mis-projected field would get wrong: both
+   * derivations must accept the fields present and absent, and both must
+   * reject the same malformed values. */
+  it("agrees on realtime and firstModelAudioMs, present, absent and malformed", async () => {
+    const committed: object = JSON.parse(await readFile(repoRootSchemaPath(), "utf8"));
+    const validator = new Validator();
+    const valid = {
+      ...base,
+      status: "never_joined",
+      transcriptPath: null,
+      consentReceipt: null
+    };
+    const cases: ReadonlyArray<{ fields: Record<string, unknown>; ok: boolean }> = [
+      { fields: {}, ok: true },
+      { fields: { realtime: { provider: "deepgram", model: "gpt-4o-mini" } }, ok: true },
+      {
+        fields: {
+          realtime: { provider: "gemini", model: "gemini-3.8-live" },
+          firstModelAudioMs: 0
+        },
+        ok: true
+      },
+      { fields: { firstModelAudioMs: 1234 }, ok: true },
+      { fields: { firstModelAudioMs: -1 }, ok: false },
+      { fields: { firstModelAudioMs: "1234" }, ok: false },
+      { fields: { realtime: { provider: "deepgram" } }, ok: false },
+      { fields: { realtime: { model: "gpt-4o-mini" } }, ok: false },
+      { fields: { realtime: "deepgram" }, ok: false }
+    ];
+
+    for (const { fields, ok } of cases) {
+      const record = { ...valid, ...fields };
+      const label = JSON.stringify(fields);
+      expect(meetingRecordSchema.safeParse(record).success, `zod on ${label}`).toBe(ok);
+      expect(validator.validate(record, committed).valid, `JSON Schema on ${label}`).toBe(ok);
+    }
+  });
+
   /** Without this, an invariant reading a field the matrix does not vary would
    * be tested by nothing while every assertion above still passed — the same
    * blind spot, one level up. An invariant that never fires across the whole

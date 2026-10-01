@@ -7,7 +7,7 @@ export { DERAIL_SCENARIOS, MEETING_SCENARIOS } from "./scenarios.js";
 export type { DerailScenario } from "./scenarios.js";
 
 export { disclosureOkForMode, detectMarkerLeak, evaluateScenarioRun } from "./evaluation.js";
-export type { ScenarioResult } from "./evaluation.js";
+export type { ScenarioResult, ReliabilityCode } from "./evaluation.js";
 
 export { runAudioScript } from "./audio-runner.js";
 export type { AudioRunResult, AudioScriptTurn } from "./audio-runner.js";
@@ -18,7 +18,11 @@ export type { TextPreviewResult, TextPreviewTurnResult } from "./text-preview-ru
 export { buildReliabilityReport } from "./reliability-report.js";
 export type { ScenarioReliabilityReport } from "./reliability-report.js";
 
-export { runScenarioReliability, loadScenarioAudio } from "./reliability-runner.js";
+export {
+  runScenarioReliability,
+  loadScenarioAudio,
+  RELIABILITY_TRAILING_SILENCE_MS
+} from "./reliability-runner.js";
 
 export { aggregateTranscript } from "./transcript.js";
 export type { Utterance } from "./transcript.js";
@@ -63,6 +67,9 @@ export {
   DEFAULT_SCENARIO_TIMINGS
 } from "./call-scenario-runner.js";
 export type { ScenarioTraceEvent, ScenarioTimings } from "./call-scenario-runner.js";
+export type { ScenarioTransport } from "./scenario-transport.js";
+export { geminiTransport } from "./transports/gemini-transport.js";
+export { deepgramTransport } from "./transports/deepgram-transport.js";
 export {
   AXIS_MATRIX,
   matrixCells,

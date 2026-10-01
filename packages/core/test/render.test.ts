@@ -127,3 +127,89 @@ describe("MEETING_OPENING_TRIGGER", () => {
     expect(MEETING_OPENING_TRIGGER).not.toMatch(/recording/i);
   });
 });
+
+describe("renderSystemInstruction today", () => {
+  const base = { persona: "P", objective: "O", facts: [], guardrails: ["G."] };
+  // Changed 2026-09-30: the sentence now ends with the next 14 days, so the
+  // helper takes the list it ends with.
+  const sentence = (day: string, zone: string, next: string): string =>
+    `Today is ${day} (${zone}). When the other person gives a relative date such as "tomorrow" or "next Tuesday", work out the calendar date from today before you record it. The next 14 days are: ${next}. When you say a date, use the weekday and date together exactly as listed.`;
+  const FROM_OCT_1 =
+    "Thu Oct 1, Fri Oct 2, Sat Oct 3, Sun Oct 4, Mon Oct 5, Tue Oct 6, Wed Oct 7, Thu Oct 8, " +
+    "Fri Oct 9, Sat Oct 10, Sun Oct 11, Mon Oct 12, Tue Oct 13, Wed Oct 14";
+  const FROM_OCT_2 =
+    "Fri Oct 2, Sat Oct 3, Sun Oct 4, Mon Oct 5, Tue Oct 6, Wed Oct 7, Thu Oct 8, Fri Oct 9, " +
+    "Sat Oct 10, Sun Oct 11, Mon Oct 12, Tue Oct 13, Wed Oct 14, Thu Oct 15";
+
+  it("appends the exact sentence in America/Los_Angeles", () => {
+    const out = renderSystemInstruction({
+      ...base,
+      today: { now: new Date("2026-09-30T19:00:00Z"), timeZone: "America/Los_Angeles" }
+    });
+    expect(out).toBe(
+      `P\n\nO\n\nG.\n\n${sentence("Wednesday, 2026-09-30", "America/Los_Angeles", FROM_OCT_1)}`
+    );
+  });
+
+  it("dates by the zone across a UTC boundary: one instant is two different days", () => {
+    const now = new Date("2026-09-30T20:30:00Z");
+    const la = renderSystemInstruction({
+      ...base,
+      today: { now, timeZone: "America/Los_Angeles" }
+    });
+    const tokyo = renderSystemInstruction({ ...base, today: { now, timeZone: "Asia/Tokyo" } });
+    expect(la).toContain(sentence("Wednesday, 2026-09-30", "America/Los_Angeles", FROM_OCT_1));
+    expect(tokyo).toContain(sentence("Thursday, 2026-10-01", "Asia/Tokyo", FROM_OCT_2));
+  });
+
+  /**
+   * Live A/B, 2026-09-30: told "Today is Wednesday, 2026-09-30", one think model
+   * resolved "next Tuesday" to October 7th on both calls (it is October 6).
+   * Weekday arithmetic is exactly what a language model is bad at, so the
+   * sentence hands it the calendar instead of asking it to compute one.
+   */
+  it("lists the 14 days after today, across a month boundary", () => {
+    const out = renderSystemInstruction({
+      ...base,
+      today: { now: new Date("2026-09-25T19:00:00Z"), timeZone: "America/Los_Angeles" }
+    });
+    expect(out).toContain(
+      "The next 14 days are: Sat Sep 26, Sun Sep 27, Mon Sep 28, Tue Sep 29, Wed Sep 30, " +
+        "Thu Oct 1, Fri Oct 2, Sat Oct 3, Sun Oct 4, Mon Oct 5, Tue Oct 6, Wed Oct 7, Thu Oct 8, " +
+        "Fri Oct 9."
+    );
+  });
+
+  it("starts the list from the zone's tomorrow, not UTC's", () => {
+    // 2026-10-01T03:00Z is still September 30 in Los Angeles: UTC's tomorrow
+    // would wrongly start the list at Fri Oct 2.
+    const out = renderSystemInstruction({
+      ...base,
+      today: { now: new Date("2026-10-01T03:00:00Z"), timeZone: "America/Los_Angeles" }
+    });
+    expect(out).toContain(sentence("Wednesday, 2026-09-30", "America/Los_Angeles", FROM_OCT_1));
+  });
+
+  it("crosses a year boundary and a DST change without skipping or repeating a day", () => {
+    const out = renderSystemInstruction({
+      ...base,
+      today: { now: new Date("2026-12-25T18:00:00Z"), timeZone: "America/New_York" }
+    });
+    expect(out).toContain(
+      "The next 14 days are: Sat Dec 26, Sun Dec 27, Mon Dec 28, Tue Dec 29, Wed Dec 30, " +
+        "Thu Dec 31, Fri Jan 1, Sat Jan 2, Sun Jan 3, Mon Jan 4, Tue Jan 5, Wed Jan 6, Thu Jan 7, " +
+        "Fri Jan 8."
+    );
+    const dst = renderSystemInstruction({
+      ...base,
+      // US clocks fall back on Sunday 2026-11-01.
+      today: { now: new Date("2026-10-30T19:00:00Z"), timeZone: "America/Los_Angeles" }
+    });
+    expect(dst).toContain("The next 14 days are: Sat Oct 31, Sun Nov 1, Mon Nov 2, Tue Nov 3,");
+    expect(dst).toContain("Thu Nov 12, Fri Nov 13.");
+  });
+
+  it("is byte-identical to the old output when today is absent", () => {
+    expect(renderSystemInstruction(base)).toBe("P\n\nO\n\nG.");
+  });
+});

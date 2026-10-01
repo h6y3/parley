@@ -13,20 +13,29 @@ import {
 import { representedCall, type CallPolicy } from "@parley/policy";
 import { createHostAllowlist, createNumberAllowlist } from "../src/allowlist.js";
 import { PendingSessions } from "../src/pending-sessions.js";
+import type { RealtimeRegistry } from "../src/realtime-registry.js";
 import { handleHttpRequest, type HttpRequest, type ServerDeps } from "../src/request-handler.js";
 
+// Relabels without touching bytes: these tests verify wiring, not DSP.
+const convert: FrameConverter = (f, to) => ({ encoding: to, data: f.data });
+const canConvert = (): boolean => true;
 const codec: AudioCodec = {
-  decodeInbound: (f) => f,
-  encodeOutbound: (f) => f,
   dtmfTones: () => ({ encoding: MULAW_8K, data: Buffer.alloc(0) })
 };
-const realtime: RealtimeProvider = { name: "fake", connect: vi.fn() };
+const realtime: RealtimeProvider = {
+  name: "fake",
+  audio: { accepts: [MULAW_8K], emits: MULAW_8K },
+  openingDelivery: "turn",
+  continuesAfterToolResponse: false,
+  connect: vi.fn()
+};
 
 function fakeTelephony(
   originateSpy = vi.fn(async () => ({ providerCallId: "CA777", status: "queued" as const }))
 ): TelephonyProvider {
   return {
     name: "fake",
+    mediaEncoding: MULAW_8K,
     originate: originateSpy,
     buildAnswerResponse: () => ({ contentType: "text/xml", body: "<Response/>" }),
     verifyWebhookSignature: () => true,
@@ -46,14 +55,24 @@ function fakeTelephony(
 // itself is covered in request-handler-auth.test.ts.
 const TOKEN = "test-call-token";
 
+/** A daemon keyed for Gemini alone — the shape every pre-existing test here
+ * was written against, when the server held exactly one provider. */
+function geminiOnly(provider: RealtimeProvider = realtime): RealtimeRegistry {
+  return {
+    providers: { gemini: { provider, model: "gemini-3.1-flash-live-preview" } },
+    default: "gemini"
+  };
+}
+
 function deps(overrides: Partial<ServerDeps> = {}): ServerDeps {
   return {
     telephony: fakeTelephony(),
-    realtime,
+    realtime: geminiOnly(),
     codec,
+    convert,
+    canConvert,
     from: "+14155550001",
     publicHost: "voice.example.com",
-    model: "gemini-3.1-flash-live-preview",
     numberAllowlist: createNumberAllowlist(["+14155550002"]),
     hostAllowlist: createHostAllowlist(["voice.example.com"]),
     pending: new PendingSessions(),
@@ -70,7 +89,7 @@ const brief: Brief = {
   facts: ["Party of four at 7pm."]
 };
 
-const policy = representedCall({ principalName: "Alex Rivera", callbackNumber: "+15551234567" });
+const policy = representedCall({ principalName: "Alex Rivera", callbackNumber: "+15555550143" });
 
 // A meeting envelope needs a declared execution.meeting block — the exact
 // signal both CallSession.isMeeting and request-handler's fail-closed check
@@ -210,7 +229,7 @@ describe("handleHttpRequest POST /call", () => {
     const originate = vi.fn(async () => ({ providerCallId: "CA1", status: "queued" as const }));
     const d = deps({ telephony: fakeTelephony(originate) });
     const res = await handleHttpRequest(
-      callReq({ version: 1, brief: { ...brief, to: "+19998887777" }, policy }),
+      callReq({ version: 1, brief: { ...brief, to: "+15555550199" }, policy }),
       d
     );
     expect(res.status).toBe(403);
@@ -225,6 +244,43 @@ describe("handleHttpRequest POST /call", () => {
     const res = await handleHttpRequest(callReq({ version: 1, brief, policy }), d);
     expect(res.status).toBe(502);
     expect(JSON.parse(res.body)).toEqual({ error: "origination error" });
+  });
+
+  it("refuses an unbridgeable realtime/carrier pairing with 503, before dialling, and releases the operation", async () => {
+    const originate = vi.fn(async () => ({ providerCallId: "CA779", status: "queued" as const }));
+    const pcmOnly: RealtimeProvider = {
+      name: "pcm-only",
+      audio: { accepts: [PCM_16K], emits: PCM_16K },
+      openingDelivery: "turn",
+      continuesAfterToolResponse: false,
+      connect: vi.fn()
+    };
+    const d = deps({
+      telephony: fakeTelephony(originate),
+      realtime: geminiOnly(pcmOnly),
+      // A converter with no paths at all: only identity is reachable.
+      canConvert: (from, to) => from.codec === to.codec && from.sampleRate === to.sampleRate
+    });
+    const first = {
+      version: 1,
+      brief: { ...brief, operation: { id: "reservation-3", attempt: 1, maxAttempts: 3 } },
+      policy
+    };
+    const res = await handleHttpRequest(callReq(first), d);
+    expect(res.status).toBe(503);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "audio contract: no audio conversion path from mulaw@8000 to pcm@16000"
+    });
+    expect(originate).not.toHaveBeenCalled();
+
+    // The reservation went back: once the daemon can bridge, the next attempt dials.
+    d.canConvert = () => true;
+    const second = {
+      ...first,
+      brief: { ...first.brief, operation: { id: "reservation-3", attempt: 2, maxAttempts: 3 } }
+    };
+    expect((await handleHttpRequest(callReq(second), d)).status).toBe(202);
+    expect(originate).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a malformed body with 400", async () => {
@@ -444,5 +500,222 @@ describe("execution.dial.sendDigits — must never leak off the origination path
     );
     expect(res.status).toBe(400);
     expect(res.body).not.toContain(SECRET_DIGITS);
+  });
+});
+
+/** The envelope chooses which of the daemon's realtime providers a call runs
+ * on, and every way that choice can be impossible is refused BEFORE anything
+ * irreversible: no operation reserved, nothing dialled. A refusal after the
+ * reservation would burn a caller's retry budget on our configuration; one
+ * after `originate` is a phone that rings for a call that cannot happen. */
+describe("per-call realtime provider selection", () => {
+  function named(name: string, maxSessionSeconds?: number): RealtimeProvider {
+    return {
+      name,
+      audio: { accepts: [MULAW_8K], emits: MULAW_8K },
+      openingDelivery: "turn",
+      continuesAfterToolResponse: false,
+      ...(maxSessionSeconds !== undefined ? { maxSessionSeconds } : {}),
+      connect: vi.fn()
+    };
+  }
+  const gemini = named("gemini");
+  const deepgram = named("deepgram", 7200);
+  const bothKeyed = (defaultKind: "gemini" | "deepgram"): RealtimeRegistry => ({
+    providers: {
+      gemini: { provider: gemini, model: "gemini-3.8-live" },
+      deepgram: { provider: deepgram, model: "gpt-4o-mini" }
+    },
+    default: defaultKind
+  });
+
+  function spiedDeps(overrides: Partial<ServerDeps> = {}) {
+    const originate = vi.fn(async () => ({ providerCallId: "CA900", status: "queued" as const }));
+    const d = deps({ telephony: fakeTelephony(originate), ...overrides });
+    const reserveOperation = vi.spyOn(d.pending, "reserveOperation");
+    return { d, originate, reserveOperation };
+  }
+
+  const withOperation = {
+    ...brief,
+    operation: { id: "provider-choice-1", attempt: 1, maxAttempts: 3 }
+  };
+
+  it("refuses a provider this daemon has not built with 503 — no reservation, nothing dialled", async () => {
+    const { d, originate, reserveOperation } = spiedDeps(); // Gemini only
+    const res = await handleHttpRequest(
+      callReq({
+        version: 2,
+        brief: withOperation,
+        policy,
+        execution: { realtime: { provider: "deepgram" } }
+      }),
+      d
+    );
+    expect(res.status).toBe(503);
+    expect(JSON.parse(res.body)).toEqual({
+      error: 'realtime provider "deepgram" is not configured on this daemon'
+    });
+    expect(originate).not.toHaveBeenCalled();
+    expect(reserveOperation).not.toHaveBeenCalled();
+    expect(d.pending.size).toBe(0);
+  });
+
+  it("never falls back silently to a default that could take the call", async () => {
+    const { d, originate } = spiedDeps({ realtime: geminiOnly(gemini) });
+    const res = await handleHttpRequest(
+      callReq({ version: 2, brief, policy, execution: { realtime: { provider: "deepgram" } } }),
+      d
+    );
+    expect(res.status).toBe(503);
+    expect(originate).not.toHaveBeenCalled();
+  });
+
+  it("uses the daemon's default when the envelope does not choose", async () => {
+    for (const defaultKind of ["gemini", "deepgram"] as const) {
+      const { d } = spiedDeps({ realtime: bothKeyed(defaultKind) });
+      const res = await handleHttpRequest(callReq({ version: 2, brief, policy }), d);
+      expect(res.status).toBe(202);
+      const session = d.pending.get("CA900") as CallSession;
+      expect(session.realtime).toEqual({
+        provider: defaultKind,
+        model: defaultKind === "gemini" ? "gemini-3.8-live" : "gpt-4o-mini"
+      });
+    }
+  });
+
+  it("uses the provider the envelope names over the default, with that provider's model", async () => {
+    const { d } = spiedDeps({ realtime: bothKeyed("gemini") });
+    const res = await handleHttpRequest(
+      callReq({ version: 2, brief, policy, execution: { realtime: { provider: "deepgram" } } }),
+      d
+    );
+    expect(res.status).toBe(202);
+    expect((d.pending.get("CA900") as CallSession).realtime).toEqual({
+      provider: "deepgram",
+      model: "gpt-4o-mini"
+    });
+  });
+
+  it("refuses with 422 a call whose cap exceeds the provider's session limit — before reserving or dialling", async () => {
+    const { d, originate, reserveOperation } = spiedDeps({
+      realtime: geminiOnly(named("gemini", 600))
+    });
+    const res = await handleHttpRequest(
+      callReq({
+        version: 2,
+        brief: withOperation,
+        policy,
+        execution: { limits: { maxDurationSeconds: 900 } }
+      }),
+      d
+    );
+    expect(res.status).toBe(422);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "call duration exceeds gemini session limit of 600s"
+    });
+    expect(originate).not.toHaveBeenCalled();
+    expect(reserveOperation).not.toHaveBeenCalled();
+    expect(d.pending.size).toBe(0);
+  });
+
+  it("measures a call with no declared cap at CALL_MAX_DURATION_SECONDS", async () => {
+    const { d, originate } = spiedDeps({ realtime: geminiOnly(named("gemini", 1799)) });
+    const res = await handleHttpRequest(callReq({ version: 2, brief, policy }), d);
+    expect(res.status).toBe(422);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "call duration exceeds gemini session limit of 1799s"
+    });
+    expect(originate).not.toHaveBeenCalled();
+  });
+
+  it("admits a call whose cap is exactly the provider's session limit, or within it", async () => {
+    for (const maxDurationSeconds of [600, 599]) {
+      const { d } = spiedDeps({ realtime: geminiOnly(named("gemini", 600)) });
+      const res = await handleHttpRequest(
+        callReq({ version: 2, brief, policy, execution: { limits: { maxDurationSeconds } } }),
+        d
+      );
+      expect(res.status).toBe(202);
+    }
+  });
+
+  it("admits any call on a provider that declares no session limit", async () => {
+    const { d } = spiedDeps({ realtime: geminiOnly(named("gemini")) });
+    const res = await handleHttpRequest(
+      callReq({ version: 2, brief, policy, execution: { limits: { maxDurationSeconds: 1800 } } }),
+      d
+    );
+    expect(res.status).toBe(202);
+  });
+
+  // A meeting's speaking plane retires at consent, so what must fit the
+  // provider's session is the pre-consent window, not the meeting. A four-hour
+  // meeting (MEETING_MAX_DURATION_SECONDS) fits Deepgram's two-hour session.
+  it("measures a meeting by its pre-consent window, not its whole duration", async () => {
+    const { d } = spiedDeps({
+      realtime: bothKeyed("deepgram"),
+      transcription: transcriptionDeps()
+    });
+    const res = await handleHttpRequest(
+      callReq({
+        version: 2,
+        brief,
+        policy: meetingPolicy,
+        execution: { ...meetingExecution, limits: { maxDurationSeconds: 14400 } }
+      }),
+      d
+    );
+    expect(res.status).toBe(202);
+  });
+
+  it("still refuses a meeting whose pre-consent window can outlast the provider's session", async () => {
+    const { d, originate, reserveOperation } = spiedDeps({
+      realtime: geminiOnly(named("gemini", 120)),
+      transcription: transcriptionDeps()
+    });
+    const res = await handleHttpRequest(
+      callReq({ version: 2, brief, policy: meetingPolicy, execution: meetingExecution }),
+      d
+    );
+    expect(res.status).toBe(422);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "call duration exceeds gemini session limit of 120s"
+    });
+    expect(originate).not.toHaveBeenCalled();
+    expect(reserveOperation).not.toHaveBeenCalled();
+  });
+
+  it("measures a meeting by its duration cap when that ends the call before consent could time out", async () => {
+    // Consent window 180s, but the call itself is capped at 60s: the speaking
+    // plane lives at most 60s (plus the handoff), which fits a 120s session.
+    const { d } = spiedDeps({
+      realtime: geminiOnly(named("gemini", 120)),
+      transcription: transcriptionDeps()
+    });
+    const res = await handleHttpRequest(
+      callReq({
+        version: 2,
+        brief,
+        policy: meetingPolicy,
+        execution: { ...meetingExecution, limits: { maxDurationSeconds: 60 } }
+      }),
+      d
+    );
+    expect(res.status).toBe(202);
+  });
+
+  it("refuses an unbuilt provider before the number allowlist, so the refusal names the real cause", async () => {
+    const { d } = spiedDeps();
+    const res = await handleHttpRequest(
+      callReq({
+        version: 2,
+        brief: { ...brief, to: "+15555550199" },
+        policy,
+        execution: { realtime: { provider: "deepgram" } }
+      }),
+      d
+    );
+    expect(res.status).toBe(503);
   });
 });

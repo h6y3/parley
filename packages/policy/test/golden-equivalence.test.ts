@@ -43,10 +43,12 @@ function render(policy: Parameters<typeof composePolicy>[0]): string {
  *
  * The procedure when it fires: render the four cases, diff each against the
  * fixture, and confirm the change is the one you meant and nothing else. Only
- * then regenerate. Both times it has fired so far the diff was a single rail —
- * DEFERRAL_CORE widening, then WRAP_UP_RULE — and each time one of the four
- * policies was correctly untouched, which is the signal that the change landed
- * where it was aimed rather than everywhere.
+ * then regenerate. Every time it has fired so far the diff was a single rail —
+ * DEFERRAL_CORE widening, then WRAP_UP_RULE, then WRAP_UP_RULE again on
+ * 2026-09-30 (the closing stops asking for a confirm-and-thank ritual that
+ * produced re-confirmations and stacked goodbyes on live calls) — and each time
+ * one of the four policies was correctly untouched, which is the signal that
+ * the change landed where it was aimed rather than everywhere.
  */
 describe("the composed prompt does not change by accident", () => {
   it("principal", () => {

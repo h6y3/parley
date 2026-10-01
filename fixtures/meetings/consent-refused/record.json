@@ -11,5 +11,9 @@
   "transcriptPath": null,
   "gapMs": 0,
   "coveredMs": 0,
-  "modelTurnsCompleted": 1
+  "modelTurnsCompleted": 1,
+  "realtime": {
+    "provider": "gemini",
+    "model": "gemini-3.8-live"
+  }
 }

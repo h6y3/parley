@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { CallSession, TRANSCRIPTION_CONNECT_TIMEOUT_MS } from "../src/call-session.js";
 import { FakeSocket, makeMeetingFakes, makeMeetingParams } from "./helpers/call-session-harness.js";
-import { MIXED_SOURCE, MULAW_8K } from "../src/index.js";
+import { MIXED_SOURCE, MULAW_8K, PCM_24K } from "../src/index.js";
 
 /** The announcement, the request, and the go-ahead.
  *
@@ -85,7 +85,7 @@ describe("the consent handoff", () => {
     seedConsent(session);
     await session.beginNotetaking();
     socket.pushInbound(frame(), MIXED_SOURCE);
-    expect(session.audioBridgeStats).toEqual({ conversions: 0, passThroughs: 1 });
+    expect(session.audioBridgeStats.listening).toEqual({ conversions: 0, passThroughs: 1 });
   });
 
   it("records a gap for frames dropped while the transcriber is not ready", async () => {
@@ -396,8 +396,16 @@ describe("begin_notetaking, driven by the model", () => {
   // acknowledgment turn, and the tool is never invoked.
   it("signals once when consent is matched but the model finishes a turn without calling begin_notetaking", async () => {
     const diagnostics: string[] = [];
+    // The timeline lines (`model turn complete at +…ms`, `caller final at
+    // +…ms`) are not this signal; count only the signal's own diagnostics.
+    const timeline = / at \+\d+ms$/;
     const f = makeMeetingFakes();
-    const cs = new CallSession({ ...f.params, onDiagnostic: (m) => diagnostics.push(m) });
+    const cs = new CallSession({
+      ...f.params,
+      onDiagnostic: (m) => {
+        if (!timeline.test(m)) diagnostics.push(m);
+      }
+    });
     await cs.attach("CA1", new FakeSocket());
 
     f.emitTranscript({ speaker: "model", text: "Any objection?", isFinal: true });
@@ -466,7 +474,7 @@ describe("the window while the transcriber is connecting", () => {
     // contradicting endedBy, no sink, no bridge.
     expect(handle.endedBy).toBe("remote");
     expect([...session.phases]).toEqual([]);
-    expect(session.audioBridgeStats).toEqual({ conversions: 0, passThroughs: 0 });
+    expect(session.audioBridgeStats.listening).toEqual({ conversions: 0, passThroughs: 0 });
     socket.pushInbound(frame(), MIXED_SOURCE);
     expect(params.stubs.transcriptionSession.received).toHaveLength(0);
   });
@@ -611,6 +619,61 @@ describe("the consent handoff waits for the turn's audio to land before it goes 
 
     expect(f.session.closed).toBe(true);
     expect([...cs.phases]).toEqual(["listening"]);
+  });
+
+  // Wire-observed (t20 dggpt-fix, transferToAnotherPerson): the tool call
+  // comes FIRST and the acknowledgment is the turn that continues after the
+  // answer. With no turn open when begin_notetaking landed, the handoff used
+  // to drain an empty queue and retire the speaking plane over the whole
+  // acknowledgment.
+  it("on a continuing provider, waits for the acknowledgment spoken after the answer", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = makeMeetingFakes();
+      const cs = new CallSession({
+        ...f.params,
+        realtime: { ...f.realtime, continuesAfterToolResponse: true }
+      });
+      await cs.attach("CA1", new FakeSocket());
+      const order: string[] = [];
+      f.handle.drainOutbound = async () => {
+        order.push(`drain after ${f.sentOutbound.length} frames`);
+        return { confirmed: true, waitedMs: 0 };
+      };
+
+      f.emitTranscript({
+        speaker: "model",
+        text: "I'm an AI assistant for the host.",
+        isFinal: true
+      });
+      f.emitTurnComplete();
+      f.emitTranscript({ speaker: "model", text: "Any objection?", isFinal: true });
+      f.emitTurnComplete();
+      cs.noteTranscript({ speaker: "caller", text: "go ahead and take notes", isFinal: true });
+
+      // The call arrives with no turn open and no audio yet.
+      await f.emitToolCall({ id: "t1", name: "begin_notetaking", args: {} });
+      expect(f.toolResponses).toEqual([{ id: "t1", result: "ok" }]);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(order).toEqual([]);
+      expect(f.session.closed).toBe(false);
+
+      // The acknowledgment: 3.8 s of audio, frames every 20ms.
+      for (let t = 0; t < 3_800; t += 20) {
+        f.emitModelAudio({ encoding: PCM_24K, data: Buffer.alloc(480) });
+        await vi.advanceTimersByTimeAsync(20);
+      }
+      expect(order).toEqual([]);
+      expect(f.session.closed).toBe(false);
+
+      f.emitTurnComplete();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(order).toEqual([`drain after ${3_800 / 20} frames`]);
+      expect(f.session.closed).toBe(true);
+      expect([...cs.phases]).toEqual(["listening"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("still retires and closes the speaking plane when the drain throws", async () => {

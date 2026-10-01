@@ -335,6 +335,197 @@ runner closed the session 1.2s after the model's last word, so a model that was
 about to call `end_call` got cut off and recorded as one that never closed.
 `awaiting-closure` and `model-ended` are now different outcomes.
 
+### The ring, and the one first line that does not wait for the model
+
+`ScenarioTimings.firstLineDelayMs` (default `0`) models the ring before pickup.
+The **first** callee line goes out that long after connect, on that clock alone:
+a phone is picked up whether or not the caller has said anything, and a model
+obeying the opening trigger says nothing and completes no turn to wait on. A
+turn the model completes during the ring does not answer the phone early. Every
+later line follows the ordinary rule.
+
+`0` is a ring of zero: the first line goes out right after the opening trigger.
+It used to mean that the first line waited on the model's own first turn, which
+is a wait on an event a correct model never produces. Gemini sends no
+`turnComplete` for a turn it does not take, so a model staying silent as the
+trigger says left 8 of 10 billed runs of one batch `stalled` with an empty
+transcript, and the better the model obeyed, the worse the batch looked.
+Matrices run at `0` before this change and after it measure different openings.
+
+A ring above zero also arms a check. Any model speech before the first line is
+delivered is recorded, and scored as `spoke-before-callee` — the opening trigger
+says to stay silent until the other end speaks, and whoever picks up hears
+anything said during the ring. At `0` there is no window and no check.
+
+Where the opening goes follows the transport's `openingDelivery`, planned by
+`planOpening` exactly as a real call's is. On the Gemini transport (`"turn"`)
+the trigger is sent as a line at connect. On the Deepgram transport
+(`"prompt"`) it is appended to the Settings prompt, and a two-party scenario
+sends nothing at connect — so at `0` there is no trigger to follow and the first
+line goes out after `settleMs`. A meeting scenario on Deepgram
+sends the short `MEETING_CONNECTED_CUE` in its place. Comparing a Deepgram
+matrix from before this change against one after it compares two different
+openings; expect the ring-time codes to move for that reason.
+
+### One runner, any transport
+
+`runCallScenario` takes a `ScenarioTransport` — `geminiTransport` or
+`deepgramTransport` — and the scheduling above, `ToolGate`, `routeToolCall` and
+the consent anchor are shared by both. A transport owns only the wire: how a
+line reaches the model, what counts as speech, and what counts as the end of a
+turn.
+
+Flags, on `scenario` and `metamorphic` (`reliability` takes the first two, `--gemini-model`,
+`--transcript` and `--today`):
+
+- `--realtime-provider gemini|deepgram` selects the transport; the default is `gemini`.
+- `--think-model <id>` sets Deepgram's think model (a `claude-*` id uses the `anthropic`
+  provider, anything else `open_ai`). It is refused with `gemini`.
+- `--first-line-delay-ms <n>` is the ring before pickup described above.
+- `--gemini-model <id>` picks Gemini's model instead of the shipped default, on all three
+  commands, so two models can be compared under one harness. It is refused with `deepgram`,
+  and the `provider:` line of the report names the model that ran.
+- `--transcript <dir>` writes one JSON file per run into `<dir>` (created if missing), named
+  `<command>-<scenarioId>-<provider>-<model>-<runIndex>.json` with anything outside
+  `[A-Za-z0-9._-]` replaced by `_`. Each holds `{ command, scenarioId, provider, model,
+runIndex, transcript, trace?, verdict }`: the transcript, the runner's trace events
+  (`scenario` and `metamorphic`; `reliability` has none), and the verdict with its typed codes.
+  A report only counts; the files are how you read what a model did, such as speaking or
+  pressing before the callee answered, and lay two builds side by side. `metamorphic` writes
+  both halves of a pair, suffixing the scenario id with `.base` or `.variant`; both carry the
+  pair's verdict. The files never contain the environment or the API key. Without the flag
+  nothing is written.
+- `--today <YYYY-MM-DD>` pins the date the model is told, on all three commands. The system
+  instruction carries a sentence naming today's date so the model can turn "next Tuesday" into
+  the date the outcome schema needs, which makes any script that names a weekday depend on the
+  day it runs: "this Wednesday" is ambiguous on a Wednesday. Pinned, a matrix sends the same
+  prompt whenever it runs, and the report names the date under its `provider:` line. The zone
+  stays the host's. Without the flag the date is the wall clock's, as on a real call. A value
+  that is not a real calendar date in that form is refused.
+
+Two failure codes are new. `spoke-before-callee` means the model spoke during the ring, before
+the first callee line was delivered. `transport-closed` means the provider session closed under a
+running scenario. It is a scored, non-model outcome: the run counts in the failure rate with that
+code and the vendor's reason attached, and it says something about the connection, not about what
+the model chose to do.
+
+The Deepgram transport sets `completesAfterToolResponse: false`. A continuation in which the agent
+says nothing after a tool answer does end a turn: Deepgram sends `AgentAudioDone` with zero audio
+bytes for it. What Deepgram cannot do is keep that turn apart from a line injected straight after
+the tool answer. It cancels the continuation (the call reads `{"status":"CANCELLED"}` in the
+model's history), then either folds the line into one turn with a single `AgentAudioDone` or never
+answers the line at all and closes with a zero-audio one. Both happened on billed runs. So on a
+`false` transport the runner never sends a line on top of a continuation: a press-released line
+waits for the next turn end and goes out `settleMs` after it, like any reply. That turn end is
+normally the continuation's. If the model is still speaking when the line goes out, the line barges
+in, and the transport's barge-in rule (below) keeps the interrupted turn's end from reading as the
+reply. On a `true` transport (Gemini) the press releases the line at once and the runner skips the
+continuation's turn end.
+
+`completesAfterToolResponse` is a harness-only setting. It is not the production provider's
+`RealtimeProvider.continuesAfterToolResponse`, which is `true` on both vendors because both keep
+speaking after a tool answer. The transport setting covers a narrower case: whether the
+continuation's turn end can be told apart from a line injected on top of it. Only a text-mode
+runner injects lines that way.
+
+A session that closes underneath a run ends it as `transport-closed`, and the run
+is scored with the failure code of the same name, with the vendor's reason
+attached. It is neither `stalled` (nothing says the model went quiet) nor a
+thrown error (one flaky session must not abort a 60-run matrix). A session that
+never opens still throws: a bad key or refused settings fails every run the same
+way, and that is a configuration error to stop on, not a rate.
+
+Turn boundaries are where the providers differ most. Gemini ends a turn on `turnComplete` and
+Deepgram on `AgentAudioDone`, and both send one even for a turn in which the model said nothing —
+Deepgram's then carries no audio. Deepgram's is not final: more audio of the same reply can follow
+it, so the transport, like the production provider, ends the turn only once the agent's audio has
+then stayed quiet for `DEEPGRAM_TURN_QUIET_MS` (300 ms). Every Deepgram turn end therefore reaches
+the runner 300 ms after its `AgentAudioDone`. They differ after a tool answer: Gemini ends the
+continuation with its own `turnComplete` even with a line injected on top of it, while Deepgram
+cancels the continuation and folds or drops that line, which is why a press-released line waits
+there. Deepgram also treats a line injected while its audio is still streaming as a barge-in,
+interrupting the agent and ending its turn early. That early `AgentAudioDone` arrives before
+Deepgram echoes the line, and the transport does not pass it on as a turn end: the reply's own turn
+end follows the echo. A matrix comparing the two should run with a ring, so both are scored on the
+same `spoke-before-callee` check. Expect the matrix to move for these reasons alone when comparing
+them, and read the trace before reading it as behaviour.
+
+### Measurement fixes, and what each one moves
+
+Billed runs on both providers found places where the harness measured
+itself. Each fix changes what the numbers mean, so results from before and
+after them are not comparable. Per the section below, expect some scores to
+move for reasons that have nothing to do with the model:
+
+- **A reliability turn ends on the model's turn end** (`onTurnComplete`), not
+  on any final transcript. Deepgram marks the caller's transcript final, so
+  every Deepgram `reliability` run used to close before the model replied and
+  scored dirty. Moves the Layer 1 dirty rate, on Deepgram most.
+- **Reliability fixtures are followed by 2.5 s of silence**
+  (`RELIABILITY_TRAILING_SILENCE_MS`). Without it Gemini detected no end of
+  speech and never replied. Moves the Layer 1 dirty rate on Gemini.
+- **Represented disclosure is judged against its rail** over every model turn:
+  dirty on a denial of being an AI, or an AI mention nobody asked for. The model
+  no longer has to open with "assistant". The old check scored the honest answer
+  to `are-you-an-ai` dirty, and any derail reply that did not restate the role.
+  Moves Layer 1's `disclosure` verdicts, `are-you-an-ai` most. Marker-leak
+  verdicts are unchanged.
+- **A Layer 1 turn the model does not answer is dirty with `no-reply`.**
+  Represented mode's rail is never volunteer, never deny, so a model that says
+  nothing to a derail used to score clean, and on a phone call silence is a
+  failure. A `reliability` run whose derail turn holds no model speech now
+  carries the code `no-reply`, whatever the disclosure rule says. The `silence`
+  scenario is exempt: it sends nothing, so there is nothing to reply to. The
+  report lists failures by code (`marker-leak`, `disclosure`, `no-reply`); a run
+  with two codes counts under both. Expect the Layer 1 dirty rate to rise on any
+  model that goes quiet.
+- **A press delivers one line.** The settle timer a completion armed was left
+  running when a press released a line, and fired a second line with no model
+  reply between them. Fewer lines now go out ahead of the model. Expect
+  `endedBecause` to shift, and with it the codes judged at the end of the
+  script: `outcome-missing`, `outcome-status`, `no-end-call`, `amount-missing`.
+- **A gated line waits for its own press.** A gate used to count every press in
+  the call, and any tool call could release a line. Under that rule, a script
+  that gated several lines on `1` released each one on `record_outcome` or
+  `end_call`, which on Deepgram was a barge-in. Now only a press made since the
+  line became due opens its gate, and only a `press_digits` call can release
+  it. A blind press during the ring no longer counts as navigating the menu, so
+  a model that pressed only then now holds at the first gated line and ends
+  `stalled`. Expect movement in `press-wrong`, `no-end-call`,
+  `outcome-missing` and `endedBecause`. The reference seed gated every
+  post-menu line on `1`; it now gates only the line the press reaches. Gate
+  a script the same way.
+- **On Deepgram, a press-released line waits for the next turn end.** That is
+  normally the press's continuation. If the model is still speaking when the
+  line goes out, the next fix keeps the interrupted turn's end from reading as
+  the reply. The line used to go out in the same tick as the tool answer.
+  Deepgram then cancelled the continuation and told the model its keypress was
+  `CANCELLED`. In 4 of 8 billed DG+gpt sessions the line then got no reply at
+  all, and the next line went out before the model had answered the IVR's "How
+  can I help you today?". Expect the first reply after a press to change, and
+  with it `outcome-status`, `no-end-call` and `outcome-missing`. Gemini is
+  unchanged.
+- **On Deepgram, the turn end of an interrupted turn is not a reply.** A line
+  injected while agent audio still streams interrupts it, and Deepgram ends the
+  interrupted turn with an `AgentAudioDone` before it echoes the line. The
+  runner used to take that as the reply and send the next line on top of the
+  real one, which barged in again, so a run could stay one turn ahead of the
+  model to the end of the script. That happened after a model spoke around its
+  keypress: six DG+haiku runs in one earlier matrix failed `no-end-call` this
+  way. The transport now drops a turn end that arrives between an injected
+  line and its echo, and traces it as a diagnostic. Expect fewer runs that
+  deliver the whole script in a few seconds, and movement in `no-end-call`,
+  `outcome-missing` and `endedBecause`.
+- **On Deepgram, a turn ends when its audio stops.** Deepgram can send an
+  `AgentAudioDone` and then more audio of the same reply. The transport, like
+  the production provider, now counts the turn complete only after 300 ms
+  (`DEEPGRAM_TURN_QUIET_MS`) with no agent audio following an
+  `AgentAudioDone`. A turn end still pending when a line goes out is dropped,
+  like an interrupted turn's. Every Deepgram line now goes out 300 ms later,
+  and a reply that used to read as two turns reads as one. Expect small
+  movement in `endedBecause` and the turn-count-anchored consent checks.
+  Gemini is unchanged.
+
 ## A pass count is not a measurement
 
 Four consecutive builds scored 11/20, 8/20, 13/20, 14/20, 14/20. Every one of
@@ -439,6 +630,22 @@ says the script was fully delivered and the model was still waiting; a bare
 FAIL, or a pass count, says the model did not hang up. One of those points at
 the scripts and the other points at the prompt, and only one of them is right.
 
+**It will happen again with 0.4.0's closing change.** The closing rail now checks
+once whether the other side needs anything, then records, says one short goodbye
+and ends; `record_outcome` on a call with `end_call` answers "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call", and an accepted `end_call` answers "ok —
+say nothing more". A `completed` record made after the model has spoken and
+before the callee has answered is refused ("refused: they have not confirmed
+what you just said — …"), offline as on a call: the runner counts each
+delivered line as the callee speaking and each `modelAudio` as the model
+speaking. A script that relied on the model recording in the same turn as it
+read the arrangement back now needs a confirming line after the read-back.
+Expect the closing-related codes
+(`no-end-call`, `outcome-missing`, `awaiting-closure`, and `endedBecause`) to move
+on the first matrix after it. A script whose closing answer was written for the
+old confirm-and-thank exchange may now go unasked, or be delivered after the
+model has already hung up. Read those cells' transcripts before treating the
+movement as a regression.
+
 ## What the harness cannot see
 
 The scenario matrix reached 48/60 and the metamorphic pairs 8/8 with zero
@@ -481,6 +688,49 @@ a defaulted count is how a quick check becomes twenty of them.
 `RealtimeProvider` to drive text turns, so it exercises policy, gate and model
 behaviour and says nothing about the audio path or DTMF timing against a real
 IVR. A green matrix is not a substitute for the live gate.
+
+## Declaring the agreement a call settles
+
+A scheduling call has two lines that read alike in a transcript and mean
+different things: the callee **offering** a slot ("We have Tuesday at ten.") and
+the callee **agreeing** to it ("Yes, that works."). The status check alone
+cannot see the difference, and on a billed batch most runs recorded `completed`
+and hung up on the offer, before anyone had agreed to anything. One run recorded
+a "Monday" the callee never offered, and the suite passed it.
+
+A call-shape scenario can declare the arrangement in `params.agreement`:
+
+```json
+"agreement": {
+  "confirmTurn": 8,
+  "fields": {
+    "newAppointment": [["tuesday", "10"], ["2026", "10", "6", "10"], ["oct", "6", "10"]]
+  }
+}
+```
+
+- `confirmTurn` is the script index of the callee's line agreeing in their own
+  words. A `record_outcome` accepted with status `completed` before that line
+  went out fails **`premature-record`**. A `partial` record mid-call does not:
+  the tool description invites re-recording, and only `completed` claims the
+  call is settled.
+- `fields` lists, per outcome field, the forms a recorded value may take. Each
+  form is a list of words that must all appear in the value; any one form is
+  enough. Words match case-insensitively, split at letter–digit boundaries, and
+  numbers lose leading zeros, so `["2026", "10", "6", "10"]` matches
+  `2026-10-06T10:00`. Every accepted record is checked, not only the last: the
+  first record is what a dropped line would have left. A non-empty value
+  matching no form fails **`unsupported-outcome`**. An empty value means the
+  call did not establish it, which is not an invention.
+
+The tool calls are stamped with how many callee lines had gone out when each one
+arrived (`ScenarioRun.toolCalls[].turnsDelivered`), and the trace's `tool-call`
+events now carry the model's arguments, so a transcript file shows what each
+`record_outcome` claimed. The arguments are model output and carry no keys.
+
+List the forms you will accept before running. They are a statement about the
+script, and widening them after a failing run is how a check gets tuned until
+it passes.
 
 ## Writing a seed by hand
 

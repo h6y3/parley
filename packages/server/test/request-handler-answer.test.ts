@@ -3,6 +3,7 @@ import {
   CallSession,
   MULAW_8K,
   type AudioCodec,
+  type FrameConverter,
   type RealtimeProvider,
   type TelephonyProvider
 } from "@parley/core";
@@ -10,16 +11,24 @@ import { createHostAllowlist, createNumberAllowlist } from "../src/allowlist.js"
 import { PendingSessions } from "../src/pending-sessions.js";
 import { handleHttpRequest, type HttpRequest, type ServerDeps } from "../src/request-handler.js";
 
+// Relabels without touching bytes: these tests verify wiring, not DSP.
+const convert: FrameConverter = (f, to) => ({ encoding: to, data: f.data });
+const canConvert = (): boolean => true;
 const codec: AudioCodec = {
-  decodeInbound: (f) => f,
-  encodeOutbound: (f) => f,
   dtmfTones: () => ({ encoding: MULAW_8K, data: Buffer.alloc(0) })
 };
-const realtime: RealtimeProvider = { name: "fake", connect: vi.fn() };
+const realtime: RealtimeProvider = {
+  name: "fake",
+  audio: { accepts: [MULAW_8K], emits: MULAW_8K },
+  openingDelivery: "turn",
+  continuesAfterToolResponse: false,
+  connect: vi.fn()
+};
 
 function telephony(verify: boolean): TelephonyProvider {
   return {
     name: "fake",
+    mediaEncoding: MULAW_8K,
     originate: async () => ({ providerCallId: "CA1", status: "queued" }),
     buildAnswerResponse: (p) => ({
       contentType: "text/xml",
@@ -45,6 +54,8 @@ function deps(verify: boolean): ServerDeps {
     telephony: t,
     realtime,
     codec,
+    convert,
+    canConvert,
     from: "+14155550001",
     answerWebhookUrl: "https://voice.example.com/twilio/answer",
     model: "gemini-3.1-flash-live-preview"
@@ -52,11 +63,15 @@ function deps(verify: boolean): ServerDeps {
   pending.set("CA1", session);
   return {
     telephony: t,
-    realtime,
+    realtime: {
+      providers: { gemini: { provider: realtime, model: "m" } },
+      default: "gemini"
+    },
     codec,
+    convert,
+    canConvert,
     from: "+14155550001",
     publicHost: "voice.example.com",
-    model: "m",
     numberAllowlist: createNumberAllowlist(["+14155550002"]),
     hostAllowlist: createHostAllowlist(["voice.example.com"]),
     pending,

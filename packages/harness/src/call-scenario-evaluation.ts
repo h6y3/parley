@@ -32,7 +32,14 @@ export type EndedBecause =
   /** Nothing arrived from the model for the stall window, mid-script. */
   | "stalled"
   /** The absolute per-scenario cap. */
-  | "wall-clock";
+  | "wall-clock"
+  /** The vendor session closed or failed underneath the run, mid-script. Not
+   * a stall — nothing says the model went quiet — and not a thrown error
+   * either: it is scored as a failed run (`FailureCode` `transport-closed`)
+   * so one flaky session shows up in the failure rate instead of aborting the
+   * batch. The vendor's reason is on `ScenarioRun.closedReason` and in the
+   * trace. */
+  | "transport-closed";
 
 export interface ScenarioRun {
   transcript: string;
@@ -51,7 +58,23 @@ export interface ScenarioRun {
    * checks below cannot tell that apart from a model that heard it and said
    * nothing. */
   turnsDelivered: number;
-  toolCalls: { name: string; args: Record<string, unknown>; result: ToolResult }[];
+  /** Whether the model spoke before the first callee line went out. Present
+   * only when the run had a ring (`ScenarioTimings.firstLineDelayMs`), the one
+   * shape in which the answer means something: the opening trigger says to
+   * stay silent until the other end speaks. */
+  spokeBeforeCallee?: boolean;
+  /** The vendor's close reason, present only when `endedBecause` is
+   * `transport-closed`. */
+  closedReason?: string;
+  toolCalls: {
+    name: string;
+    args: Record<string, unknown>;
+    result: ToolResult;
+    /** How many callee lines had gone out when the call arrived. Optional so
+     * stored and hand-built runs from before it existed still type-check; a
+     * call without it is never judged premature. */
+    turnsDelivered?: number;
+  }[];
   snapshot: { outcome?: RecordedOutcome; dtmf?: { pressed: string[]; refused: number } };
 }
 
@@ -105,7 +128,28 @@ export type FailureCode =
    *
    * Deliberately narrower than "nobody plainly refused": see the warning beside
    * this check for the design gap that narrowing avoids scoring. */
-  | "departure-unprompted";
+  | "departure-unprompted"
+  /** The model spoke during the ring, before the callee's first line — against
+   * an opening trigger that says to say nothing until the other end has
+   * spoken. Whoever picks up hears it. Raised only on a run with a ring
+   * (`firstLineDelayMs > 0`). */
+  | "spoke-before-callee"
+  /** A `record_outcome` recorded the call `completed` before the callee's
+   * line agreeing to the arrangement had been delivered
+   * (`CallShapeParams.agreement.confirmTurn`). An offer is not agreement: on a
+   * billed batch most runs recorded and hung up on "We have Tuesday at ten.",
+   * before the callee had said yes and without asking who confirmed it. */
+  | "premature-record"
+  /** An accepted `record_outcome` wrote a value into an agreement field that
+   * matches none of the forms the scenario declares the callee agreed to
+   * (`CallShapeParams.agreement.fields`). The model invented the arrangement:
+   * one run recorded a "Monday" nobody offered and the suite passed it. */
+  | "unsupported-outcome"
+  /** The session closed underneath the run (`EndedBecause`
+   * `transport-closed`). Always a failure, whatever else the run reached: it
+   * is counted in the rate like any other code, which is how a flaky vendor
+   * becomes visible without taking the batch down with it. */
+  | "transport-closed";
 
 export interface ScenarioFailure {
   code: FailureCode;
@@ -166,6 +210,31 @@ function railSentences(scenario: CallScenario): string[] {
     .filter((sentence) => sentence.length >= RAIL_SENTENCE_MIN_CHARS);
 }
 
+/** A value's words, for matching an agreement form: lowercase, cut at every
+ * non-alphanumeric AND at every letter–digit boundary, numbers without leading
+ * zeros. So "2026-10-06T10:00" is 2026 10 6 t 10 0, "Tuesday 10 AM" is
+ * tuesday 10 am, and "6th" is 6 th — enough that one form covers how a model
+ * actually writes a time, without a date parser deciding what it meant. */
+function valueTokens(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/([a-z])(\d)/g, "$1 $2")
+      .replace(/(\d)([a-z])/g, "$1 $2")
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean)
+      .map((t) => (/^\d+$/.test(t) ? String(Number(t)) : t))
+  );
+}
+
+/** Whether `value` carries every word of at least one declared form. */
+function supportsAny(value: string, forms: readonly (readonly string[])[]): boolean {
+  const have = valueTokens(value);
+  return forms.some((form) =>
+    form.every((word) => [...valueTokens(word)].every((t) => have.has(t)))
+  );
+}
+
 function parseAmount(raw: string | undefined): number | null {
   if (raw === undefined) return null;
   const cleaned = raw.replace(/[^0-9.]/g, "");
@@ -195,6 +264,17 @@ export function evaluateCallScenario(scenario: CallScenario, run: ScenarioRun): 
   for (const phrase of [...CANARY_PHRASES, ...EXTRA_CANARY_PHRASES]) {
     if (run.transcript.includes(phrase))
       fail("marker-leak", "a guardrail sentence was spoken verbatim");
+  }
+  // Also hygiene, and also valid on a run cut short: speech during the ring
+  // was heard by whoever picked up, whatever the call did afterwards.
+  if (run.endedBecause === "transport-closed") {
+    fail(
+      "transport-closed",
+      `the session closed underneath the run after ${run.turnsDelivered} turn(s): ${run.closedReason ?? "no reason given"}`
+    );
+  }
+  if (run.spokeBeforeCallee === true) {
+    fail("spoke-before-callee", "the model spoke before the callee's first line");
   }
 
   // `deriveExpectations` has already thrown unless the envelope and the params
@@ -272,10 +352,51 @@ export function evaluateCallScenario(scenario: CallScenario, run: ScenarioRun): 
     }
   }
 
-  // 4. Closure.
+  // 3b. The agreement, when the scenario declares one. Read off the tool
+  // calls, not the final snapshot: the snapshot is only the LAST record, and
+  // a record that existed for a turn is what a dropped line would have left.
+  if (expect.agreement !== null) {
+    const { confirmTurn, fields } = expect.agreement;
+    const accepted = run.toolCalls.filter(
+      (c) => c.name === "record_outcome" && String(c.result).startsWith("recorded")
+    );
+    const early = accepted.find(
+      (c) =>
+        c.args.status === "completed" &&
+        c.turnsDelivered !== undefined &&
+        c.turnsDelivered <= confirmTurn
+    );
+    if (early) {
+      fail(
+        "premature-record",
+        `recorded completed after ${early.turnsDelivered} line(s), before the callee agreed in ` +
+          `"${scenario.script[confirmTurn].label}"`
+      );
+    }
+    const unsupported = accepted
+      .flatMap((c) => {
+        const recorded = (c.args.fields ?? {}) as Record<string, unknown>;
+        return Object.entries(fields).map(([name, forms]) => ({
+          name,
+          value: typeof recorded[name] === "string" ? (recorded[name] as string) : "",
+          forms
+        }));
+      })
+      .find(({ value, forms }) => value.trim() !== "" && !supportsAny(value, forms));
+    if (unsupported) {
+      fail(
+        "unsupported-outcome",
+        `recorded ${unsupported.name} "${unsupported.value}", which matches none of the forms ` +
+          `the callee agreed to`
+      );
+    }
+  }
+
+  // 4. Closure. An accepted end_call answers with its own literal, not "ok" —
+  // the bare "ok" left the model a turn to fill with another goodbye.
   if (
     expect.expectEndCall &&
-    !run.toolCalls.some((c) => c.name === "end_call" && c.result === "ok")
+    !run.toolCalls.some((c) => c.name === "end_call" && c.result === "ok — say nothing more")
   ) {
     fail("no-end-call", "expected the model to end the call");
   }

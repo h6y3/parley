@@ -4,10 +4,92 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] — 2026-10-01
+
+Realtime provider parity: Deepgram Voice Agent is now a supported, selectable speaking-plane
+provider alongside Gemini Live, a call can choose between them, and the audio contract that made
+that impossible is replaced. Breaking for anyone who implements a provider or embeds
+`CallSession` / `createParleyServer` directly. A daemon run through `parley serve` with an
+unchanged environment keeps its configuration, but its calls are not identical to before. The
+default Gemini model changed. Every call's system instruction now ends with a date sentence. The
+`end_call` description every model reads is longer. A hangup or consent handoff now waits for the
+words the model speaks after a tool answer. See **Upgrading**.
+
+### Added
+
+- **`--realtime-provider deepgram` is supported.** It was refused (the flag threw) because
+  `CallSession` hard-coded Gemini's audio formats. `parley serve` now builds every realtime
+  provider whose key is set, so a deployment keyed for both offers both; the flag only picks the
+  daemon's default (still `gemini`).
+- **`execution.realtime.provider`** (`"gemini" | "deepgram"`, requires envelope `version: 2`)
+  chooses the provider for one call. It names a provider, never a model. A daemon that has not
+  built the named provider answers `503` rather than falling back; a call whose maximum speaking-plane
+  lifetime exceeds the chosen provider's declared `maxSessionSeconds` answers `422` (a guard: no
+  valid envelope trips it with today's providers). Both happen before
+  dialling and before a retry attempt is consumed.
+- **Deepgram speak speed**, default `1.25`: `speed` on `createDeepgramRealtimeProvider`
+  (`DEFAULT_DEEPGRAM_SPEED`, range 0.7 to 1.5, rejected at construction outside it) and
+  `PARLEY_DEEPGRAM_SPEED` for the daemon. Deepgram's default pace was too slow on live calls
+  (about 119 words a minute; a 29-word reply took 14.6 s), and 1.25 was chosen by ear on live
+  calls (1.4 and 1.45 sounded too fast over a whole conversation).
+- **`brief.keyterms`**: up to 20 recognition hints (a name the listener would mishear), passed to
+  the provider and never rendered into the system instruction.
+- **Call record `realtime { provider, model }` and `firstModelAudioMs`**, also on the meeting
+  record and `schema/meeting-record.schema.json` (additive, optional).
+- **Environment variables** `PARLEY_GEMINI_MODEL`, `PARLEY_DEEPGRAM_THINK_PROVIDER`,
+  `PARLEY_DEEPGRAM_THINK_MODEL`, `PARLEY_DEEPGRAM_LISTEN_MODEL`, `PARLEY_DEEPGRAM_VOICE`.
+- **Harness** `--realtime-provider gemini|deepgram` on `reliability`, `scenario` and
+  `metamorphic`; `--think-model` for Deepgram; `--first-line-delay-ms` on `scenario` and
+  `metamorphic` (a ring before pickup); `--today <YYYY-MM-DD>` on `reliability`, `scenario` and
+  `metamorphic`, pinning the date the model is told so a script naming a weekday scores the same
+  on any day (default: the wall clock, as before); failure codes `spoke-before-callee` and
+  `transport-closed`. One conformance suite and a `CallSession` invariant suite now run against
+  every provider.
+- **`RealtimeSessionCallbacks.onDiagnostic`** (optional): transport facts for the operator's log,
+  never call content.
+- **A call's timeline in the log.** `CallSession` writes one content-free diagnostic per routed
+  tool call (`tool record_outcome → recorded at +1200ms`: the tool, the kind of answer up to its
+  first " —", and ms since the session started), plus `model turn complete at +…ms` and
+  `caller final at +…ms`. Never arguments, never what anyone said.
+- `@parley/core` exports `OpeningDelivery`, `planOpening` and `MEETING_CONNECTED_CUE` — the one
+  place a call's opening is decided, for `CallSession` and the harness alike — and `withOpening`,
+  the one place the rendered brief and a prompt-delivered opening are joined into the prompt a
+  connect sends.
+- **`RealtimeProvider.continuesAfterToolResponse`** (required): whether the model goes on speaking
+  after a tool answer. Both shipped providers declare `true`.
+- `@parley/audio` exports `canConvert`, sharing `convert`'s path table; `@parley/realtime-gemini`
+  exports `geminiFunctionDeclarations`.
+- The model is told today's date. `renderSystemInstruction` takes an optional `today` and appends
+  one Parley-authored sentence ("Today is Wednesday, 2026-09-30 (America/Los_Angeles). When the
+  other person gives a relative date such as ...") so it can turn "next Tuesday" into the ISO date
+  the outcome schema requires. `CallSession` computes it once at connect from its clock and the new
+  optional `CallSessionParams.timeZone`; the daemon reads it from `PARLEY_TIMEZONE` (optional IANA
+  name, defaulting to the host's zone; an invalid name fails boot), via `ServerDeps.timeZone`. The
+  harness scenario runner and payload preview send the same sentence. Without `today` the rendered
+  output is byte-identical to before.
 
 ### Changed
 
+- **A gap in the brief no longer ends the task by itself.** When asked something the brief does not
+  cover, the model says it will follow up, then asks whether they can still go ahead without it; if
+  they can, it gets as much done as it can and the gap becomes a follow-up item. Only a gap that
+  actually stops them acting makes the arrangement unfinished (the deferral and wrap-up rails).
+- **Default Gemini model is `gemini-3.8-live`** (was `gemini-3.1-flash-live-preview`). Every tool
+  is declared `BLOCKING`, which 3.8 needs to keep request/response tool semantics (its default is
+  non-blocking). `GoAway` and `interaction_status` are logged as diagnostics.
+- **Deepgram provider** is production-grade: Flux listening (`flux-general-en`), speak voice
+  `flux-kelsey-en` (Flux voices declare speak `version: "v2"`, Aura voices `"v1"`, any other voice
+  none; Kit was tried and was harder to understand at speed), `mulaw@8000` both ways with no
+  conversion, `mip_opt_out: true`, a two-hour `maxSessionSeconds`, and a default think model of
+  `gpt-4o-mini` on Deepgram's managed `open_ai` provider: the model Deepgram's own telephony
+  reference agents use, in the Standard pricing tier ($0.075 a minute against $0.163 for the
+  Advanced tier), measured at about 0.5 to 0.96 s from callee text to first audio against about
+  1.15 to 1.77 s for `claude-sonnet-4-6`.
+- The Deepgram provider takes `think: { provider, model }` (was `llmModel`), plus `listenModel`,
+  `voice` and `settingsTimeoutMs`.
+- The public docs, decision record (`docs/decisions/2026-08-19-voice-agent-spike.md`) and README
+  describe Deepgram as supported. Making it the default is still open: it needs the live A/B the
+  decision record names.
 - Reframed the public documentation around Parley's actual product boundary: a one-shot
   voice-agent harness for bounded calls, rather than a voice connection or generic bot. The README
   now leads with the call contract, capability gate, structured evidence, retry lineage, and
@@ -15,6 +97,209 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   package metadata use the same nomenclature.
 - Added `@parley/meeting-browser` to the README package inventory, which had fallen behind the
   workspace after the package was introduced.
+- **`end_call` now says when not to end.** Its description gains: never call this while waiting
+  for the other side (after a keypress, on hold or being transferred, before anyone has
+  answered); having recorded an outcome is not a reason to end; once they have said goodbye, ask
+  nothing further, record, and end. In billed runs one model called `end_call` about 2 s after
+  pressing a key, and another kept asking questions after the callee said goodbye. Every provider
+  receives the same declarations, so Gemini's behaviour may move too; re-measure it.
+- **The closing rail closes once.** It asked the model to "confirm the single key outcome in one
+  short sentence, thank them and say goodbye"; on live calls that produced re-confirmations of
+  details the callee had already agreed and a scripted recap. It now reads: when the purpose is
+  settled, check once whether they need anything else from you to act on it, then record the
+  outcome, say one short goodbye, and end the call; do not ask them to re-confirm details they
+  have already confirmed, and do not recap settled details back to them. The follow-up sentences
+  for what the brief does not cover are unchanged. The rail opens with "Nothing is settled until
+  they have agreed to a specific arrangement in their own words; their offer or your proposal is
+  not agreement — accept it, let them confirm, then close", because on a live call the model
+  recorded the outcome and hung up in the turn the callee only offered a time.
+- **`record_outcome` and `end_call` answers say what happens next.** Every tool answer starts a
+  spoken turn, and a bare `"recorded"` or `"ok"` gave the model nothing to do with it, so live
+  calls spent each one on another thank-you or a second goodbye. On a call that declares
+  `end_call`, `record_outcome` answers `"recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call"` (without `end_call` it
+  answers `"recorded"`). An accepted `end_call` answers `"ok — say nothing more"`. A refused first `end_call` (no outcome yet) answers `"refused: record the outcome first
+— call record_outcome now without mentioning it"`, so the model does not narrate the refusal
+  aloud. These are new members of the closed `ToolResult` union; every other tool's `"ok"` is
+  unchanged.
+- **A `completed` record needs the other side to have spoken since the model did.** On a
+  two-party call `record_outcome` with status `completed` is refused when the model has produced
+  audio since the far end last spoke (or before the far end has said anything), with
+  `"refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call"`.
+  `partial` and `failed` are never held to it, meetings are not gated, and a refusal records
+  nothing. On a live Gemini 3.8 call the callee offered "Monday at 9:26 a.m." and the model, in
+  one turn, accepted, restated it as 9:30, said goodbye, recorded `completed` at 9:30 and hung
+  up; three prompt-level fixes had not stopped that shape, so it is enforced in `ToolGate`.
+  `CallSession` feeds it model audio frames and every non-empty far-end transcript (Gemini never
+  marks its input transcription final), and `end_call`'s refusal is still one-shot, so a model
+  that never gets its confirmation can still hang up. The scenario runner feeds the same gate:
+  each delivered line is far-end speech, and transports raise a new optional
+  `ScenarioTransport` `on.modelAudio()` (both built-in transports do).
+- **The date sentence lists the next 14 days.** Told only today's weekday and date, a model on
+  live calls resolved "next Tuesday" to the wrong day. The sentence now ends "The next 14 days
+  are: Thu Oct 1, Fri Oct 2, …", the 14 calendar days after today in the call's zone, computed
+  without depending on the host's locale. It ends "When you say a date, use the weekday and date
+  together exactly as listed." (a live call said "Tuesday, October 8th" for a Thursday).
+- **`CallSession.resolveSystemInstruction()` returns the full prompt the call sends**, including
+  the opening on a `"prompt"`-delivery provider. It used to return the rendered brief alone.
+- **`CallSession.audioBridgeStats` is `{ inbound, outbound, listening }`**, each
+  `{ conversions, passThroughs }`, one per bridge. It was a single `{ conversions, passThroughs }`
+  for the listening plane.
+- **Waiting for a model turn to finish is bounded by idle time.** The four-second cap on a hangup's
+  or consent handoff's wait now restarts on every model audio frame. A 15-second ceiling from the
+  start of the wait bounds the total. `CONSENT_HANDOFF_MAX_MS` is derived from that ceiling (now
+  30 s, was 19 s), so the `422` lifetime guard allows for it.
+- **Harness Layer 1 (`reliability`) scores differently from 0.3.x.** A turn ends on the reliability
+  runner's own turn end, with 2.5 s of trailing silence (`RELIABILITY_TRAILING_SILENCE_MS`). The
+  disclosure check follows the represented-call disclosure rule. A turn with no spoken reply is
+  dirty with the new `no-reply` code. Layer 1 numbers from 0.4.0 are not comparable with earlier
+  versions; re-baseline before reading a trend across the upgrade.
+
+### Fixed
+
+- **Deepgram latency is logged.** The diagnostic keyed on `AgentStartedSpeaking`, which the current
+  Voice Agent API never sends; it now logs `deepgram latency <field>=<ms>ms` for each `LatencyReport`.
+- **A model turn opens on its first audio**, not only its first transcript, so `end_call` waits for
+  the goodbye even when the transcript has not arrived.
+- **A hangup no longer cuts off the goodbye the model speaks after `end_call`.** On both vendors
+  the tool call arrives first, and the goodbye is spoken in the turn that continues after the tool
+  answer. On Deepgram's wire it started about 190 ms after the answer and ran 6.7 s. With no turn
+  open when the call arrived, `CallSession` drained an empty queue and hung up over the whole
+  goodbye. The consent handoff retired the speaking plane over the acknowledgment the same way. An
+  answered tool call on a provider declaring `continuesAfterToolResponse` now opens a model turn,
+  and the hangup or handoff waits for that turn to end before draining.
+- **After `end_call`, the callee no longer hears the model narrate the call.** On a live Gemini
+  call the model said "Thank you very much. Goodbye." after `end_call` and then "I have
+  successfully rescheduled the appointment." — a report meant for the principal. Once `end_call`
+  is accepted on a provider declaring `continuesAfterToolResponse`, `CallSession` stops forwarding
+  model audio once a completed sentence containing "bye" (bye, goodbye, bye-bye) has been spoken,
+  and goes straight to drain and hangup without waiting for the turn to end. The transcript leads
+  its audio (0.7–1.1 s measured on Gemini), so the goodbye is held for 1.5 s of audio after its
+  words arrive, or 90 ms a character of its sentence if longer. With no goodbye, audio stops after
+  3 s of it. Each stop logs `after end_call: stopped at goodbye|3000 ms cap at +<ms>ms`.
+- **Deepgram no longer reports the meeting cue as participant speech.** Deepgram echoes every
+  `InjectUserMessage` back as user `ConversationText`, so `MEETING_CONNECTED_CUE` reached the
+  transcript and the pre-consent buffer as something a participant said. The provider now drops
+  the first user utterance that matches each line it injected, and logs a content-free diagnostic.
+- A Deepgram vendor `Error` that arrives after the handshake has already failed no longer reports
+  a fatal error. `connect` has already rejected by then.
+- `examples/express-minimal` answers an audio contract that cannot be bridged with `503`, as
+  `@parley/server` does, instead of an unhandled rejection.
+- **Deepgram takes the opening in its prompt.** It was sent as `InjectAgentMessage`, which Deepgram
+  speaks verbatim: the callee would have heard the private instruction read aloud. Sent instead as
+  an `InjectUserMessage`, its model heard it as the callee speaking — in billed text-mode runs one
+  model hung up during the ring and another said "I'm listening and waiting for the other end to
+  speak" aloud on every run. The provider now declares `openingDelivery: "prompt"`: the opening
+  trigger is appended to the one-time `Settings` prompt, a two-party call injects nothing, and a
+  meeting sends one short Parley-authored cue (`MEETING_CONNECTED_CUE`). Gemini's opening is
+  unchanged. The harness scenario and reliability runners plan the opening through the same
+  `planOpening` helper as `CallSession`, so a Deepgram matrix run measures what a Deepgram call
+  sends.
+- **Deepgram handshake and turns.** `connect` waits for `SettingsApplied` (bounded by
+  `settingsTimeoutMs`). A turn is complete once an `AgentAudioDone` has been followed by the quiet
+  window described below, so drains, consent handoff and the meeting `never_joined`
+  classification see it. Vendor `Error` / `Warning` messages surface;
+  server-side (`client_side: false`) function calls are not answered by the client.
+- **A Deepgram turn is complete only when its audio stops, so the hang-up no longer clips a
+  goodbye.** Deepgram can send an `AgentAudioDone` and then more audio of the same reply: in one
+  billed session, `end_call`, an `AgentAudioDone`, about 1.3 s more speech, then a second
+  `AgentAudioDone`. The farewell waited for the first turn end and then drained only the audio
+  already queued, so the rest was cut off. The provider now reports the turn complete once an
+  `AgentAudioDone` has been followed by `DEEPGRAM_TURN_QUIET_MS` (300 ms) with no agent audio; audio
+  inside that window cancels it and the next `AgentAudioDone` re-arms it. The same turn end drives
+  the consent handoff's drain and `modelTurnsCompleted`. The harness Deepgram transport uses the
+  same helper (`createDeepgramTurnCompletion`, exported from `@parley/realtime-deepgram`), so a
+  matrix scores the boundary a call hangs up on. Gemini is unchanged. The early
+  `AgentAudioDone` was also seen right after `press_digits` (two cases at about 4.46 s), not only
+  on goodbyes, so the quiet window also changes post-press timing; bear that in mind when reading
+  a Deepgram matrix.
+- Harness runs a session that dies mid-run as a scored `transport-closed` run, a refused Deepgram
+  line ends the run, and a Gemini session refused during setup is a configuration error.
+- **Harness `scenario` at the default `--first-line-delay-ms 0` no longer stalls on a silent
+  model.** The first callee line waited on the model's first completed turn, and a model obeying
+  the opening trigger takes none: Gemini sends no `turnComplete` for it, so 8 of 10 runs of one
+  batch ended `stalled` before "Hello." went out. `0` is now a ring of zero (the first line goes out
+  right after the trigger). Runs at `0` before and after this measure different openings.
+- **Harness scoring could pass an invented or premature outcome.** A scenario can now declare
+  `params.agreement` (`confirmTurn`, and per outcome field the forms a value may take). A
+  `completed` record made before the callee's agreeing line fails `premature-record`, and a
+  recorded value matching none of the forms fails `unsupported-outcome`. Tool calls carry
+  `turnsDelivered`, and the trace's `tool-call` events carry the model's arguments, so a
+  transcript file shows what each `record_outcome` claimed.
+
+### Upgrading
+
+Breaking changes, for code that implements or embeds these interfaces:
+
+- **`RealtimeProvider.audio` is required**: `{ accepts: readonly AudioEncoding[]; emits: AudioEncoding }`.
+  Add `maxSessionSeconds` if the vendor bounds a session; a provider that declares none is never
+  refused on duration.
+- **`RealtimeProvider.openingDelivery` is required**: `"turn"` (the opening trigger is sent after
+  connect through `sendOpeningTrigger` — what every provider did before) or `"prompt"` (it is
+  appended to the `systemInstruction`, and `sendOpeningTrigger` is called only on a meeting, with
+  `MEETING_CONNECTED_CUE`). A provider that should behave as before declares `"turn"`; see
+  `docs/provider-authoring-guide.md`. A harness `ScenarioTransport` declares the same field.
+- **Harness `runAudioScript` and `runScenarioReliability` no longer take `openingTrigger`.** The
+  opening is planned from the provider's declaration; `runAudioScript` takes an optional
+  `meeting` flag instead.
+- **`AudioCodec` is `dtmfTones` only.** `decodeInbound` and `encodeOutbound` are removed; the
+  bridge between the carrier's and the provider's encodings is `convert` from `@parley/audio`.
+- **`CallSession` params gain `convert` and `canConvert`** (pass `convert` and `canConvert` from
+  `@parley/audio`). `ServerDeps` takes the same pair.
+- **`TelephonyProvider.mediaEncoding` is required** (`mulaw@8000` for Twilio).
+- **`ServerDeps.realtime` / `ParleyServerConfig.realtime` is now a `RealtimeRegistry`**:
+  `{ providers: { gemini?: { provider, model }, deepgram?: { provider, model } }, default }`,
+  replacing `realtime` plus `model`. `createParleyServer` throws at construction if `default` names
+  a provider that is not built.
+- **Deepgram provider options**: `llmModel` becomes `think: { provider, model }`; `listenModel`,
+  `voice` and `settingsTimeoutMs` are new.
+- **`RealtimeProvider.continuesAfterToolResponse` is required.** Declare `true` if the vendor's
+  model goes on speaking after a tool answer (both shipped vendors do). Declare `false` only if it
+  says nothing afterwards. See `docs/provider-authoring-guide.md`.
+- **`CallSession.audioBridgeStats` is `{ inbound, outbound, listening }`**. Read
+  `.listening.conversions` / `.listening.passThroughs` where you read `.conversions` /
+  `.passThroughs` before.
+- **`DEFAULT_DEEPGRAM_LLM_MODEL` is removed** from `@parley/realtime-deepgram`. Use
+  `DEFAULT_DEEPGRAM_THINK` (`{ provider, model }`).
+- **`CallSession.resolveSystemInstruction()` includes the opening** on a `"prompt"`-delivery
+  provider. Code that appended `planOpening(...).promptSuffix` itself should stop doing so, or use
+  `withOpening`.
+- **Harness `runCallScenario` takes a `transport`** (a `ScenarioTransport`, e.g. from
+  `geminiTransport` or `deepgramTransport`) in place of `apiKey`, `model` and `genAIFactory`.
+- **`ScenarioTransport.completesAfterToolResponse` and `ScenarioTransport.openingDelivery` are
+  required.** A custom transport declares both.
+- **`CompletedCallRecord.realtime` is required on the type** (`{ provider, model }`). Code that
+  builds a record must set it. It stays optional in `schema/meeting-record.schema.json`, so older
+  records still validate.
+- **An accepted `end_call` no longer answers `"ok"`.** Code that reads tool results (a custom
+  transport, evaluator or log parser) and tests `end_call` for `"ok"` should test for
+  `"ok — say nothing more"`; a successful `record_outcome` on a call with
+  `end_call` is
+  `"recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call"`.
+- `RealtimeSessionCallbacks.onDiagnostic` is new and optional; nothing to change.
+
+Actions for an operator:
+
+1. **Upgrade the daemon before any client sends the new envelope fields.** The envelope schema is
+   strict, so an older daemon rejects `execution.realtime` and `brief.keyterms` with `400`.
+2. Send **`version: 2`** on any envelope that carries `execution.realtime` (v1 envelopes cannot
+   carry `execution`).
+3. **Choose your providers.** Set `GEMINI_API_KEY` and/or `DEEPGRAM_API_KEY`; `serve` builds every
+   provider whose key is set. Boot fails if the default (`--realtime-provider`, default `gemini`)
+   has no key. A Deepgram-only daemon: `--realtime-provider deepgram` and no Gemini key.
+4. **The default Gemini model changed** to `gemini-3.8-live`. To stay on the previous model set
+   `PARLEY_GEMINI_MODEL=gemini-3.1-flash-live-preview`; recorded `model` values on new call
+   records change accordingly.
+5. Optionally set `PARLEY_DEEPGRAM_THINK_PROVIDER`, `PARLEY_DEEPGRAM_THINK_MODEL`,
+   `PARLEY_DEEPGRAM_LISTEN_MODEL`, `PARLEY_DEEPGRAM_VOICE`, `PARLEY_DEEPGRAM_SPEED`. Defaults:
+   `open_ai`, `gpt-4o-mini`, `flux-general-en`, `flux-kelsey-en`, `1.25`. To run the previous
+   model set `PARLEY_DEEPGRAM_THINK_PROVIDER=anthropic` and
+   `PARLEY_DEEPGRAM_THINK_MODEL=claude-sonnet-4-6` (it bills at Deepgram's Advanced tier). The
+   meeting-connected cue has not been checked on the default, so route meetings to Gemini
+   (`execution.realtime.provider`) until it is.
+6. Consumers of call records or `schema/meeting-record.schema.json` can read the new optional
+   `realtime` and `firstModelAudioMs` fields; nothing existing changes meaning.
+7. Making Deepgram the default is deliberately not part of this release; it waits on a live A/B
+   (see the decision record).
 
 ## [0.3.1] — 2026-09-27
 

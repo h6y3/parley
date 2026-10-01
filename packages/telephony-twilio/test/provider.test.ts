@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { MULAW_8K } from "@parley/core";
 import { TwilioTelephonyProvider } from "../src/twilio-telephony-provider.js";
 
 function makeProvider(fetchImpl: typeof fetch) {
@@ -9,6 +10,13 @@ function makeProvider(fetchImpl: typeof fetch) {
     fetchImpl
   });
 }
+
+describe("TwilioTelephonyProvider.mediaEncoding", () => {
+  it("declares mulaw@8000, readable before any call exists", () => {
+    const provider = makeProvider(vi.fn() as unknown as typeof fetch);
+    expect(provider.mediaEncoding).toEqual(MULAW_8K);
+  });
+});
 
 describe("TwilioTelephonyProvider.originate", () => {
   it("POSTs to the Calls endpoint with Basic auth and maps the result", async () => {

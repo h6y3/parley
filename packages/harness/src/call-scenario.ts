@@ -8,7 +8,11 @@ export interface ScenarioTurn {
   text: string;
   /** Hold this turn back until the model has pressed these keys. Without it an
    * IVR turn is delivered on a timer, and the scenario proves nothing about
-   * whether the model actually navigated the tree. */
+   * whether the model actually navigated the tree.
+   *
+   * Only presses made after the line BEFORE this one went out count, so gate
+   * the line a press reaches, not every line after it: a later line gated on
+   * the same key waits for a second press. Empty gates nothing. */
   afterPress?: string;
   /** THIS LINE IS NOT A REPLY. Deliver it this many milliseconds after the
    * previous one went out, whether or not the model has said or finished
@@ -66,6 +70,29 @@ export interface CallShapeParams {
    * third of a legal enum was unreachable by construction and a correctly
    * `failed` call was scored as a defect. */
   reachesSomeoneWhoCanAct: boolean;
+  /** The arrangement the callee agrees to, when the script settles one.
+   * Optional: absent, nothing here is checked, which is every scenario written
+   * before it existed.
+   *
+   * Declared, not read out of the prose, for the reason every other field here
+   * is: which line agrees and what it agrees to are facts about the script the
+   * author knows, and a detector guessing them from wording is a detector that
+   * gets tuned until it passes. */
+  agreement?: {
+    /** Index into `script` of the callee's line agreeing to the arrangement in
+     * their own words — not the line offering it. A `completed` record made
+     * before this line went out fails `premature-record`. */
+    confirmTurn: number;
+    /** For each outcome field that carries the arrangement, the forms a
+     * recorded value may take: each form is a list of words that must ALL
+     * appear in it, and any one form is enough. A non-empty value matching
+     * none fails `unsupported-outcome`; an empty one means "not established"
+     * and is not an invention. Words are matched case-insensitively, split at
+     * letter–digit boundaries, numbers without leading zeros — so
+     * `["tuesday", "10"]` matches "Tuesday 10 AM" and `["2026", "10", "6",
+     * "10"]` matches "2026-10-06T10:00". */
+    fields: Record<string, string[][]>;
+  };
 }
 
 const NUMBER_WORDS = new Set([
@@ -214,6 +241,9 @@ export interface CallShapeExpectations {
   expectEngageTopic: boolean;
   expectOutcomeStatus: "completed" | "partial" | "failed";
   expectEndCall: boolean;
+  /** `params.agreement`, checked against the envelope and the script, or null
+   * when the scenario declares none. */
+  agreement: NonNullable<CallShapeParams["agreement"]> | null;
 }
 
 export interface MeetingShapeExpectations {
@@ -441,6 +471,34 @@ export function deriveExpectations(s: CallScenario): ScenarioExpectations {
     );
   }
 
+  const agreement = params.agreement ?? null;
+  if (agreement !== null) {
+    if (!params.offersAppointment) {
+      throw new Error(
+        `scenario ${s.id}: params declare an agreement but offersAppointment is false — ` +
+          `there is nothing bookable to agree to`
+      );
+    }
+    if (
+      !Number.isInteger(agreement.confirmTurn) ||
+      agreement.confirmTurn < 0 ||
+      agreement.confirmTurn >= s.script.length
+    ) {
+      throw new Error(
+        `scenario ${s.id}: agreement.confirmTurn ${agreement.confirmTurn} is outside the script ` +
+          `(length ${s.script.length})`
+      );
+    }
+    const declared = new Set((envelope.execution.outcome?.fields ?? []).map((f) => f.name));
+    for (const name of Object.keys(agreement.fields)) {
+      if (!declared.has(name)) {
+        throw new Error(
+          `scenario ${s.id}: agreement field "${name}" is not a declared outcome field`
+        );
+      }
+    }
+  }
+
   const expectPress =
     envelope.execution.ivr === undefined
       ? null
@@ -468,7 +526,8 @@ export function deriveExpectations(s: CallScenario): ScenarioExpectations {
       : params.offersAppointment && !deferrable
         ? "completed"
         : "partial",
-    expectEndCall: envelope.execution.closure !== undefined
+    expectEndCall: envelope.execution.closure !== undefined,
+    agreement
   };
 }
 
@@ -494,7 +553,14 @@ const callShapeParamsSchema = z
     raisedTopic: z.string().nullable(),
     adjacentIndex: z.number().int().nullable(),
     offersAppointment: z.boolean(),
-    reachesSomeoneWhoCanAct: z.boolean()
+    reachesSomeoneWhoCanAct: z.boolean(),
+    agreement: z
+      .object({
+        confirmTurn: z.number().int().min(0),
+        fields: z.record(z.string(), z.array(z.array(z.string().min(1)).min(1)).min(1))
+      })
+      .strict()
+      .optional()
   })
   .strict();
 

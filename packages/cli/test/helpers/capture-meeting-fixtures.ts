@@ -6,6 +6,7 @@ import {
   MULAW_8K,
   type AudioCodec,
   type AudioFrame,
+  type FrameConverter,
   type AudioSource,
   type MeetingExecution,
   type RealtimeConnectParams,
@@ -55,9 +56,12 @@ import { join } from "node:path";
 
 const FRAME_MS = 20;
 
+// The capture realtime stub speaks the carrier's encoding, so the speaking
+// plane passes every frame through and this relabelling converter is never
+// actually asked to convert. It exists to satisfy the contract.
+const convert: FrameConverter = (f, to) => ({ encoding: to, data: f.data });
+const canConvert = (): boolean => true;
 const codec: AudioCodec = {
-  decodeInbound: (f) => f,
-  encodeOutbound: (f) => f,
   dtmfTones: () => ({ encoding: MULAW_8K, data: Buffer.alloc(0) })
 };
 
@@ -106,7 +110,10 @@ function rig(
 
   let realtimeCallbacks!: RealtimeConnectParams["callbacks"];
   const realtime: RealtimeProvider = {
-    name: "capture-realtime",
+    name: "gemini",
+    audio: { accepts: [MULAW_8K], emits: MULAW_8K },
+    openingDelivery: "turn",
+    continuesAfterToolResponse: false,
     connect: async (p) => {
       realtimeCallbacks = p.callbacks;
       return {
@@ -147,6 +154,7 @@ function rig(
 
   const telephony: TelephonyProvider = {
     name: "capture-telephony",
+    mediaEncoding: MULAW_8K,
     originate: async () => ({ providerCallId: callId, status: "queued" }),
     buildAnswerResponse: () => ({ contentType: "text/xml", body: "<Response/>" }),
     verifyWebhookSignature: () => true,
@@ -173,9 +181,11 @@ function rig(
     telephony,
     realtime,
     codec,
+    convert,
+    canConvert,
     from: "+15555550123",
     answerWebhookUrl: "https://voice.example.com/twilio/answer",
-    model: "capture-model",
+    model: "gemini-3.8-live",
     now: () => clock.t,
     execution: {
       meeting: {

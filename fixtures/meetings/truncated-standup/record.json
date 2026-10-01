@@ -32,5 +32,9 @@
   },
   "gapMs": 0,
   "coveredMs": 76000,
-  "modelTurnsCompleted": 2
+  "modelTurnsCompleted": 2,
+  "realtime": {
+    "provider": "gemini",
+    "model": "gemini-3.8-live"
+  }
 }

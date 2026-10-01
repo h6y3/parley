@@ -1,12 +1,17 @@
-import { describe, expect, it } from "vitest";
-import { OPENING_TRIGGER, renderSystemInstruction, type Brief } from "@parley/core";
+import { describe, expect, it, vi } from "vitest";
+import {
+  OPENING_TRIGGER,
+  defaultTimeZone,
+  renderSystemInstruction,
+  type Brief
+} from "@parley/core";
 import { composePolicy, representedCall } from "@parley/policy";
 import { buildPayloadPreview, formatPayloadPreview } from "../src/payload-preview.js";
 
 const policy = representedCall({ principalName: "Alex Rivera" });
 
 const brief: Brief = {
-  to: "+14085559999",
+  to: "+14155550123",
   persona: "You are Ada, an assistant calling on behalf of Alex Rivera.",
   objective: "Schedule a plumbing appointment for a leaking kitchen faucet.",
   facts: ["Alex Rivera is available Tuesday or Wednesday afternoon."]
@@ -14,19 +19,39 @@ const brief: Brief = {
 
 describe("buildPayloadPreview", () => {
   it("renders systemInstruction from renderSystemInstruction + composePolicy and drops the recipient field", () => {
-    const preview = buildPayloadPreview(brief, policy);
+    const today = { now: new Date("2026-09-30T19:00:00Z"), timeZone: "America/Los_Angeles" };
+    const preview = buildPayloadPreview(brief, policy, undefined, today);
     expect(preview).toEqual({
       systemInstruction: renderSystemInstruction({
         persona: brief.persona,
         objective: brief.objective,
         facts: brief.facts,
-        guardrails: composePolicy(policy)
+        guardrails: composePolicy(policy),
+        today
       }),
       openingTrigger: OPENING_TRIGGER
     });
     expect(preview.systemInstruction).toContain("personal assistant");
     expect(preview).not.toHaveProperty("recipient");
     expect(preview).not.toHaveProperty("meetingBrief");
+  });
+
+  it("shows the date sentence for the current date by default", () => {
+    // The default reads the clock, so the clock is pinned — a test that read
+    // the real one could straddle midnight between its two reads.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-30T19:00:00Z"));
+      const preview = buildPayloadPreview(brief, policy);
+      const iso = new Intl.DateTimeFormat("en-CA", {
+        dateStyle: "short",
+        timeZone: defaultTimeZone()
+      }).format(new Date("2026-09-30T19:00:00Z"));
+      expect(preview.systemInstruction).toContain(`Today is`);
+      expect(preview.systemInstruction).toContain(`${iso} (${defaultTimeZone()})`);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("carries a supplied meetingBrief on the returned preview WITHOUT changing systemInstruction", () => {

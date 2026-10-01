@@ -111,13 +111,37 @@ export type ToolName = "press_digits" | "end_call" | "record_outcome" | "begin_n
  * security bug. */
 export type ToolResult =
   | "ok"
+  /** An accepted `end_call`. Every other tool's acceptance is still "ok".
+   *
+   * A tool answer starts a spoken turn — always on Deepgram, and Gemini's
+   * BLOCKING tools continue the one they interrupted — and CallSession waits
+   * for that turn before it hangs up. A bare "ok" gave the model nothing to
+   * do with it, so on live calls it spent the turn on one more goodbye. This
+   * says nothing more is wanted. (It said "the line is closing" first, and a
+   * live Gemini call answered it aloud with "The line is closed.") */
+  | "ok — say nothing more"
   | "recorded"
+  /** A `record_outcome` accepted on a call that declares `end_call`. A bare
+   * "recorded" left the turn it opens directionless, and the model filled it
+   * with another round of thanks before ending. Without `end_call` the plain
+   * "recorded" stands: naming a tool the model does not have is its own
+   * defect. The goodbye is conditional (a goodbye already said means end_call alone):
+   * a record made mid-call, or a partial one, must not push the model toward
+   * hanging up — `end_call`'s own description says having recorded an
+   * outcome is not a reason to end. */
+  | "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call"
   | "refused: tool not available"
   | "refused: press budget exhausted"
   | "refused: digit not permitted"
   | "refused: could not send"
-  | "refused: record the outcome first"
+  | "refused: record the outcome first — call record_outcome now without mentioning it"
   | "refused: incomplete outcome"
+  /** A `completed` record on a two-party call when the model has spoken since
+   * the far end last did — so nobody has agreed to what it last said. See
+   * `ToolGate.recordOutcome`. It says what to do instead, because the model
+   * reads it and goes on speaking, and "do not end the call" because the
+   * refused record has just left nothing for `end_call` to close on. */
+  | "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call"
   | "refused: invalid arguments"
   | "refused: that amount is above the limit for this call"
   /** Nobody has answered a question, because none has been asked: the model
@@ -131,13 +155,16 @@ export type ToolResult =
 
 export const TOOL_RESULTS: readonly ToolResult[] = Object.freeze([
   "ok",
+  "ok — say nothing more",
   "recorded",
+  "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call",
   "refused: tool not available",
   "refused: press budget exhausted",
   "refused: digit not permitted",
   "refused: could not send",
-  "refused: record the outcome first",
+  "refused: record the outcome first — call record_outcome now without mentioning it",
   "refused: incomplete outcome",
+  "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call",
   "refused: invalid arguments",
   "refused: that amount is above the limit for this call",
   "refused: the agent has not asked for consent yet",
@@ -225,10 +252,18 @@ export function buildToolDeclarations(execution: CallExecution): ToolDeclaration
     // has no way to observe that the call is still up, and cannot infer from a
     // silent line that it is the one holding it open.
     //
+    // The second half of the description says when NOT to end. Measured in
+    // billed runs: one model called this ~2 s after pressing a key, when it
+    // should have been waiting for the menu; another kept asking questions
+    // after the callee said goodbye. The first sentence alone only ever pushed
+    // toward ending, so the boundary has to be stated from both sides.
+    //
     // This lives in the tool description rather than in the wrap-up rail
-    // because the description exists if and only if the tool does. Putting
-    // "end the call" in `composePolicy` would tell a model with no `end_call`
-    // tool to use one — the same defect inverted.
+    // because the description exists if and only if the tool does. The rail
+    // (2026-09-30) says "record the outcome, say one short goodbye, and end
+    // the call" in generic words, as the voicemail rails always have; naming
+    // `end_call` there would tell a model with no such tool to use one — the
+    // same defect inverted. The tool-specific consequence stays here.
     const outcomeFirst =
       execution.closure.requireOutcomeBeforeEnd && execution.outcome !== undefined
         ? ` Record the outcome before you call this: the first attempt to end without one is refused.`
@@ -238,7 +273,11 @@ export function buildToolDeclarations(execution: CallExecution): ToolDeclaration
       description:
         `End the call and hang up the line. Saying goodbye does NOT hang up — the call stays ` +
         `connected until you call this, so call it as soon as you have said goodbye and the ` +
-        `conversation is complete. Do not wait for the other person to hang up.${outcomeFirst}`,
+        `conversation is complete. Do not wait for the other person to hang up.` +
+        ` Never call this while waiting for the other side — after a keypress, while on hold or ` +
+        `being transferred, or before anyone has answered. Having recorded an outcome is not a ` +
+        `reason to end. Once they have said goodbye, ask nothing further: record what you have ` +
+        `and end the call.${outcomeFirst}`,
       parametersJsonSchema: {
         type: "object",
         properties: { reason: { type: "string", description: "Short reason the call is ending." } },
@@ -379,6 +418,11 @@ export class ToolGate {
   private outcome?: RecordedOutcome;
   private endRefusedOnce = false;
   private notetakingBegan = false;
+  /** Whether the model has produced audio since the far end last spoke —
+   * true from the model's first audio frame until the far end's next words.
+   * Starts false: before anyone has said anything, nothing has been proposed
+   * either. See `recordOutcome`. */
+  private modelSpokeSinceCaller = false;
 
   constructor(
     private readonly execution: CallExecution,
@@ -417,6 +461,19 @@ export class ToolGate {
     return this.refusePress("refused: could not send");
   }
 
+  /** The model produced audio. Fed by CallSession from the provider's AUDIO
+   * frames, never from its transcript: Gemini's output transcription can trail
+   * the audio it describes, and the audio precedes the tool call it leads to. */
+  noteModelAudio(): void {
+    this.modelSpokeSinceCaller = true;
+  }
+
+  /** The far end said something (a non-empty transcript, final or not — Gemini
+   * never marks its input transcription final). */
+  noteCallerSpeech(): void {
+    this.modelSpokeSinceCaller = false;
+  }
+
   authorizeEnd(): ToolResult {
     const closure = this.execution.closure;
     if (!closure) return "refused: tool not available";
@@ -425,9 +482,9 @@ export class ToolGate {
       // One-shot. A model that cannot produce an outcome must never be trapped
       // on a live, billing call by a gate it has no way to satisfy.
       this.endRefusedOnce = true;
-      return "refused: record the outcome first";
+      return "refused: record the outcome first — call record_outcome now without mentioning it";
     }
-    return "ok";
+    return "ok — say nothing more";
   }
 
   recordOutcome(status: RecordedOutcome["status"], fields: Record<string, unknown>): ToolResult {
@@ -453,6 +510,23 @@ export class ToolGate {
       if (allowed.has(key)) kept[key] = String(value);
     }
 
+    // Nobody has agreed to anything the model said after the far end last
+    // spoke. Live, Gemini 3.8, 2026-10-01: the callee offered "Monday at 9:26
+    // a.m." and the model answered in ONE turn — "That works perfectly. So we
+    // can schedule the cleaning for Monday, October 5th at 9:30 am. Thank you
+    // so much for your help. Goodbye." — then recorded `completed` at 9:30
+    // and ended the call. Three prompt-level fixes did not stop it, so it is
+    // enforced here, on the one status that claims an agreement exists.
+    // `partial` and `failed` claim none and are never held to it. A meeting
+    // is not a two-party negotiation, and is not gated.
+    //
+    // It cannot trap the model: `end_call`'s refusal is one-shot, so a model
+    // that never gets its confirmation still hangs up on its second
+    // `end_call` — with no completed record, which is the true state.
+    if (status === "completed" && !this.execution.meeting && this.modelSpokeSinceCaller) {
+      return "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call";
+    }
+
     // Refuse BEFORE writing anything. A partial record — the appointment kept,
     // the price dropped — is worse than either alternative: downstream would
     // read a booked visit with no price as a free one.
@@ -464,7 +538,11 @@ export class ToolGate {
     }
 
     this.outcome = { status, fields: kept, recordedAt: this.now() };
-    return "recorded";
+    // Direct the turn this answer opens only when the call can close itself:
+    // `closure` is what declares `end_call` (see buildToolDeclarations).
+    return this.execution.closure
+      ? "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call"
+      : "recorded";
   }
 
   /** Decide whether note-taking may begin.
@@ -1018,7 +1096,7 @@ export async function routeToolCall(params: {
       // Answer BEFORE hanging up. After endCall the session is closing and the
       // response would never reach the model.
       respond(decision);
-      if (decision === "ok") {
+      if (decision === "ok — say nothing more") {
         const reason =
           typeof call.args.reason === "string" ? call.args.reason : "model ended the call";
         await carrier.endCall(reason);

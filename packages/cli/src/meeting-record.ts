@@ -448,6 +448,38 @@ const meetingRecordFields = z.object({
         "classifyMeetingOutcome (commands.ts) uses to tell never_joined (0 turns) apart from " +
         "consent_refused (1+ turns). Optional: a record written before this field existed has " +
         "none to report."
+    ),
+  /** Passed through verbatim from `CompletedCallRecord.realtime` and
+   * `.firstModelAudioMs` (`@parley/server`). Optional (additive, v1.x): a
+   * record written before a daemon could choose its realtime provider per call
+   * has neither to report. */
+  realtime: z
+    .object({
+      provider: z
+        .string()
+        .describe('The realtime provider that spoke on the call, e.g. "gemini" or "deepgram".'),
+      model: z
+        .string()
+        .describe(
+          "The model that provider ran. For Deepgram this is the think model (the language " +
+            "model behind the voice agent), not a speech-to-text or voice model."
+        )
+    })
+    .optional()
+    .describe(
+      "Which realtime provider and model conducted the call's speaking plane — on a meeting, " +
+        "the pre-consent part only, since the speaking plane is retired at consent. Optional: " +
+        "a record written before this field existed has none to report."
+    ),
+  firstModelAudioMs: z
+    .number()
+    .nonnegative()
+    .optional()
+    .describe(
+      "Milliseconds from startedAt to the first frame of audio the model produced — the " +
+        "answer-to-first-word time, measured the same way for every provider. Absent when the " +
+        "model never produced audio at all, which is a different fact from a slow first word; " +
+        "also absent on a record written before this field existed."
     )
 });
 

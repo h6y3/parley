@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RealtimeProviderError } from "@parley/core";
 import { createDeepgramRealtimeProvider } from "../src/index.js";
-import { FakeAgentSocket, connectProvider } from "./helpers.js";
+import { FakeAgentSocket, connectProvider, startConnect } from "./helpers.js";
 
 /** `onError`'s `fatal` flag diverges from `GeminiRealtimeProvider`, which
  * reports `fatal: true` unconditionally. This provider instead reports
@@ -47,12 +47,31 @@ describe("onError fatal flag", () => {
     ]);
   });
 
+  /** The settings timeout has already failed the handshake and rejected
+   * connect. A vendor `Error` arriving on the dying socket after that has no
+   * session to be fatal to — the rejection was the whole signal, exactly as
+   * the socket-error handler already treats its own echo. */
+  it("reports nothing for a vendor Error after the handshake has already failed", async () => {
+    const socket = new FakeAgentSocket();
+    const events: RealtimeProviderError[] = [];
+    const connecting = startConnect(socket, {
+      onError: (e) => events.push(e),
+      settingsTimeoutMs: 1
+    });
+    socket.open();
+    await expect(connecting).rejects.toThrow(/no SettingsApplied/);
+
+    socket.emitAgent({ type: "Error", description: "late", code: "LATE" });
+
+    expect(events).toEqual([]);
+  });
+
   it("reports fatal:false for an error after the socket has already opened", async () => {
     const socket = new FakeAgentSocket();
     const events: RealtimeProviderError[] = [];
 
-    // connectProvider opens the socket for us and awaits the resolved
-    // session, so by the time we emit the error the handshake is done.
+    // connectProvider opens the socket, delivers SettingsApplied and awaits
+    // the resolved session, so by the time we emit the error it is ready.
     await connectProvider(socket, { onError: (e) => events.push(e) });
 
     socket.emitError(new Error("transient read error"));

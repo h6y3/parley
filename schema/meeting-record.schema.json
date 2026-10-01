@@ -206,6 +206,27 @@
           "type": "number",
           "minimum": 0,
           "description": "How many of the model's turns completed on this call, per the realtime provider's own turn-complete signal — INCLUDING a turn whose only action was a tool call, with no speech at all. A nonzero value proves the agent got a turn, not that the room ever heard it speak: a real call has ended with this at 1 or more because the model called a tool on its very first turn, before saying a word. This is the count classifyMeetingOutcome (commands.ts) uses to tell never_joined (0 turns) apart from consent_refused (1+ turns). Optional: a record written before this field existed has none to report."
+        },
+        "realtime": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string",
+              "description": "The realtime provider that spoke on the call, e.g. \"gemini\" or \"deepgram\"."
+            },
+            "model": {
+              "type": "string",
+              "description": "The model that provider ran. For Deepgram this is the think model (the language model behind the voice agent), not a speech-to-text or voice model."
+            }
+          },
+          "required": ["provider", "model"],
+          "additionalProperties": true,
+          "description": "Which realtime provider and model conducted the call's speaking plane — on a meeting, the pre-consent part only, since the speaking plane is retired at consent. Optional: a record written before this field existed has none to report."
+        },
+        "firstModelAudioMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Milliseconds from startedAt to the first frame of audio the model produced — the answer-to-first-word time, measured the same way for every provider. Absent when the model never produced audio at all, which is a different fact from a slow first word; also absent on a record written before this field existed."
         }
       },
       "required": [

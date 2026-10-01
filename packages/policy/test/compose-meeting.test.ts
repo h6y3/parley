@@ -144,7 +144,7 @@ describe("a meeting composes only its own rail set", () => {
 
   it("does not compose grounding, deferral, or always-defer", () => {
     expect(rails).not.toMatch(/answer only from what you actually know/i);
-    expect(rails).not.toMatch(/will need to follow up with/i);
+    expect(rails).not.toMatch(/then ask whether they can still go ahead/i);
     expect(rails).not.toMatch(/do not commit — say you will confirm/i);
   });
 
@@ -155,7 +155,7 @@ describe("a meeting composes only its own rail set", () => {
 
   it("does not compose callback, wrap-up, voicemail, or patience", () => {
     expect(rails).not.toMatch(/give them this number and only this number/i);
-    expect(rails).not.toMatch(/before ending the call, ask whether/i);
+    expect(rails).not.toMatch(/when the purpose is settled, check once whether/i);
     expect(rails).not.toMatch(/if you reach a voicemail/i);
     expect(rails).not.toMatch(/may go quiet while they look something up/i);
   });
@@ -205,14 +205,14 @@ describe("the same fields, without a meeting, compose exactly what they compose 
   });
 
   it("composes deferral, always-defer, spend, and authorized commitments", () => {
-    expect(rails).toMatch(/will need to follow up with/i);
+    expect(rails).toMatch(/then ask whether they can still go ahead/i);
     expect(rails).toMatch(/this limit is private/i);
     expect(rails).toMatch(/you may confirm or commit to the following/i);
   });
 
   it("composes callback, wrap-up, voicemail, and patience", () => {
     expect(rails).toMatch(/give them this number and only this number/i);
-    expect(rails).toMatch(/before ending the call, ask whether/i);
+    expect(rails).toMatch(/when the purpose is settled, check once whether/i);
     expect(rails).toMatch(/if you reach a voicemail/i);
     expect(rails).toMatch(/may go quiet while they look something up/i);
   });

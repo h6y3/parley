@@ -10,8 +10,10 @@ export type {
   AudioSource,
   CallLifecycleEvent,
   MediaStreamHandle,
+  OpeningDelivery,
   OriginateParams,
   OriginateResult,
+  RealtimeAudioFormat,
   RealtimeConnectParams,
   RealtimeProvider,
   RealtimeProviderError,
@@ -40,16 +42,27 @@ export type { Brief } from "./brief.js";
 
 export { redactPhoneNumber, redactSecrets } from "./redaction.js";
 
-export { MEETING_OPENING_TRIGGER, OPENING_TRIGGER, renderSystemInstruction } from "./render.js";
-export type { RenderInput } from "./render.js";
+export {
+  MEETING_CONNECTED_CUE,
+  MEETING_OPENING_TRIGGER,
+  OPENING_TRIGGER,
+  planOpening,
+  withOpening,
+  defaultTimeZone,
+  renderSystemInstruction
+} from "./render.js";
+export type { OpeningPlan, RenderInput, TodayInput } from "./render.js";
 
 export {
+  AudioContractError,
   CallSession,
+  CONSENT_HANDOFF_MAX_MS,
   describeLifecycleEvent,
   TRANSCRIPTION_CONNECT_TIMEOUT_MS
 } from "./call-session.js";
 export type {
   AudioSink,
+  BridgeCounts,
   CallPhase,
   CallSessionHandle,
   CallSessionParams,

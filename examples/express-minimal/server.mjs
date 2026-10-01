@@ -6,9 +6,9 @@
 //
 // This is illustrative wiring — see @parley/server for the production daemon.
 import express from "express";
-import { CallSession } from "@parley/core";
+import { AudioContractError, CallSession } from "@parley/core";
 import { composePolicy, representedCall } from "@parley/policy";
-import { createAudioCodec } from "@parley/audio";
+import { canConvert, convert, createAudioCodec } from "@parley/audio";
 import { GeminiRealtimeProvider, DEFAULT_GEMINI_MODEL } from "@parley/realtime-gemini";
 import { TwilioTelephonyProvider } from "@parley/telephony-twilio";
 
@@ -39,11 +39,29 @@ app.post("/call", async (req, res) => {
     telephony,
     realtime,
     codec,
+    // Bridges Twilio's mulaw@8000 and whatever the realtime provider
+    // declares in `realtime.audio`; an unbridgeable pairing is refused by
+    // originate() before anything is dialled.
+    convert,
+    canConvert,
     from: process.env.TWILIO_FROM_NUMBER,
     answerWebhookUrl: `https://${process.env.PARLEY_PUBLIC_HOST}/twilio/answer`,
     model: DEFAULT_GEMINI_MODEL
   });
-  const result = await session.originate();
+  let result;
+  try {
+    result = await session.originate();
+  } catch (err) {
+    // The carrier and the realtime provider cannot be bridged in this build.
+    // Nothing was dialled; this is the server's configuration, not the
+    // caller's request, so it is a 503 — the same status @parley/server
+    // returns for it.
+    if (err instanceof AudioContractError) {
+      res.status(503).json({ error: `audio contract: ${err.message}` });
+      return;
+    }
+    throw err;
+  }
   res.status(202).json({ callId: result.providerCallId });
   // A full embed also wires /twilio/answer + the media WS — see @parley/server.
 });

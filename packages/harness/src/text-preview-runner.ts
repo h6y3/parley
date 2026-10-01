@@ -1,4 +1,5 @@
 import { GoogleGenAI, Modality } from "@google/genai";
+import { DEFAULT_GEMINI_MODEL } from "@parley/realtime-gemini";
 
 export interface TextPreviewTurnResult {
   label: string;
@@ -44,7 +45,7 @@ export async function runTextPreview(params: {
   apiVersion?: string;
   genAIFactory?: GenAIFactory;
 }): Promise<TextPreviewResult> {
-  const model = params.model ?? "gemini-3.1-flash-live-preview";
+  const model = params.model ?? DEFAULT_GEMINI_MODEL;
   const apiVersion = params.apiVersion ?? DEFAULT_API_VERSION;
   const genAIFactory: GenAIFactory = params.genAIFactory ?? ((opts) => new GoogleGenAI(opts));
   const ai = genAIFactory({ apiKey: params.apiKey, httpOptions: { apiVersion } });

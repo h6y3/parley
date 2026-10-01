@@ -220,6 +220,19 @@ export const callExecutionSchema = z
         sendDigits: z.string().min(1).max(SEND_DIGITS_MAX_LENGTH).regex(SEND_DIGITS_PATTERN)
       })
       .strict()
+      .optional(),
+    // Which of the daemon's realtime providers speaks on this call. Absent
+    // means the daemon's default. It names a PROVIDER and never a model:
+    // per-provider configuration is daemon-level, which keeps the surface a
+    // caller depends on small — so `.strict()` rejects a `model` here rather
+    // than ignoring it. A named provider the daemon has not built is refused
+    // at POST /call before anything is dialled; there is no silent fallback.
+    // Read by `@parley/server`'s `handleCall`, never by CallSession, and it
+    // needs no `policy` pairing for the same reason `dial` does not: there is
+    // nothing about it for the model to be told.
+    realtime: z
+      .object({ provider: z.enum(["gemini", "deepgram"]) })
+      .strict()
       .optional()
   })
   .strict()
@@ -304,6 +317,11 @@ const briefSchema = z
     objective: z.string().min(1),
     facts: z.array(z.string()),
     preferences: z.array(z.string().min(1)).optional(),
+    // Speech-recognition hints (a name the listener would otherwise mishear),
+    // passed to the provider and never rendered into the system instruction.
+    // Bounded because each one biases recognition of everything else said on
+    // the call.
+    keyterms: z.array(z.string().min(1).max(50)).max(20).optional(),
     operation: z
       .object({
         id: z

@@ -1,23 +1,14 @@
-import { MULAW_8K, PCM_16K, type AudioCodec, type AudioFrame } from "@parley/core";
-import { muLawDecode, muLawEncode } from "./mulaw.js";
-import { pcm16BufferToSamples, samplesToPcm16Buffer } from "./pcm.js";
-import { decimateBy3, resampleLinear } from "./resample.js";
+import type { AudioCodec, AudioFrame } from "@parley/core";
 import { dtmfMuLaw } from "./dtmf.js";
 
-/** The default V1 audio bridge: G.711 μ-law ↔ PCM with the resampling paths
- * design spec §4.5 requires. Stateless; safe to share across calls. */
+/** The default `AudioCodec`: in-band DTMF as carrier-ready mu-law. Stateless;
+ * safe to share across calls.
+ *
+ * The speaking plane's μ-law ↔ PCM conversions used to live here too, fixed
+ * to one vendor's rates. They are `convert`'s job now, chosen per call from
+ * what the realtime provider declares — see `convert.ts`. */
 export function createAudioCodec(): AudioCodec {
   return {
-    decodeInbound(frame: AudioFrame): AudioFrame {
-      const pcm8k = muLawDecode(frame.data);
-      const pcm16k = resampleLinear(pcm8k, 8000, 16000);
-      return { encoding: PCM_16K, data: samplesToPcm16Buffer(pcm16k) };
-    },
-    encodeOutbound(frame: AudioFrame): AudioFrame {
-      const pcm24k = pcm16BufferToSamples(frame.data);
-      const pcm8k = decimateBy3(pcm24k);
-      return { encoding: MULAW_8K, data: muLawEncode(pcm8k) };
-    },
     dtmfTones(digits: string): AudioFrame {
       return dtmfMuLaw(digits);
     }

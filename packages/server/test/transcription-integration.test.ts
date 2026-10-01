@@ -3,6 +3,7 @@ import {
   CallSession,
   MULAW_8K,
   PCM_16K,
+  PCM_24K,
   MIXED_SOURCE,
   type AudioCodec,
   type AudioSource,
@@ -11,7 +12,7 @@ import {
   type TelephonyProvider,
   type WebSocketLike
 } from "@parley/core";
-import { convert } from "@parley/audio";
+import { canConvert, convert } from "@parley/audio";
 import { representedCall, type CallPolicy } from "@parley/policy";
 import { createDeepgramTranscriptionProvider } from "@parley/transcription-deepgram";
 import { createHostAllowlist, createNumberAllowlist } from "../src/allowlist.js";
@@ -84,12 +85,13 @@ class FakeMediaSocket implements WebSocketLike {
 }
 
 const codec: AudioCodec = {
-  decodeInbound: (f) => ({ encoding: PCM_16K, data: f.data }),
-  encodeOutbound: (f) => ({ encoding: MULAW_8K, data: f.data }),
   dtmfTones: () => ({ encoding: MULAW_8K, data: Buffer.alloc(0) })
 };
 const realtime: RealtimeProvider = {
   name: "fake-realtime",
+  audio: { accepts: [PCM_16K], emits: PCM_24K },
+  openingDelivery: "turn",
+  continuesAfterToolResponse: false,
   connect: async () => ({
     sendOpeningTrigger: () => {},
     sendAudio: () => {},
@@ -102,6 +104,7 @@ const realtime: RealtimeProvider = {
 function fakeTelephony(mediaSocketRef: { current?: FakeMediaSocket }): TelephonyProvider {
   return {
     name: "fake-telephony",
+    mediaEncoding: MULAW_8K,
     originate: async () => ({ providerCallId: "CA-TRANSCRIBE-1", status: "queued" as const }),
     buildAnswerResponse: () => ({ contentType: "text/xml", body: "<Response/>" }),
     verifyWebhookSignature: () => true,
@@ -193,11 +196,15 @@ describe("a meeting call transcribes end to end through the REAL Deepgram provid
 
     const deps: ServerDeps = {
       telephony: fakeTelephony(mediaSocketRef),
-      realtime,
+      realtime: {
+        providers: { gemini: { provider: realtime, model: "test-model" } },
+        default: "gemini"
+      },
       codec,
+      convert,
+      canConvert,
       from: "+14155550001",
       publicHost: "voice.internal.test",
-      model: "test-model",
       numberAllowlist: createNumberAllowlist(["+14155550002"]),
       hostAllowlist: createHostAllowlist(["voice.internal.test"]),
       pending,

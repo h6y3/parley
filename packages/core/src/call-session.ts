@@ -15,10 +15,12 @@ import {
   type MeetingExecution,
   type TranscriptGap
 } from "./meeting.js";
-import { MEETING_OPENING_TRIGGER, OPENING_TRIGGER, renderSystemInstruction } from "./render.js";
+import { defaultTimeZone, planOpening, renderSystemInstruction, withOpening } from "./render.js";
 import type { TranscriptionProvider, TranscriptionSession } from "./transcription.js";
+import { encodingEquals, formatEncoding } from "./types.js";
 import type {
   AudioCodec,
+  AudioEncoding,
   AudioFrame,
   AudioSource,
   CallLifecycleEvent,
@@ -39,6 +41,14 @@ export interface CallSessionParams {
   telephony: TelephonyProvider;
   realtime: RealtimeProvider;
   codec: AudioCodec;
+  /** Adapts frames between the carrier's `mediaEncoding` and the realtime
+   * provider's declared `audio`, in both directions. Injected (the caller
+   * passes @parley/audio's `convert`) for the same reason `codec` is. */
+  convert: FrameConverter;
+  /** Whether `convert` has a path between two encodings. Asked before the
+   * carrier dials, so a pairing `convert` cannot bridge is refused up front
+   * rather than thrown on the first frame of an answered call. */
+  canConvert: (from: AudioEncoding, to: AudioEncoding) => boolean;
   /** The verified caller ID to originate from. */
   from: string;
   /** Public URL the carrier calls back when the callee answers. */
@@ -55,6 +65,9 @@ export interface CallSessionParams {
   transcription?: { provider: TranscriptionProvider; convert: FrameConverter };
   /** Injectable clock, so a test can advance the meeting without waiting. */
   now?: () => number;
+  /** IANA zone the model is told "today" in (`PARLEY_TIMEZONE` on the daemon).
+   * Defaults to the host's own zone. */
+  timeZone?: string;
   /** Diagnostic sink for events that end a call without anyone asking.
    *
    * Not optional decoration. `onError` used to be `() => {}` and `onClose`
@@ -66,6 +79,29 @@ export interface CallSessionParams {
   onDiagnostic?: (message: string) => void;
 }
 
+/** The realtime provider and the carrier speak encodings the injected
+ * `convert` cannot bridge. Thrown by `assertAudioContract`, which `originate`
+ * runs before dialling — so this is a refusal to place a call, never a failure
+ * inside one. `from`/`to` are `formatEncoding` strings naming the missing
+ * path. */
+export class AudioContractError extends Error {
+  readonly reason = "no_conversion_path" as const;
+
+  constructor(
+    readonly from: string,
+    readonly to: string
+  ) {
+    super(`no audio conversion path from ${from} to ${to}`);
+    this.name = "AudioContractError";
+  }
+}
+
+/** Frame counts for one bridged direction. See `CallSession.audioBridgeStats`. */
+export interface BridgeCounts {
+  conversions: number;
+  passThroughs: number;
+}
+
 /** Why a call ended. `remote` means the far end hung up (so there is nothing to
  * ask the carrier to do); `error` means our own teardown failed. */
 /** Ceiling on waiting for the carrier to confirm playout. Generous next to a
@@ -73,11 +109,57 @@ export interface CallSessionParams {
  * never arrives, and is never the thing being waited for. */
 const DRAIN_TIMEOUT_MS = 5_000;
 
-/** Ceiling on waiting for the model to finish generating the turn it ended the
- * call in. A tool call can land before the audio of the same turn exists, so
- * without this the drain has nothing to wait for and the farewell is cut off
- * upstream of anything we can see. */
+/** How long waiting for the model to finish the turn it ended the call in may
+ * go with NO model audio. A tool call can land before the audio of its turn
+ * exists, so without a wait the drain has nothing to wait for and the farewell
+ * is cut off upstream of anything we can see; without a bound, a turn end that
+ * never comes holds a live call open.
+ *
+ * Idle, not total: every model audio frame re-arms it. A Deepgram goodbye
+ * after `end_call` ran 6.7 s on the wire, and a fixed four seconds from the
+ * start of the wait hung up over the last third of it. The total is bounded
+ * by TURN_FINISH_CEILING_MS instead. */
 const TURN_FINISH_TIMEOUT_MS = 4_000;
+
+/** The absolute bound on the same wait, from when it began, however much
+ * audio keeps arriving — so a model that never ends its turn cannot keep a
+ * call up by talking. Generous next to any goodbye or acknowledgment. */
+const TURN_FINISH_CEILING_MS = 15_000;
+
+/** On a provider that goes on speaking after a tool answer, how much model
+ * audio may reach the line after `end_call` is accepted when no goodbye has
+ * been said. Found live on Gemini 3.8 (CAb4dc604bca32abd05a6a4b009faa65be):
+ * after `end_call` the model said "Thank you very much. Goodbye." and then
+ * "I have successfully rescheduled the appointment." — a report to the
+ * principal, spoken to the callee. Measured in AUDIO forwarded, not wall
+ * clock: a vendor streams faster than real time, so a wall-clock bound would
+ * let a burst of any length through. */
+const AFTER_END_CALL_AUDIO_CAP_MS = 3_000;
+
+/** How much more audio a goodbye gets once its words have completed in the
+ * transcript — at least this, or GOODBYE_MS_PER_CHAR of its sentence if
+ * longer. Not an instant cut, because the transcript LEADS the audio it
+ * describes. Measured 2026-10-01 (four Gemini 3.8 sessions, the end of the
+ * goodbye located by the silence after it): the text completing "Goodbye."
+ * arrived 720, 750, 1,120 and 1,140 ms of audio before that audio ended — text
+ * comes about one ~1 s audio burst ahead. 1,500 ms covers the worst by 360 ms
+ * and let 100–420 ms of the next sentence through ("I ha—"). Deepgram's
+ * `ConversationText` arrives as its sentence's audio STARTS (t20 wire logs:
+ * "Thanks and goodbye." 1,610 ms of audio before `AgentAudioDone`), so there
+ * the lead is the whole sentence — hence the per-character term.
+ *
+ * And no `clearOutboundBuffer` at the stop: since the text leads, the audio
+ * still queued for playout when the hold ends is the goodbye itself. */
+const GOODBYE_TEXT_LEAD_MS = 1_500;
+/** Generous next to measured TTS pace (~65–85 ms a character, trailing
+ * silence included) — a hold that runs long leaks a word, one that runs short
+ * clips the goodbye. */
+const GOODBYE_MS_PER_CHAR = 90;
+
+/** "bye", "goodbye", "good bye", "bye-bye" as words — never "bypass". */
+const BYE_WORD = /(?:\bgood[\s-]?|\b)bye\b/i;
+/** A completed sentence: anything up to its terminal punctuation. */
+const COMPLETED_SENTENCE = /[^.!?]*[.!?]+/g;
 
 /** Ceiling on bringing the listening plane up.
  *
@@ -89,6 +171,20 @@ const TURN_FINISH_TIMEOUT_MS = 4_000;
  * emptied, and nothing listening, for the rest of the meeting. Exported so a
  * test can wait exactly this long rather than guessing. */
 export const TRANSCRIPTION_CONNECT_TIMEOUT_MS = 10_000;
+
+/** The longest the speaking plane can outlive the consent timer on a meeting.
+ *
+ * `beginNotetaking` clears `consentTimer` FIRST and only then retires the
+ * speaking plane, after bringing the listening plane up (bounded by
+ * TRANSCRIPTION_CONNECT_TIMEOUT_MS) and letting the acknowledging turn finish
+ * (TURN_FINISH_CEILING_MS at most) and drain (DRAIN_TIMEOUT_MS). Every other way out
+ * of the pre-consent window is `endCall`, which waits on at most the last two.
+ * So a meeting's realtime session lives no longer than
+ * `consent.timeoutSeconds` plus this — which is what a caller comparing that
+ * lifetime against a provider's `maxSessionSeconds` needs, and why it is
+ * derived here from the timeouts themselves rather than restated elsewhere. */
+export const CONSENT_HANDOFF_MAX_MS =
+  TRANSCRIPTION_CONNECT_TIMEOUT_MS + TURN_FINISH_CEILING_MS + DRAIN_TIMEOUT_MS;
 
 /** One carrier media frame is twenty milliseconds of audio. Coverage and gaps
  * are both counted in frames and reported in milliseconds through this. */
@@ -135,6 +231,12 @@ const DTMF_BARGE_IN_MARGIN_MS = 200;
  * A model that says nothing costs the room six seconds of quiet before the
  * line drops. That is the price of not cutting off the one that does. */
 const CONSENT_DEPARTURE_GRACE_MS = TURN_FINISH_TIMEOUT_MS + 2_000;
+
+/** How long one frame plays: mu-law is a byte a sample, PCM two. */
+function frameDurationMs(frame: AudioFrame): number {
+  const bytesPerSample = frame.encoding.codec === "pcm" ? 2 : 1;
+  return (frame.data.length / bytesPerSample / frame.encoding.sampleRate) * 1000;
+}
 
 /** One carrier lifecycle event as a single content-free line.
  *
@@ -232,6 +334,19 @@ export class CallSession {
    * right now?" — silently dropping the open turn instead of routing it. */
   private openModelEntryLogged = false;
   private readonly turnFinishedWaiters = new Set<() => void>();
+  /** One per pending `awaitTurnFinished`: restarts its idle timer. Called on
+   * every model audio frame — see TURN_FINISH_TIMEOUT_MS. */
+  private readonly turnWaitRearms = new Set<() => void>();
+  /** Set when `end_call` is accepted on a continuing provider: the model's
+   * text and audio since then, and where its audio stops reaching the line.
+   * See AFTER_END_CALL_AUDIO_CAP_MS. */
+  private afterEndCall?: {
+    text: string;
+    audioMs: number;
+    /** Audio position the goodbye is held until, once its words completed. */
+    stopAtMs?: number;
+    stopped: boolean;
+  };
   private answeredByValue?: "human" | "machine" | "fax" | "unknown";
   private settled = false;
   private durationTimer?: ReturnType<typeof setTimeout>;
@@ -240,6 +355,9 @@ export class CallSession {
   private readonly phaseSet = new Set<CallPhase>();
   private preConsent: { speaker: SpeakerRole; text: string; at: string }[] = [];
   private modelTurnsCompletedCount = 0;
+  /** Offset from `startedAtMs` of the model's first audio frame — see
+   * `firstModelAudioAtMs`. Set once, on the first frame, and never moved. */
+  private firstModelAudioOffsetMs?: number;
   private consentTimer?: ReturnType<typeof setTimeout>;
   /** Armed when the room refuses, disarmed if it changes its mind before the
    * grace window is out. Separate from `consentTimer`: that one fires because
@@ -285,7 +403,13 @@ export class CallSession {
    * meeting that never happened. Reading intent off an incidental `undefined`
    * is how that comes back. */
   private speakingPlaneRetired = false;
+  /** The listening plane's bridge, carrier → transcriber. Set in
+   * `beginNotetaking`. */
   private bridge?: AudioBridge;
+  /** The speaking plane's bridges, set in `attach`: carrier → the realtime
+   * provider's `audio.accepts`, and its `audio.emits` → carrier. */
+  private inboundBridge?: AudioBridge;
+  private outboundBridge?: AudioBridge;
   private readonly gapLog: TranscriptGap[] = [];
   /** A hole that has been opened and not yet sealed. `undefined` means the
    * record is currently whole.
@@ -307,25 +431,47 @@ export class CallSession {
 
   constructor(private readonly params: CallSessionParams) {}
 
+  /** A content-free timeline line: `<what> at +<ms>ms` since the session's
+   * start. Live calls said goodbye twice and the only way to see why was to
+   * line up tool calls, turn ends and caller finals by time. */
+  private logAt(what: string): void {
+    this.params.onDiagnostic?.(`${what} at +${this.nowMs() - this.startedAtMs}ms`);
+  }
+
   private nowMs(): number {
     return (this.params.now ?? Date.now)();
   }
 
-  /** Render the fresh per-call systemInstruction from the brief's pure caller
-   * content plus the injected, already-composed `guardrails` (policy
-   * composition happens upstream — see @parley/policy). Pure — no side effects. */
+  /** The full systemInstruction this call sends at connect: the brief's pure
+   * caller content plus the injected, already-composed `guardrails` (policy
+   * composition happens upstream — see @parley/policy), with the opening
+   * appended where the provider takes it in the prompt (`planOpening`,
+   * `withOpening`). Exactly what `attach` sends — never a prompt that differs
+   * from the one the model was given. Pure — no side effects. */
   resolveSystemInstruction(): string {
-    return renderSystemInstruction({
+    const rendered = renderSystemInstruction({
       persona: this.params.brief.persona,
       objective: this.params.brief.objective,
       facts: this.params.brief.facts,
-      guardrails: this.params.guardrails
+      guardrails: this.params.guardrails,
+      // Computed once, here at connect, from the injected clock — the model
+      // has no clock of its own and the outcome schema wants ISO dates.
+      today: {
+        now: new Date(this.nowMs()),
+        timeZone: this.params.timeZone ?? defaultTimeZone()
+      }
     });
+    return withOpening(rendered, planOpening(this.params.realtime.openingDelivery, this.isMeeting));
   }
 
   /** Place the outbound call. The carrier answers asynchronously and opens a
-   * media stream, whose socket the caller then passes to `attach`. */
+   * media stream, whose socket the caller then passes to `attach`.
+   *
+   * Checks the audio contract FIRST: a pairing that cannot be bridged rejects
+   * with `AudioContractError` before the carrier is asked to dial, because the
+   * alternative is a phone that rings, is answered, and goes dead. */
   async originate(): Promise<OriginateResult> {
+    this.assertAudioContract();
     return this.params.telephony.originate({
       to: this.params.brief.to,
       from: this.params.from,
@@ -347,10 +493,42 @@ export class CallSession {
     });
   }
 
+  /** Throw `AudioContractError` unless the injected `convert` can carry audio
+   * both ways between the carrier's `mediaEncoding` and the realtime
+   * provider's declared `audio`. Needs no call to exist — every input is a
+   * declaration — which is what lets `originate` run it before dialling.
+   *
+   * Inbound mirrors `AudioBridge.adapt` exactly: a carrier frame the provider
+   * accepts as-is passes through, otherwise it is converted to `accepts[0]`,
+   * so that is the one path that has to exist. */
+  assertAudioContract(): void {
+    const { telephony, realtime, canConvert } = this.params;
+    const carrier = telephony.mediaEncoding;
+    const { accepts, emits } = realtime.audio;
+    const first = accepts[0];
+    if (first === undefined) {
+      throw new AudioContractError(formatEncoding(carrier), "(nothing)");
+    }
+    const passesThrough = accepts.some((e) => encodingEquals(e, carrier));
+    if (!passesThrough && !canConvert(carrier, first)) {
+      throw new AudioContractError(formatEncoding(carrier), formatEncoding(first));
+    }
+    if (!canConvert(emits, carrier)) {
+      throw new AudioContractError(formatEncoding(emits), formatEncoding(carrier));
+    }
+  }
+
   /** Wire the realtime session and the media stream together once the carrier's
    * media socket is available, then send the opening trigger. */
   async attach(callId: string, socket: WebSocketLike): Promise<CallSessionHandle> {
-    const { codec, telephony, realtime } = this.params;
+    const { telephony, realtime, convert } = this.params;
+    // Built before either end is live, so a frame can never reach a sink
+    // without its bridge. The inbound bridge feeds the realtime provider;
+    // the outbound one targets the carrier's single encoding.
+    const inbound = new AudioBridge(realtime.audio.accepts, convert);
+    const outbound = new AudioBridge([telephony.mediaEncoding], convert);
+    this.inboundBridge = inbound;
+    this.outboundBridge = outbound;
     const execution = this.params.execution ?? {};
     this.callId = callId;
     this.gate = new ToolGate(execution);
@@ -420,11 +598,22 @@ export class CallSession {
       onCallEvent: (event) => this.noteLifecycleEvent(event)
     });
 
+    // One decision for both halves of the opening: what (if anything) rides
+    // in the system instruction, and what (if anything) is sent after
+    // connect. `isMeeting` is the same discriminator the post-call record
+    // reads.
+    const opening = planOpening(realtime.openingDelivery, this.isMeeting);
+    // The prompt half is already in the resolved instruction (`withOpening`):
+    // `OPENING_TRIGGER` or `MEETING_OPENING_TRIGGER`, a Parley constant, never
+    // caller content — so the one-shot system instruction is exactly rendered
+    // brief plus fixed text, sent once here and never touched again.
+    const systemInstruction = this.resolveSystemInstruction();
+
     let session: RealtimeSession;
     try {
       session = await realtime.connect({
         model: this.params.model,
-        systemInstruction: this.resolveSystemInstruction(),
+        systemInstruction,
         responseModality: "audio",
         tools: buildToolDeclarations(execution),
         // Tag the far end at source: "participant" on a declared meeting,
@@ -432,6 +621,9 @@ export class CallSession {
         // See RealtimeConnectParams.speakerRole and the far-end branch in
         // onTranscript below, which this pairs with.
         ...(this.isMeeting ? { speakerRole: "participant" as const } : {}),
+        // A recognition hint for the listener only; resolveSystemInstruction
+        // never sees it.
+        ...(this.params.brief.keyterms ? { keyterms: this.params.brief.keyterms } : {}),
         ...(execution.turnDetection
           ? {
               turnDetection: {
@@ -445,8 +637,39 @@ export class CallSession {
         inputTranscription: true,
         outputTranscription: true,
         callbacks: {
+          onDiagnostic: (message) => this.params.onDiagnostic?.(message),
           onAudio: (frame) => {
-            this.media?.sendOutboundAudio(codec.encodeOutbound(frame));
+            // A turn is in flight from its first audio frame, not only from
+            // its first transcript fragment: Gemini's outputTranscription can
+            // trail the audio it describes, and a turn opened by transcript
+            // alone looked idle while its goodbye was already playing — so an
+            // end_call in that window drained and hung up over the rest of
+            // it. Both providers end every audible turn with a turn-end
+            // signal (Gemini `turnComplete`; Deepgram `AgentAudioDone` once its
+            // audio has then gone quiet — see DEEPGRAM_TURN_QUIET_MS), and
+            // TURN_FINISH_TIMEOUT_MS still bounds the wait if one never comes.
+            // Only the flag: turn counting and transcript coalescing are
+            // driven by onTurnComplete and onTranscript, unchanged.
+            //
+            // After an accepted end_call has been cut (at the goodbye or the
+            // cap), the rest is not ours to play: dropped before it can
+            // re-arm a wait the cut has already released.
+            if (this.afterEndCall?.stopped) return;
+            this.modelTurnOpen = true;
+            // The confirmation rule on a completed record (ToolGate) keys on
+            // AUDIO, not the transcript: the transcript can trail this frame,
+            // and this frame precedes the tool call it leads to.
+            this.gate?.noteModelAudio();
+            // A turn still producing audio is not a stalled one: a pending
+            // wait for it restarts its idle timer (TURN_FINISH_CEILING_MS
+            // still bounds the total).
+            for (const rearm of this.turnWaitRearms) rearm();
+            this.firstModelAudioOffsetMs ??= this.nowMs() - this.startedAtMs;
+            this.media?.sendOutboundAudio(outbound.adapt(frame));
+            if (this.afterEndCall) {
+              this.afterEndCall.audioMs += frameDurationMs(frame);
+              this.checkAfterEndCallStop();
+            }
           },
           onInterrupted: () => {
             // A DTMF burst in flight must survive this. See
@@ -476,6 +699,14 @@ export class CallSession {
             // speech — on a meeting, that is a participant's words recorded
             // as the agent's, in the consent receipt.
             if (event.speaker !== "model") {
+              // Timeline only, no text: when the far end finished a sentence,
+              // to read against `model turn complete` and the tool lines.
+              if (event.isFinal) this.logAt("caller final");
+              // Any words, final or not: Gemini never marks its input
+              // transcription final (every caller entry on the 2026-10-01
+              // incident call was `isFinal: false`), and keyed to `isFinal`
+              // the gate would refuse every completed record there.
+              if (event.text !== "") this.gate?.noteCallerSpeech();
               this.closeModelEntry();
               this.noteTranscript(event);
               return;
@@ -485,6 +716,7 @@ export class CallSession {
               return;
             }
             this.modelTurnOpen = true;
+            this.noteTextAfterEndCall(event.text);
             if (this.openModelEntry) this.openModelEntry.text += event.text;
             else {
               const entry = { speaker: "model" as const, text: event.text, isFinal: false };
@@ -504,6 +736,13 @@ export class CallSession {
             if (event.isFinal) this.closeModelEntry();
           },
           onTurnComplete: () => {
+            this.logAt("model turn complete");
+            // The turn ending completes a sentence too. Its audio has all
+            // arrived by now, so a goodbye in it stops anything after.
+            const after = this.afterEndCall;
+            if (after && !after.stopped && BYE_WORD.test(after.text)) {
+              this.stopAfterEndCall("goodbye");
+            }
             this.closeModelEntry();
             this.modelTurnOpen = false;
             this.modelTurnsCompletedCount += 1;
@@ -578,7 +817,7 @@ export class CallSession {
     this.addSink({
       id: "realtime",
       accept: (frame) => {
-        this.session?.sendAudio(codec.decodeInbound(frame));
+        this.session?.sendAudio(inbound.adapt(frame));
       }
     });
     this.enterPhase("speaking");
@@ -590,7 +829,12 @@ export class CallSession {
     // `MEETING_OPENING_TRIGGER` for the evidence. `isMeeting` is the same
     // discriminator the post-call record reads, so the trigger and the record
     // can never disagree about which shape of call this was.
-    session.sendOpeningTrigger(this.isMeeting ? MEETING_OPENING_TRIGGER : OPENING_TRIGGER);
+    //
+    // HOW it is delivered is the provider's declaration — see
+    // `OpeningDelivery`. `opening` was planned before connect, so the prompt
+    // suffix and the trigger come from one decision. On a "prompt" provider a
+    // two-party call sends nothing here: the callee's own "hello" opens it.
+    if (opening.trigger !== undefined) session.sendOpeningTrigger(opening.trigger);
     this.armTimers();
 
     // An arrow captures `this` lexically, so the getter reads the LIVE value
@@ -1221,27 +1465,112 @@ export class CallSession {
     return this.modelTurnsCompletedCount;
   }
 
-  /** Whether the carrier's encoding was handed straight to the transcriber or
-   * converted first. "It worked because both vendors spoke mu-law" and "it
-   * worked because we converted" must not look identical from outside. */
-  get audioBridgeStats(): { conversions: number; passThroughs: number } {
+  /** Milliseconds from the call's start (`attach`) to the first frame of
+   * model audio, or `undefined` if the model never produced any.
+   *
+   * Audio, not transcript: the transcript can trail the audio it describes,
+   * and a provider that transcribes its own speech late would otherwise look
+   * slow to answer when it was not. The first frame is the same instant for
+   * every realtime provider, which is what makes this comparable across them
+   * — the answer-to-first-word evidence a provider A/B reads. */
+  get firstModelAudioAtMs(): number | undefined {
+    return this.firstModelAudioOffsetMs;
+  }
+
+  /** Which realtime provider and model this call's speaking plane runs on —
+   * the provider's own `name` and the model the session was connected with.
+   * For the call record, so a record says what it ran on without anyone
+   * having to reconstruct the daemon's configuration at the time. */
+  get realtime(): { provider: string; model: string } {
+    return { provider: this.params.realtime.name, model: this.params.model };
+  }
+
+  /** Per direction, whether frames were handed straight across or converted
+   * first: `inbound` is carrier → realtime model, `outbound` is realtime model
+   * → carrier, `listening` is carrier → transcriber. "It worked because both
+   * vendors spoke mu-law" and "it worked because we converted" must not look
+   * identical from outside. DTMF tones are not counted: they are generated in
+   * the carrier's encoding and bypass the bridge. */
+  get audioBridgeStats(): {
+    inbound: BridgeCounts;
+    outbound: BridgeCounts;
+    listening: BridgeCounts;
+  } {
+    const counts = (b: AudioBridge | undefined): BridgeCounts => ({
+      conversions: b?.conversions ?? 0,
+      passThroughs: b?.passThroughs ?? 0
+    });
     return {
-      conversions: this.bridge?.conversions ?? 0,
-      passThroughs: this.bridge?.passThroughs ?? 0
+      inbound: counts(this.inboundBridge),
+      outbound: counts(this.outboundBridge),
+      listening: counts(this.bridge)
     };
   }
 
-  /** Resolve when the model finishes its current turn, or after a cap. */
+  /** Model text after an accepted `end_call`: the first completed sentence
+   * with a "bye" in it fixes where the audio stops — GOODBYE_TEXT_LEAD_MS, or
+   * the sentence's own length, past the audio forwarded so far. Accumulated
+   * rather than tested per fragment, because a word can arrive split
+   * ("Good" + "bye."). */
+  private noteTextAfterEndCall(text: string): void {
+    const after = this.afterEndCall;
+    if (!after || after.stopped || after.stopAtMs !== undefined) return;
+    after.text += text;
+    for (const [sentence] of after.text.matchAll(COMPLETED_SENTENCE)) {
+      if (!BYE_WORD.test(sentence)) continue;
+      const hold = Math.max(GOODBYE_TEXT_LEAD_MS, sentence.trim().length * GOODBYE_MS_PER_CHAR);
+      after.stopAtMs = after.audioMs + hold;
+      return;
+    }
+  }
+
+  /** On each forwarded frame after `end_call`: has the goodbye's hold run out,
+   * or — with no goodbye yet — the audio cap? */
+  private checkAfterEndCallStop(): void {
+    const after = this.afterEndCall;
+    if (!after || after.stopped) return;
+    if (after.stopAtMs !== undefined) {
+      if (after.audioMs >= after.stopAtMs) this.stopAfterEndCall("goodbye");
+    } else if (after.audioMs >= AFTER_END_CALL_AUDIO_CAP_MS) {
+      this.stopAfterEndCall(`${AFTER_END_CALL_AUDIO_CAP_MS} ms cap`);
+    }
+  }
+
+  /** Stop forwarding model audio and let `endCall` go on to drain and hang up
+   * without waiting for the turn to complete: the turn's remainder is the part
+   * nobody should hear. What is already queued still plays — see
+   * GOODBYE_TEXT_LEAD_MS for why it is not cleared. */
+  private stopAfterEndCall(at: string): void {
+    const after = this.afterEndCall;
+    if (!after || after.stopped) return;
+    after.stopped = true;
+    this.params.onDiagnostic?.(
+      `after end_call: stopped at ${at} at +${Math.round(after.audioMs)}ms`
+    );
+    for (const waiter of [...this.turnFinishedWaiters]) waiter();
+  }
+
+  /** Resolve when the model finishes its current turn — or once it has sent no
+   * audio for TURN_FINISH_TIMEOUT_MS, or TURN_FINISH_CEILING_MS after the wait
+   * began, whichever comes first. */
   private awaitTurnFinished(): Promise<void> {
-    if (!this.modelTurnOpen) return Promise.resolve();
+    if (!this.modelTurnOpen || this.afterEndCall?.stopped) return Promise.resolve();
     return new Promise<void>((resolve) => {
       const done = (): void => {
-        clearTimeout(timer);
+        clearTimeout(idle);
+        clearTimeout(ceiling);
         this.turnFinishedWaiters.delete(done);
+        this.turnWaitRearms.delete(rearm);
         resolve();
       };
-      const timer = setTimeout(done, TURN_FINISH_TIMEOUT_MS);
+      const rearm = (): void => {
+        clearTimeout(idle);
+        idle = setTimeout(done, TURN_FINISH_TIMEOUT_MS);
+      };
+      let idle = setTimeout(done, TURN_FINISH_TIMEOUT_MS);
+      const ceiling = setTimeout(done, TURN_FINISH_CEILING_MS);
       this.turnFinishedWaiters.add(done);
+      this.turnWaitRearms.add(rearm);
     });
   }
 
@@ -1281,7 +1610,24 @@ export class CallSession {
         // what keeps that throw from taking the process with it.
         beginNotetaking: () => this.beginNotetaking()
       },
-      respond: (result) => session.sendToolResponse(call, result),
+      respond: (result) => {
+        // One timing line per routed call: the tool, the KIND of answer (the
+        // literal up to its first " —", which is the part that names the
+        // outcome and not the instruction after it) and the offset. Never
+        // `call.args` — a record's fields are the call's content.
+        this.logAt(`tool ${call.name} → ${result.split(" —")[0]}`);
+        // On a vendor that goes on speaking after the answer, the answer
+        // opens the turn the call's words are spoken in: the goodbye after
+        // `end_call`, the acknowledgment after `begin_notetaking`. Opened
+        // BEFORE `carrier.endCall` / `carrier.beginNotetaking` run —
+        // `routeToolCall` responds first — so their `awaitTurnFinished` waits
+        // for that turn's end instead of draining a queue it has not reached.
+        // Only the flag: the continuation's own turn end closes it, and turn
+        // counting and transcript coalescing stay with onTurnComplete and
+        // onTranscript. See `RealtimeProvider.continuesAfterToolResponse`.
+        if (this.params.realtime.continuesAfterToolResponse) this.modelTurnOpen = true;
+        session.sendToolResponse(call, result);
+      },
       // The evidence the gate decides on. Until this was passed, every
       // `begin_notetaking` from a real call was refused with "the go-ahead
       // phrase has not been spoken" no matter what the room had said, because
@@ -1371,6 +1717,12 @@ export class CallSession {
       // firing or a transport error is not a goodbye, and neither is worth
       // holding a live, billing call open for.
       if (reason === "model" || reason === "consentDenied") {
+        // From here, what the model says after `end_call` is watched for its
+        // goodbye — see AFTER_END_CALL_AUDIO_CAP_MS. Before the await below,
+        // so no frame of the continuation escapes the count.
+        if (reason === "model" && this.params.realtime.continuesAfterToolResponse) {
+          this.afterEndCall = { text: "", audioMs: 0, stopped: false };
+        }
         try {
           // The model asked to end the call, possibly mid-turn. Let the turn
           // finish generating before draining, or the drain waits on a queue

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ToolGate, TOOL_RESULTS, buildToolDeclarations, type CallExecution } from "../src/index.js";
+import {
+  ToolGate,
+  TOOL_RESULTS,
+  buildToolDeclarations,
+  routeToolCall,
+  type CallExecution,
+  type ToolResult
+} from "../src/index.js";
 
 const ivrExec: CallExecution = {
   ivr: { maxPresses: 3, allowedDigits: "0123456789", onUnrecognized: "zeroOut" }
@@ -73,24 +80,26 @@ describe("end gating", () => {
 
   it("refuses ONCE when an outcome is required and none is recorded, then allows", () => {
     const g = new ToolGate(fullExec);
-    expect(g.authorizeEnd()).toBe("refused: record the outcome first");
-    expect(g.authorizeEnd()).toBe("ok");
+    expect(g.authorizeEnd()).toBe(
+      "refused: record the outcome first — call record_outcome now without mentioning it"
+    );
+    expect(g.authorizeEnd()).toBe("ok — say nothing more");
   });
 
   it("allows immediately once an outcome exists", () => {
     const g = new ToolGate(fullExec);
     g.recordOutcome("completed", { appointmentStart: "2026-08-25T08:00" });
-    expect(g.authorizeEnd()).toBe("ok");
+    expect(g.authorizeEnd()).toBe("ok — say nothing more");
   });
 
   it("allows immediately when requireOutcomeBeforeEnd is false", () => {
     const g = new ToolGate({ ...fullExec, closure: { requireOutcomeBeforeEnd: false } });
-    expect(g.authorizeEnd()).toBe("ok");
+    expect(g.authorizeEnd()).toBe("ok — say nothing more");
   });
 
   it("allows immediately when closure is declared but no outcome block exists", () => {
     const g = new ToolGate({ ...ivrExec, closure: { requireOutcomeBeforeEnd: true } });
-    expect(g.authorizeEnd()).toBe("ok");
+    expect(g.authorizeEnd()).toBe("ok — say nothing more");
   });
 });
 
@@ -103,7 +112,9 @@ describe("outcome recording", () => {
 
   it("drops undeclared fields and keeps declared ones", () => {
     const g = new ToolGate(fullExec);
-    expect(g.recordOutcome("completed", { appointmentStart: "X", smuggled: "Y" })).toBe("recorded");
+    expect(g.recordOutcome("completed", { appointmentStart: "X", smuggled: "Y" })).toBe(
+      "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call"
+    );
     expect(g.snapshot().outcome?.fields).toEqual({ appointmentStart: "X" });
   });
 
@@ -276,20 +287,24 @@ describe("ToolGate — the spend ceiling is enforced, not merely stated", () => 
 
   it("accepts an amount exactly at the ceiling", () => {
     const gate = new ToolGate(withCeiling(250));
-    expect(gate.recordOutcome("completed", { agreedAmount: "250", when: "Thu" })).toBe("recorded");
+    expect(gate.recordOutcome("completed", { agreedAmount: "250", when: "Thu" })).toBe(
+      "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call"
+    );
   });
 
   it("accepts an amount below the ceiling, currency symbols and all", () => {
     const gate = new ToolGate(withCeiling(250));
     expect(gate.recordOutcome("completed", { agreedAmount: "$160.00", when: "Thu" })).toBe(
-      "recorded"
+      "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call"
     );
     expect(gate.snapshot().outcome?.fields.agreedAmount).toBe("$160.00");
   });
 
   it("accepts an empty amount — a correctly deferred call records no price", () => {
     const gate = new ToolGate(withCeiling(250));
-    expect(gate.recordOutcome("partial", { agreedAmount: "", when: "Thu" })).toBe("recorded");
+    expect(gate.recordOutcome("partial", { agreedAmount: "", when: "Thu" })).toBe(
+      "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call"
+    );
   });
 
   it("does not bound a value it cannot read as a number", () => {
@@ -299,7 +314,9 @@ describe("ToolGate — the spend ceiling is enforced, not merely stated", () => 
     const gate = new ToolGate(withCeiling(250));
     expect(
       gate.recordOutcome("completed", { agreedAmount: "four hundred and thirty", when: "Thu" })
-    ).toBe("recorded");
+    ).toBe(
+      "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call"
+    );
   });
 
   it("leaves recording unchanged when no ceiling is declared", () => {
@@ -327,7 +344,9 @@ describe("ToolGate — the spend ceiling is enforced, not merely stated", () => 
     // over-ceiling call could hang up with nothing recorded at all.
     const gate = new ToolGate(withCeiling(250));
     gate.recordOutcome("completed", { agreedAmount: "430" });
-    expect(gate.authorizeEnd()).toBe("refused: record the outcome first");
+    expect(gate.authorizeEnd()).toBe(
+      "refused: record the outcome first — call record_outcome now without mentioning it"
+    );
   });
 });
 
@@ -356,6 +375,28 @@ describe("end_call tells the model that goodbye is not a hangup", () => {
     // both sides sit on an open line.
     expect(describeEnd({ closure: { requireOutcomeBeforeEnd: false } })).toMatch(
       /not wait for the other person/i
+    );
+  });
+
+  it("pins the exact description, with and without the outcome-first clause", () => {
+    // The wording was measured, not guessed: in billed runs one model called
+    // end_call ~2 s after pressing a key (it should have been waiting) and
+    // another kept asking questions after the callee said goodbye. The sentence
+    // that says when NOT to end is the fix, so its text is pinned exactly.
+    const base =
+      `End the call and hang up the line. Saying goodbye does NOT hang up — the call stays ` +
+      `connected until you call this, so call it as soon as you have said goodbye and the ` +
+      `conversation is complete. Do not wait for the other person to hang up.` +
+      ` Never call this while waiting for the other side — after a keypress, while on hold or being transferred, or before anyone has answered. Having recorded an outcome is not a reason to end. Once they have said goodbye, ask nothing further: record what you have and end the call.`;
+    expect(describeEnd({ closure: { requireOutcomeBeforeEnd: false } })).toBe(base);
+    expect(
+      describeEnd({
+        closure: { requireOutcomeBeforeEnd: true },
+        outcome: { fields: [{ name: "a", description: "b" }] }
+      })
+    ).toBe(
+      base +
+        ` Record the outcome before you call this: the first attempt to end without one is refused.`
     );
   });
 
@@ -484,5 +525,233 @@ describe("record_outcome names the moment, not a judgement", () => {
     // Without this, moving the record earlier trades a missing record for an
     // incomplete one.
     expect(d()).toMatch(/call this again; the most recent call is the one that counts/);
+  });
+});
+
+/**
+ * Live A/B, 2026-09-30: about five thanks and farewells at the end of one call.
+ * Every tool answer starts a new spoken turn (always on Deepgram; Gemini's
+ * BLOCKING tools continue the turn), and the answers gave no direction:
+ * `record_outcome` returned "recorded", an accepted `end_call` returned "ok".
+ * So the model recapped and thanked, recorded, heard "recorded" and thanked
+ * again, ended, heard "ok" and thanked a third time — that last one spoken in
+ * full, because CallSession waits for the turn after `end_call`.
+ *
+ * The answers now say what happens next. They are still closed literals: a
+ * direction the server gives is a constant, never built from anything the
+ * call said.
+ */
+describe("tool results say what happens next", () => {
+  const recordedThenClose: ToolResult =
+    "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call";
+  const lineClosing: ToolResult = "ok — say nothing more";
+
+  it("both directions are members of the closed union", () => {
+    expect(TOOL_RESULTS).toContain(recordedThenClose);
+    expect(TOOL_RESULTS).toContain(lineClosing);
+  });
+
+  // The direction is conditional: end_call's description says "Having recorded
+  // an outcome is not a reason to end", and an unconditional "now say goodbye"
+  // would contradict it on a mid-call or partial record.
+  it("a record on a call that can close itself points at the goodbye and end_call", () => {
+    const g = new ToolGate(fullExec);
+    expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(recordedThenClose);
+  });
+
+  it("a record on a call with no end_call stays plain — it names no tool the model lacks", () => {
+    const g = new ToolGate({ outcome: { fields: [{ name: "a", description: "b" }] } });
+    expect(g.recordOutcome("completed", { a: "x" })).toBe("recorded");
+  });
+
+  it("an accepted end_call tells the model to say nothing more", () => {
+    expect(new ToolGate({ closure: { requireOutcomeBeforeEnd: false } }).authorizeEnd()).toBe(
+      lineClosing
+    );
+  });
+
+  it("routeToolCall answers end_call with the closing literal and still hangs up", async () => {
+    const answers: ToolResult[] = [];
+    let ended = 0;
+    await routeToolCall({
+      call: { id: "e1", name: "end_call", args: { reason: "done" } },
+      gate: new ToolGate({ closure: { requireOutcomeBeforeEnd: false } }),
+      carrier: {
+        sendDtmf: async () => {},
+        endCall: async () => {
+          ended++;
+        },
+        beginNotetaking: async () => {}
+      },
+      callId: "CA-TEST",
+      respond: (r) => answers.push(r)
+    });
+    expect(answers).toEqual([lineClosing]);
+    expect(ended).toBe(1);
+  });
+
+  it("a refused end_call does not hang up", async () => {
+    let ended = 0;
+    const answers: ToolResult[] = [];
+    await routeToolCall({
+      call: { id: "e1", name: "end_call", args: {} },
+      gate: new ToolGate(fullExec),
+      carrier: {
+        sendDtmf: async () => {},
+        endCall: async () => {
+          ended++;
+        },
+        beginNotetaking: async () => {}
+      },
+      callId: "CA-TEST",
+      respond: (r) => answers.push(r)
+    });
+    expect(answers).toEqual([
+      "refused: record the outcome first — call record_outcome now without mentioning it"
+    ]);
+    expect(ended).toBe(0);
+  });
+
+  it("every other tool's ok is unchanged", () => {
+    expect(new ToolGate(ivrExec).authorizePress("1")).toBe("ok");
+  });
+});
+
+/**
+ * Live, Gemini 3.8, 2026-10-01: the callee offered "Monday at 9:26 a.m." and
+ * the model answered, in ONE turn, "That works perfectly. So we can schedule
+ * the cleaning for Monday, October 5th at 9:30 am. Thank you so much for your
+ * help. Goodbye." — then recorded `completed` with 9:30 and ended the call.
+ * Nobody agreed to 9:30; nobody agreed to anything after the model last spoke.
+ * Three prompt-level fixes did not stop it, so the rule is enforced here: a
+ * `completed` record on a two-party call needs the far end to have spoken
+ * since the model last did.
+ */
+describe("a completed record needs them to have spoken since the model did", () => {
+  const notConfirmed: ToolResult =
+    "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call";
+  const recorded: ToolResult =
+    "recorded — if you already thanked them or said goodbye, call end_call now without saying anything; otherwise say one short goodbye, then call end_call";
+  const outcomeFirst: ToolResult =
+    "refused: record the outcome first — call record_outcome now without mentioning it";
+  const closing: ToolResult = "ok — say nothing more";
+
+  it("the refusal is a member of the closed union", () => {
+    expect(TOOL_RESULTS).toContain(notConfirmed);
+  });
+
+  it("good flow: their 'yes' is the last thing said, so completed is accepted", () => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio(); // the read-back
+    g.noteCallerSpeech(); // "Yes, that works."
+    expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(recorded);
+    expect(g.snapshot().outcome?.status).toBe("completed");
+  });
+
+  it("bad flow: the model spoke after their last words, so completed is refused", () => {
+    const g = new ToolGate(fullExec);
+    g.noteCallerSpeech(); // "How about Monday at 9:26?"
+    g.noteModelAudio(); // "That works perfectly … 9:30 … Goodbye."
+    expect(g.recordOutcome("completed", { appointmentStart: "Mon 9:30" })).toBe(notConfirmed);
+  });
+
+  it("before they have said anything, a completed record after model audio is refused", () => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio();
+    expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(notConfirmed);
+  });
+
+  it("after a refusal, their next words let the same record through", () => {
+    const g = new ToolGate(fullExec);
+    g.noteCallerSpeech();
+    g.noteModelAudio();
+    expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(notConfirmed);
+    g.noteModelAudio(); // the read-back the refusal asked for
+    g.noteCallerSpeech(); // "Yes."
+    expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(recorded);
+  });
+
+  it("partial and failed are never held to it", () => {
+    const g = new ToolGate(fullExec);
+    g.noteCallerSpeech();
+    g.noteModelAudio();
+    expect(g.recordOutcome("partial", { appointmentStart: "" })).toBe(recorded);
+    expect(g.recordOutcome("failed", { appointmentStart: "" })).toBe(recorded);
+  });
+
+  it("a meeting is not gated", () => {
+    const g = new ToolGate({
+      ...fullExec,
+      meeting: {
+        consent: { phrase: "go ahead and take notes", timeoutSeconds: 180, onTimeout: "hangUp" }
+      }
+    });
+    g.noteModelAudio();
+    expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(recorded);
+  });
+
+  it("a refusal is not a recorded outcome, and keeps whatever was recorded before", () => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio();
+    expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(notConfirmed);
+    expect(g.snapshot().outcome).toBeUndefined();
+
+    g.recordOutcome("partial", { appointmentStart: "" });
+    g.noteModelAudio();
+    expect(g.recordOutcome("completed", { appointmentStart: "Y" })).toBe(notConfirmed);
+    expect(g.snapshot().outcome?.status).toBe("partial");
+    expect(g.snapshot().outcome?.fields.appointmentStart).toBe("");
+  });
+
+  // The end_call one-shot meets this refusal. Nothing loops: end_call is
+  // refused at most once per call, so a model that cannot get a confirmation
+  // can still hang up (with no completed record) on its second end_call.
+  it("refused record → refused end_call → refused record → end_call goes through", () => {
+    const g = new ToolGate(fullExec);
+    g.noteCallerSpeech();
+    g.noteModelAudio();
+    expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(notConfirmed);
+    expect(g.authorizeEnd()).toBe(outcomeFirst);
+    // "Without mentioning it": no new audio, and the earlier speech still stands.
+    expect(g.recordOutcome("completed", { appointmentStart: "X" })).toBe(notConfirmed);
+    expect(g.authorizeEnd()).toBe(closing);
+    expect(g.snapshot().outcome).toBeUndefined();
+  });
+
+  it("refused record → read-back → they confirm → recorded → end_call ok", () => {
+    const g = new ToolGate(fullExec);
+    g.noteCallerSpeech(); // "How about Monday at 9:26?"
+    g.noteModelAudio(); // "Monday at 9:30 works. Goodbye."
+    expect(g.recordOutcome("completed", { appointmentStart: "Mon 9:30" })).toBe(notConfirmed);
+    g.noteModelAudio(); // "Just to confirm: Monday at 9:26?"
+    g.noteCallerSpeech(); // "Yes, Monday at 9:26 works."
+    expect(g.recordOutcome("completed", { appointmentStart: "Mon 9:26" })).toBe(recorded);
+    expect(g.authorizeEnd()).toBe(closing);
+    expect(g.snapshot().outcome?.fields.appointmentStart).toBe("Mon 9:26");
+  });
+
+  it("routeToolCall answers the refusal and reports it on the diagnostic seam", async () => {
+    const g = new ToolGate(fullExec);
+    g.noteModelAudio();
+    const answers: ToolResult[] = [];
+    const diagnostics: string[] = [];
+    await routeToolCall({
+      call: {
+        id: "r1",
+        name: "record_outcome",
+        args: { status: "completed", fields: { appointmentStart: "X" } }
+      },
+      gate: g,
+      carrier: {
+        sendDtmf: async () => {},
+        endCall: async () => {},
+        beginNotetaking: async () => {}
+      },
+      callId: "CA-TEST",
+      respond: (r) => answers.push(r),
+      onDiagnostic: (m) => diagnostics.push(m)
+    });
+    expect(answers).toEqual([notConfirmed]);
+    expect(diagnostics).toEqual([`record_outcome ${notConfirmed}`]);
   });
 });

@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url";
-import { convert, createAudioCodec } from "@parley/audio";
-import type { RealtimeProvider } from "@parley/core";
+import { canConvert, convert, createAudioCodec } from "@parley/audio";
 import { runHarnessCli } from "@parley/harness";
 import {
   createDeepgramRealtimeProvider,
-  DEFAULT_DEEPGRAM_LLM_MODEL
+  DEEPGRAM_SPEED_MAX,
+  DEEPGRAM_SPEED_MIN,
+  DEFAULT_DEEPGRAM_LISTEN_MODEL,
+  DEFAULT_DEEPGRAM_SPEED,
+  DEFAULT_DEEPGRAM_THINK,
+  DEFAULT_DEEPGRAM_VOICE
 } from "@parley/realtime-deepgram";
 import { DEFAULT_GEMINI_MODEL, GeminiRealtimeProvider } from "@parley/realtime-gemini";
 import {
@@ -15,7 +19,12 @@ import {
   runMeetingJoin,
   type MeetingJoinDeps
 } from "@parley/meeting-browser";
-import { createHostAllowlist, createNumberAllowlist, createParleyServer } from "@parley/server";
+import {
+  createHostAllowlist,
+  createNumberAllowlist,
+  createParleyServer,
+  type BuiltRealtime
+} from "@parley/server";
 import { TwilioTelephonyProvider } from "@parley/telephony-twilio";
 import { createDeepgramTranscriptionProvider } from "@parley/transcription-deepgram";
 import { dirname, join } from "node:path";
@@ -28,41 +37,61 @@ function requireEnv(name: string): string {
   return v;
 }
 
-/** Build the realtime provider `serve` runs with, and the model string that
- * travels alongside it. Kept as its own function so the choice is made in
- * exactly one place: `--realtime-provider` defaults to "gemini"
- * (packages/cli/src/args.ts), and DEEPGRAM_API_KEY is only demanded when a
- * caller actually asked for the spike provider — requiring it unconditionally
- * would break every existing Gemini-only deployment the moment this package
- * was added. See docs/decisions/2026-08-19-voice-agent-spike.md.
+/** `PARLEY_DEEPGRAM_SPEED`, or the provider default when unset. Invalid or
+ * out-of-range values fail boot naming only the variable — never its value
+ * or any credential. */
+function resolveDeepgramSpeed(env: NodeJS.ProcessEnv): number {
+  const raw = env.PARLEY_DEEPGRAM_SPEED;
+  if (!raw) return DEFAULT_DEEPGRAM_SPEED;
+  const speed = Number(raw);
+  if (!Number.isFinite(speed) || speed < DEEPGRAM_SPEED_MIN || speed > DEEPGRAM_SPEED_MAX) {
+    throw new Error(
+      `PARLEY_DEEPGRAM_SPEED must be a number from ${DEEPGRAM_SPEED_MIN} to ${DEEPGRAM_SPEED_MAX}`
+    );
+  }
+  return speed;
+}
+
+/** Build every realtime provider the environment holds a key for, so the
+ * daemon can offer each of them; `--realtime-provider` only picks the default.
+ * A provider whose key is absent is simply not built — requiring both keys
+ * would break every single-vendor deployment. Takes `env` as a parameter so it
+ * is testable without touching `process.env`; keys are read only to hand to the
+ * provider constructors and are never logged.
  *
- * The `deepgram` branch is currently UNREACHABLE from the CLI: `parseParleyArgs`
- * refuses the flag, because `RealtimeProvider` has no encoding negotiation and a
- * Deepgram-backed call is silent one way and noise the other (see the reason
- * beside `DEEPGRAM_REALTIME_UNAVAILABLE` in args.ts). It is kept rather than
- * deleted because the wiring is correct and only the encoding contract is
- * missing — deleting it would make re-enabling the spike a rewrite instead of
- * removing one guard. */
-function buildRealtimeProvider(kind: RealtimeProviderKind): {
-  realtime: RealtimeProvider;
-  model: string;
-} {
-  if (kind === "deepgram") {
-    return {
-      realtime: createDeepgramRealtimeProvider({ apiKey: requireEnv("DEEPGRAM_API_KEY") }),
-      model: DEFAULT_DEEPGRAM_LLM_MODEL
+ * The Deepgram `model` is the think model, because that is the model the agent
+ * actually runs on and what the call record should name. */
+export function buildRealtimeProviders(
+  env: NodeJS.ProcessEnv
+): Partial<Record<RealtimeProviderKind, BuiltRealtime>> {
+  const built: Partial<Record<RealtimeProviderKind, BuiltRealtime>> = {};
+  if (env.GEMINI_API_KEY) {
+    const model = env.PARLEY_GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+    built.gemini = { provider: new GeminiRealtimeProvider({ apiKey: env.GEMINI_API_KEY }), model };
+  }
+  if (env.DEEPGRAM_API_KEY) {
+    const think = {
+      provider: env.PARLEY_DEEPGRAM_THINK_PROVIDER || DEFAULT_DEEPGRAM_THINK.provider,
+      model: env.PARLEY_DEEPGRAM_THINK_MODEL || DEFAULT_DEEPGRAM_THINK.model
+    };
+    built.deepgram = {
+      provider: createDeepgramRealtimeProvider({
+        apiKey: env.DEEPGRAM_API_KEY,
+        think,
+        listenModel: env.PARLEY_DEEPGRAM_LISTEN_MODEL || DEFAULT_DEEPGRAM_LISTEN_MODEL,
+        voice: env.PARLEY_DEEPGRAM_VOICE || DEFAULT_DEEPGRAM_VOICE,
+        speed: resolveDeepgramSpeed(env)
+      }),
+      model: think.model
     };
   }
-  return {
-    realtime: new GeminiRealtimeProvider({ apiKey: requireEnv("GEMINI_API_KEY") }),
-    model: DEFAULT_GEMINI_MODEL
-  };
+  return built;
 }
 
 /** The listening plane a meeting needs — genuinely independent of
- * `buildRealtimeProvider` above (the speaking plane): a meeting under either
+ * `buildRealtimeProviders` above (the speaking plane): a meeting under either
  * `--realtime-provider` still needs somewhere to send audio once consent is
- * granted. Optional, unlike `buildRealtimeProvider`'s DEEPGRAM_API_KEY read:
+ * granted. Optional, unlike a provider key the default needs:
  * a deployment with no transcription plane configured must still be able to
  * place ordinary (non-meeting) calls, so this reads the env var directly
  * rather than through `requireEnv`, and returns undefined rather than
@@ -70,8 +99,8 @@ function buildRealtimeProvider(kind: RealtimeProviderKind): {
  * then refuses a meeting envelope at POST /call — see its own doc on
  * `ServerDeps.transcription`.
  *
- * DEEPGRAM_API_KEY is the same variable `buildRealtimeProvider` reads for
- * `--realtime-provider deepgram` — one Deepgram account key serves both of
+ * DEEPGRAM_API_KEY is the same variable `buildRealtimeProviders` reads for
+ * the Deepgram realtime provider — one Deepgram account key serves both of
  * its products here (realtime voice and transcription), which is why this
  * function does not invent a second env var name. The key itself never
  * appears in argv, a log line, or an error message: it is read once here and
@@ -85,26 +114,52 @@ function buildTranscription():
   return { provider: createDeepgramTranscriptionProvider({ apiKey }), convert };
 }
 
+/** `PARLEY_TIMEZONE`: the IANA zone the model is told today's date in.
+ * Optional; unset means the host's zone. An invalid name is a boot error that
+ * names only this variable — a bad zone otherwise surfaces on the first call
+ * as a RangeError from inside the connect path. */
+export function resolveTimeZone(env: NodeJS.ProcessEnv): string | undefined {
+  const timeZone = env.PARLEY_TIMEZONE;
+  if (!timeZone) return undefined;
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone });
+  } catch {
+    throw new Error("PARLEY_TIMEZONE is not a valid IANA time zone name");
+  }
+  return timeZone;
+}
+
 async function serve(realtimeProviderKind: RealtimeProviderKind): Promise<void> {
+  const timeZone = resolveTimeZone(process.env);
   const callRecordsPath = process.env.PARLEY_CALL_RECORDS_PATH;
   const postCallCommand = process.env.PARLEY_POST_CALL_COMMAND;
-  const { realtime, model } = buildRealtimeProvider(realtimeProviderKind);
+  // Fail at boot, not on the first call: a default that was never keyed would
+  // otherwise surface as a failed call.
+  const providers = buildRealtimeProviders(process.env);
+  if (!providers[realtimeProviderKind]) {
+    throw new Error(`default realtime provider "${realtimeProviderKind}" has no credential`);
+  }
   const transcription = buildTranscription();
   const handle = createParleyServer({
     telephony: new TwilioTelephonyProvider({
       accountSid: requireEnv("TWILIO_ACCOUNT_SID"),
       authToken: requireEnv("TWILIO_AUTH_TOKEN")
     }),
-    realtime,
+    // Every keyed provider, not just the default: a call's envelope may choose
+    // any of them (`execution.realtime`), and one naming a provider this
+    // daemon holds no key for is refused at POST /call, never re-routed.
+    realtime: { providers, default: realtimeProviderKind },
     codec: createAudioCodec(),
+    convert,
+    canConvert,
     from: requireEnv("TWILIO_FROM_NUMBER"),
     publicHost: requireEnv("PARLEY_PUBLIC_HOST"),
-    model,
     numberAllowlist: createNumberAllowlist(
       parseCallableNumbers(process.env.PARLEY_CALLABLE_NUMBERS)
     ),
     hostAllowlist: createHostAllowlist([requireEnv("PARLEY_PUBLIC_HOST")]),
     ...(transcription ? { transcription } : {}),
+    ...(timeZone ? { timeZone } : {}),
     // requireEnv, not an optional read. A daemon that starts without this would
     // answer every /call with 503, which surfaces hours later as an outage
     // rather than now as a misconfiguration. Fail at boot, loudly.

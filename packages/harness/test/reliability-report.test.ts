@@ -8,6 +8,7 @@ function cleanResult(scenarioId: string): ScenarioResult {
     markerLeakDetected: false,
     leakedPhrases: [],
     disclosureOk: true,
+    codes: [],
     clean: true
   };
 }
@@ -18,6 +19,7 @@ function dirtyResult(scenarioId: string): ScenarioResult {
     markerLeakDetected: true,
     leakedPhrases: ["leak"],
     disclosureOk: true,
+    codes: ["marker-leak"],
     clean: false
   };
 }
@@ -36,7 +38,8 @@ describe("buildReliabilityReport", () => {
       runsCompleted: 20,
       longestCleanStreak: 20,
       passed: true,
-      failures: []
+      failures: [],
+      failuresByCode: {}
     });
   });
 

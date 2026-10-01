@@ -23,7 +23,13 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { MULAW_8K } from "@parley/core";
-import type { AudioCodec, Brief, RealtimeProvider, TelephonyProvider } from "@parley/core";
+import type {
+  AudioCodec,
+  FrameConverter,
+  Brief,
+  RealtimeProvider,
+  TelephonyProvider
+} from "@parley/core";
 import { representedCall } from "@parley/policy";
 import { createHostAllowlist, createNumberAllowlist } from "../src/allowlist.js";
 import { PendingSessions } from "../src/pending-sessions.js";
@@ -31,18 +37,26 @@ import { handleHttpRequest, type HttpRequest, type ServerDeps } from "../src/req
 
 const TOKEN = "s3cr3t-token-value";
 
+// Relabels without touching bytes: these tests verify wiring, not DSP.
+const convert: FrameConverter = (f, to) => ({ encoding: to, data: f.data });
+const canConvert = (): boolean => true;
 const codec: AudioCodec = {
-  decodeInbound: (f) => f,
-  encodeOutbound: (f) => f,
   dtmfTones: () => ({ encoding: MULAW_8K, data: Buffer.alloc(0) })
 };
-const realtime: RealtimeProvider = { name: "fake", connect: vi.fn() };
+const realtime: RealtimeProvider = {
+  name: "fake",
+  audio: { accepts: [MULAW_8K], emits: MULAW_8K },
+  openingDelivery: "turn",
+  continuesAfterToolResponse: false,
+  connect: vi.fn()
+};
 
 function fakeTelephony(
   originateSpy = vi.fn(async () => ({ providerCallId: "CA777", status: "queued" as const }))
 ): TelephonyProvider {
   return {
     name: "fake",
+    mediaEncoding: MULAW_8K,
     originate: originateSpy,
     buildAnswerResponse: () => ({ contentType: "text/xml", body: "<Response/>" }),
     verifyWebhookSignature: () => true,
@@ -59,11 +73,15 @@ function fakeTelephony(
 function deps(overrides: Partial<ServerDeps> = {}): ServerDeps {
   return {
     telephony: fakeTelephony(),
-    realtime,
+    realtime: {
+      providers: { gemini: { provider: realtime, model: "gemini-3.1-flash-live-preview" } },
+      default: "gemini"
+    },
     codec,
+    convert,
+    canConvert,
     from: "+14155550001",
     publicHost: "voice.example.com",
-    model: "gemini-3.1-flash-live-preview",
     numberAllowlist: createNumberAllowlist(["+14155550002"]),
     hostAllowlist: createHostAllowlist(["voice.example.com"]),
     pending: new PendingSessions(),

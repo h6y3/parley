@@ -1,17 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   type AudioCodec,
+  type FrameConverter,
   type RealtimeProvider,
+  type RealtimeSessionCallbacks,
   type TelephonyProvider,
   type WebSocketLike
 } from "@parley/core";
 import { CallSession, MULAW_8K } from "@parley/core";
+import { createHostAllowlist, createNumberAllowlist } from "../src/allowlist.js";
 import { PendingSessions } from "../src/pending-sessions.js";
 import { handleMediaConnection, type CompletedCallRecord } from "../src/media-connection.js";
+import { handleHttpRequest } from "../src/request-handler.js";
 
+// Relabels without touching bytes: these tests verify wiring, not DSP.
+const convert: FrameConverter = (f, to) => ({ encoding: to, data: f.data });
+const canConvert = (): boolean => true;
 const codec: AudioCodec = {
-  decodeInbound: (f) => f,
-  encodeOutbound: (f) => f,
   dtmfTones: () => ({ encoding: MULAW_8K, data: Buffer.alloc(0) })
 };
 
@@ -34,9 +39,16 @@ function fakeSocket(): WebSocketLike & { closed: boolean; triggerClose: () => vo
 
 function sessionWithAttachSpy(stop = vi.fn(async () => {})) {
   const attach = vi.fn(async () => ({ transcript: [], stop }));
-  const realtime: RealtimeProvider = { name: "fake", connect: vi.fn() };
+  const realtime: RealtimeProvider = {
+    name: "fake",
+    audio: { accepts: [MULAW_8K], emits: MULAW_8K },
+    openingDelivery: "turn",
+    continuesAfterToolResponse: false,
+    connect: vi.fn()
+  };
   const telephony: TelephonyProvider = {
     name: "fake",
+    mediaEncoding: MULAW_8K,
     originate: async () => ({ providerCallId: "CA1", status: "queued" }),
     buildAnswerResponse: () => ({ contentType: "text/xml", body: "" }),
     verifyWebhookSignature: () => true,
@@ -54,6 +66,8 @@ function sessionWithAttachSpy(stop = vi.fn(async () => {})) {
     telephony,
     realtime,
     codec,
+    convert,
+    canConvert,
     from: "+1",
     answerWebhookUrl: "https://h/a",
     model: "m"
@@ -572,6 +586,7 @@ describe("the record is built from a session that has been torn down", () => {
     };
     const telephony: TelephonyProvider = {
       name: "fake",
+      mediaEncoding: MULAW_8K,
       originate: async () => ({ providerCallId: "CA1", status: "queued" }),
       buildAnswerResponse: () => ({ contentType: "text/xml", body: "" }),
       verifyWebhookSignature: () => true,
@@ -591,6 +606,9 @@ describe("the record is built from a session that has been torn down", () => {
     };
     const realtime: RealtimeProvider = {
       name: "fake",
+      audio: { accepts: [MULAW_8K], emits: MULAW_8K },
+      openingDelivery: "turn",
+      continuesAfterToolResponse: false,
       connect: async () => ({
         sendOpeningTrigger: () => {},
         sendAudio: () => {},
@@ -605,6 +623,8 @@ describe("the record is built from a session that has been torn down", () => {
       telephony,
       realtime,
       codec,
+      convert,
+      canConvert,
       from: "+1",
       answerWebhookUrl: "https://h/a",
       model: "m",
@@ -675,5 +695,158 @@ describe("the record is built from a session that has been torn down", () => {
   it("carries the last utterance, which only the listening plane's flush produces", async () => {
     const record = await runToHangup();
     expect(record.transcript).toContain("and that is the whole scope, thanks everyone");
+  });
+});
+
+/** Which realtime provider ran a call, and how soon its model first spoke, are
+ * the two facts a provider A/B compares — so both are on the record itself,
+ * provider-neutral, rather than reconstructed from logs afterwards. */
+describe("the completed-call record names its realtime provider and first model audio", () => {
+  function realtimeRig(name: string) {
+    const captured: { callbacks?: RealtimeSessionCallbacks } = {};
+    const provider: RealtimeProvider = {
+      name,
+      audio: { accepts: [MULAW_8K], emits: MULAW_8K },
+      openingDelivery: "turn",
+      continuesAfterToolResponse: false,
+      connect: async (params) => {
+        captured.callbacks = params.callbacks;
+        return {
+          sendOpeningTrigger: () => {},
+          sendAudio: () => {},
+          sendToolResponse: () => {},
+          notifyActivityEnd: () => {},
+          close: async () => {}
+        };
+      }
+    };
+    return { provider, captured };
+  }
+
+  function telephony(): TelephonyProvider {
+    return {
+      name: "fake",
+      mediaEncoding: MULAW_8K,
+      originate: async () => ({ providerCallId: "CA-AB-1", status: "queued" }),
+      buildAnswerResponse: () => ({ contentType: "text/xml", body: "" }),
+      verifyWebhookSignature: () => true,
+      attachMediaStream: () => ({
+        sendOutboundAudio: () => {},
+        clearOutboundBuffer: () => {},
+        drainOutbound: async () => ({ confirmed: true, waitedMs: 0 }),
+        close: () => {}
+      }),
+      hangup: async () => {}
+    };
+  }
+
+  async function completeCall(
+    pending: PendingSessions,
+    callId: string,
+    during: () => void = () => {}
+  ): Promise<CompletedCallRecord> {
+    const socket = fakeSocket();
+    const records: CompletedCallRecord[] = [];
+    await handleMediaConnection(callId, socket, {
+      pending,
+      onCallCompleted: (r) => {
+        records.push(r);
+      }
+    });
+    during();
+    socket.triggerClose();
+    await settle();
+    expect(records).toHaveLength(1);
+    return records[0]!;
+  }
+
+  it("names the provider the envelope chose, and that provider's model (Deepgram's think model)", async () => {
+    const gemini = realtimeRig("gemini");
+    const deepgram = realtimeRig("deepgram");
+    const pending = new PendingSessions();
+    const token = "test-call-token";
+    const res = await handleHttpRequest(
+      {
+        method: "POST",
+        path: "/call",
+        query: "",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        rawBody: JSON.stringify({
+          version: 2,
+          brief: { to: "+14155550002", persona: "p", objective: "o", facts: [] },
+          guardrails: ["Be brief."],
+          execution: { realtime: { provider: "deepgram" } }
+        })
+      },
+      {
+        telephony: telephony(),
+        realtime: {
+          providers: {
+            gemini: { provider: gemini.provider, model: "gemini-3.8-live" },
+            deepgram: { provider: deepgram.provider, model: "gpt-4o-mini" }
+          },
+          default: "gemini"
+        },
+        codec,
+        convert,
+        canConvert,
+        from: "+14155550001",
+        publicHost: "voice.example.com",
+        numberAllowlist: createNumberAllowlist(["+14155550002"]),
+        hostAllowlist: createHostAllowlist(["voice.example.com"]),
+        pending,
+        callToken: token,
+        meetingArtifactsConfigured: true
+      }
+    );
+    expect(res.status).toBe(202);
+
+    const record = await completeCall(pending, "CA-AB-1");
+    expect(record.realtime).toEqual({ provider: "deepgram", model: "gpt-4o-mini" });
+    // And the call really ran there: the envelope's choice reached the wire.
+    expect(deepgram.captured.callbacks).toBeDefined();
+    expect(gemini.captured.callbacks).toBeUndefined();
+  });
+
+  function clockedSession() {
+    const clock = { t: 1_000_000 };
+    const rig = realtimeRig("gemini");
+    const session = new CallSession({
+      brief: { to: "+1", persona: "p", objective: "o", facts: [] },
+      guardrails: [],
+      telephony: telephony(),
+      realtime: rig.provider,
+      codec,
+      convert,
+      canConvert,
+      from: "+1",
+      answerWebhookUrl: "https://h/a",
+      model: "gemini-3.8-live",
+      now: () => clock.t
+    });
+    const pending = new PendingSessions();
+    pending.set("CA1", session);
+    return { clock, rig, pending };
+  }
+
+  it("records firstModelAudioMs as the offset of the model's FIRST audio frame from call start", async () => {
+    const { clock, rig, pending } = clockedSession();
+    const frame = { encoding: MULAW_8K, data: Buffer.alloc(160) };
+    const record = await completeCall(pending, "CA1", () => {
+      clock.t += 1234;
+      rig.captured.callbacks!.onAudio(frame);
+      clock.t += 500;
+      rig.captured.callbacks!.onAudio(frame);
+    });
+    expect(record.firstModelAudioMs).toBe(1234);
+    expect(record.realtime).toEqual({ provider: "gemini", model: "gemini-3.8-live" });
+  });
+
+  it("omits firstModelAudioMs when the model never spoke", async () => {
+    const { clock, pending } = clockedSession();
+    const record = await completeCall(pending, "CA1", () => {
+      clock.t += 5000;
+    });
+    expect("firstModelAudioMs" in record).toBe(false);
   });
 });

@@ -91,7 +91,9 @@ per-message signing, and this document deliberately does not imply otherwise.
 ## The tool channel — bounded capability, constant-only results
 
 Parley V1 had **two channels into the model and none out**: a `systemInstruction` sent once at
-connect and immutable thereafter, plus one short opening trigger. That is still true of a call
+connect and immutable thereafter, plus one short opening trigger (on a provider that takes the
+opening in its prompt, that fixed text rides in the system instruction instead — see "Realtime
+providers" below). That is still true of a call
 that declares no `execution` block, and it is why `RealtimeSession` has never exposed a
 general-purpose "send a turn" method.
 
@@ -159,6 +161,30 @@ protection and is not.
 Two limits stated rather than papered over. The gate reads **digits**: an amount written out in
 words passes it, and the prose rail is the only thing covering that case. And a refused record is
 still a call on which a price was verbally agreed — this bounds the record, not the conversation.
+
+## Realtime providers — what may reach the vendor
+
+The two-channel rule holds on every realtime provider: `systemInstruction` goes once, at connect,
+and the opening trigger is the only other privileged input. The Deepgram provider is held to it
+by construction: it never sends `InjectAgentMessage` (Deepgram speaks it verbatim, bypassing the
+model), `UpdatePrompt`, `UpdateThink`, `UpdateSpeak` or `UpdateListen`, so nothing can re-instruct
+or reconfigure a running agent. Tool results are answered only from the closed `ToolResult`
+union, unchanged.
+
+Where the opening goes is the provider's declaration (`RealtimeProvider.openingDelivery`), and
+either way it is Parley's own fixed text, never caller content. Gemini (`"turn"`) receives the
+trigger as its own input after connect. Deepgram (`"prompt"`) has only one post-connect text
+input, `InjectUserMessage`, which its model hears as the callee speaking, so the trigger is
+appended to the one-time `Settings` prompt instead: a two-party call sends nothing after
+connect, and a meeting sends one short Parley-authored cue (`MEETING_CONNECTED_CUE`) as a user
+turn, never as speech. The provider refuses any longer or multi-line line on that path, so it
+cannot become a re-instruction channel. Appending a constant to the system instruction keeps the
+one-shot rule intact: it is still built once, before connect, and never touched again.
+
+Deepgram's `Settings` message sets `mip_opt_out: true`, opting the call out of Deepgram's Model
+Improvement Program so call audio and transcripts are not retained for training. The
+`brief.keyterms` recognition hints are sent to the vendor's listener and are the only brief field
+that goes anywhere except the system instruction; they are bounded (20 terms, 50 characters each).
 
 ## Callable-number allowlist — fails closed
 

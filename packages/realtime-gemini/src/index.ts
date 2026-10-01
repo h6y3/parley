@@ -3,6 +3,7 @@ export const PACKAGE_NAME = "@parley/realtime-gemini";
 export {
   DEFAULT_GEMINI_MODEL,
   DEFAULT_GEMINI_VOICE,
-  GeminiRealtimeProvider
+  GeminiRealtimeProvider,
+  geminiFunctionDeclarations
 } from "./gemini-realtime-provider.js";
 export type { GeminiRealtimeProviderOptions } from "./gemini-realtime-provider.js";

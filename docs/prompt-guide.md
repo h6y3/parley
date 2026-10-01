@@ -21,7 +21,17 @@ else ever reaches the model as instruction-bearing content:
    via `RealtimeSession.sendOpeningTrigger()` immediately after connect. Parley's built-in trigger
    is `"Begin the call naturally now."` (`OPENING_TRIGGER`, `packages/core/src/render.ts`)
    — it never restates the persona, never restates the brief, never carries a structural marker,
-   and is never longer than one sentence.
+   and is never longer than one sentence. That is the path on a provider declaring
+   `openingDelivery: "turn"` (Gemini). A provider declaring `"prompt"` (Deepgram, whose only
+   post-connect text input is heard as the callee speaking) receives the same fixed text appended
+   to channel 1 instead, and is sent no trigger at all on a two-party call; see `planOpening`
+   (`packages/core/src/render.ts`). Either way it is Parley's constant, never brief content.
+
+`brief.keyterms` is not a third channel. It is a list of words the speech recognizer should
+expect (a name it would otherwise mishear), passed to the realtime provider as a recognition hint
+and never rendered into the system instruction. Put a hard-to-hear name in both places: in
+`facts` so the model knows it, and in `keyterms` so the listener can hear it. Providers without a
+keyterm facility ignore it.
 
 Nothing else — no fabricated conversational turn, no mid-call system-style message, no tool-call
 payload — is a valid place for privileged, authoritative content in Parley. There is no third
@@ -58,8 +68,11 @@ convention an author has to remember to follow correctly every time.
 
 ## Assembly order
 
-`CallSession.resolveSystemInstruction()` calls `renderSystemInstruction()`
-(`packages/core/src/render.ts`), which builds `systemInstruction` fresh per call from a `Brief`'s
+`CallSession.resolveSystemInstruction()` returns exactly the `systemInstruction` the call sends.
+It calls `renderSystemInstruction()` and then `withOpening()` (both in `packages/core/src/render.ts`).
+`withOpening()` appends the opening on a provider declaring `openingDelivery: "prompt"`. The harness
+runners and the payload preview use the same two helpers. `renderSystemInstruction()` builds the
+brief part fresh per call from a `Brief`'s
 pure caller content plus an already-composed `guardrails` array, in a fixed order that a `Brief`
 author cannot reorder:
 
@@ -81,7 +94,17 @@ author cannot reorder:
    an instruction to say it verbatim — never left to inference; the honest-if-asked guardrail
    (when `disclosure.honestIfAsked` is set); and the deferral rule (when `deferral.enabled` is
    set — if asked something the brief doesn't cover, say so and defer to the principal rather than
-   guessing). These guardrail sentences are defined in `packages/policy/src/constants.ts`.
+   guessing). Near the end comes the closing rail (when `wrapUp.enabled` is set): `Nothing is settled until they
+have agreed to a specific arrangement in their own words; their offer or your proposal is not
+agreement — accept it, let them confirm, then close. When the purpose is settled, check once whether they need anything else from you to act on it — an
+appointment nobody can act on is not an appointment. Give them whatever this brief covers. If
+something this brief does not cover stops them acting on it — ask, never assume — say plainly
+that you will follow up, and treat what you arranged as unfinished rather than done. Then record the outcome, say one short goodbye, and
+end the call. Do not ask them to re-confirm details they have already confirmed, and do not
+recap settled details back to them.` It replaced a rail that asked the model to confirm the key
+   outcome and thank the callee before saying goodbye; on live calls that produced
+   re-confirmations of details already agreed and a recap at the end. These guardrail sentences
+   are defined in `packages/policy/src/constants.ts`.
 
    `CallPolicy.identity.style` is one of three values — set via a preset
    (`principalCall`/`representedCall`/`transactionalCall`, `packages/policy/src/presets.ts`) or
@@ -102,6 +125,17 @@ author cannot reorder:
    assistant answers honestly and continues the call — it never leads with this and never denies
    it. See `docs/security-model.md`'s "Jurisdiction posture" section for the legal reasoning
    behind this floor.
+
+4. **Today's date**, Parley-authored text appended after the guardrails, so the model can
+   turn "next Tuesday" into the ISO date the outcome schema requires: `Today is Wednesday,
+2026-09-30 (America/Los_Angeles). When the other person gives a relative date such as
+"tomorrow" or "next Tuesday", work out the calendar date from today before you record it. The
+next 14 days are: Thu Oct 1, Fri Oct 2, …, Wed Oct 14. When you say a date, use the weekday and date together exactly as listed.` The list names the 14 days after today
+   (short weekday, month and day) because on live calls a model told only today's date resolved
+   "next Tuesday" to the wrong day. It is computed once at connect from the session clock in the
+   zone `PARLEY_TIMEZONE` names (the host's zone when unset), is never caller content, and comes before the opening text a
+   `"prompt"`-delivery provider appends (see the provider docs). The harness renders the same
+   sentence, so `parley harness preview` shows it for the current date.
 
 ## The plain-prose rule
 

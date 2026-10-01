@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PCM_16K } from "../src/types.js";
+import { MULAW_8K, PCM_16K, PCM_24K } from "../src/types.js";
 import type {
   AudioFrame,
   MediaStreamHandle,
@@ -12,6 +12,7 @@ describe("TelephonyProvider interface shape", () => {
   it("a conforming fixture object satisfies the interface", async () => {
     const fixture: TelephonyProvider = {
       name: "fixture-telephony",
+      mediaEncoding: MULAW_8K,
       originate: async () => ({ providerCallId: "CA123", status: "queued" }),
       buildAnswerResponse: () => ({ contentType: "text/xml", body: "<Response/>" }),
       verifyWebhookSignature: () => false,
@@ -46,6 +47,9 @@ describe("RealtimeProvider interface shape", () => {
     const audioFrame: AudioFrame = { encoding: PCM_16K, data: Buffer.from([]) };
     const fixture: RealtimeProvider = {
       name: "fixture-realtime",
+      audio: { accepts: [PCM_16K], emits: PCM_24K },
+      openingDelivery: "turn",
+      continuesAfterToolResponse: false,
       connect: async (): Promise<RealtimeSession> => ({
         sendOpeningTrigger: () => {},
         sendAudio: () => {},

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CallSession } from "../src/call-session.js";
 import { MEETING_OPENING_TRIGGER, OPENING_TRIGGER } from "../src/render.js";
 import { MULAW_8K, PCM_16K, PCM_24K } from "../src/types.js";
@@ -13,7 +13,10 @@ import type {
 import {
   brief,
   guardrails,
+  fakeCanConvert,
   fakeCodec,
+  fakeConvert,
+  fakeRealtimeAudio,
   fakes,
   makeMeetingFakes,
   FakeSocket
@@ -28,15 +31,21 @@ describe("CallSession", () => {
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
-      model: "test-model"
+      model: "test-model",
+      // Pinned: every call now carries the date sentence.
+      now: () => Date.UTC(2026, 8, 30, 19, 0, 0),
+      timeZone: "America/Los_Angeles"
     });
     await cs.originate();
     await cs.attach("call-1", new FakeSocket());
 
     expect(f.getConnectParams().systemInstruction).toBe(
-      "You are Ada.\n\nConfirm the booking. Party of four.\n\nRule one. Rule two."
+      "You are Ada.\n\nConfirm the booking. Party of four.\n\nRule one. Rule two.\n\n" +
+        'Today is Wednesday, 2026-09-30 (America/Los_Angeles). When the other person gives a relative date such as "tomorrow" or "next Tuesday", work out the calendar date from today before you record it. The next 14 days are: Thu Oct 1, Fri Oct 2, Sat Oct 3, Sun Oct 4, Mon Oct 5, Tue Oct 6, Wed Oct 7, Thu Oct 8, Fri Oct 9, Sat Oct 10, Sun Oct 11, Mon Oct 12, Tue Oct 13, Wed Oct 14. When you say a date, use the weekday and date together exactly as listed.'
     );
     expect(f.getConnectParams().responseModality).toBe("audio");
     expect(f.openingTrigger).toHaveBeenCalledWith(OPENING_TRIGGER);
@@ -76,6 +85,9 @@ describe("CallSession", () => {
     };
     const realtime: RealtimeProvider = {
       name: "seq",
+      audio: fakeRealtimeAudio,
+      openingDelivery: "turn",
+      continuesAfterToolResponse: false,
       connect: async (p) => {
         order.push("connect");
         return f.realtime.connect(p);
@@ -87,6 +99,8 @@ describe("CallSession", () => {
       telephony,
       realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model"
@@ -105,6 +119,9 @@ describe("CallSession", () => {
     // then rejects, the already-live media stream must be torn down.
     const realtime: RealtimeProvider = {
       name: "boom",
+      audio: fakeRealtimeAudio,
+      openingDelivery: "turn",
+      continuesAfterToolResponse: false,
       connect: async () => {
         throw new Error("connect failed");
       }
@@ -115,6 +132,8 @@ describe("CallSession", () => {
       telephony: f.telephony,
       realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model"
@@ -136,6 +155,8 @@ describe("CallSession", () => {
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model"
@@ -156,6 +177,8 @@ describe("CallSession", () => {
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model"
@@ -176,6 +199,8 @@ describe("CallSession", () => {
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model"
@@ -195,6 +220,8 @@ describe("CallSession", () => {
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model"
@@ -231,6 +258,8 @@ describe("CallSession.originate — execution.dial passthrough", () => {
       telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model",
@@ -257,6 +286,8 @@ describe("CallSession.originate — execution.dial passthrough", () => {
       telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model"
@@ -275,6 +306,8 @@ describe("CallSession.originate — execution.dial passthrough", () => {
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model",
@@ -307,6 +340,8 @@ describe("CallSessionHandle.stop", () => {
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model"
@@ -341,6 +376,10 @@ interface ToolFakeOpts {
    * default (`Date.now`), which never lands inside a burst window because
    * the fake burst durations are sub-millisecond. */
   now?: () => number;
+  onDiagnostic?: (message: string) => void;
+  /** The provider's `continuesAfterToolResponse`. Off by default: most of
+   * these tests model a vendor that says nothing after a tool answer. */
+  continuesAfterToolResponse?: boolean;
 }
 
 async function attachWith(opts: ToolFakeOpts) {
@@ -350,6 +389,11 @@ async function attachWith(opts: ToolFakeOpts) {
   const responses: Array<{ id: string; result: ToolResult }> = [];
   let clearCount = 0;
   let mediaClosed = false;
+  /** Model audio that reached the carrier, in ms. `fakeConvert` relabels
+   * without touching bytes, so a model frame arrives still 48 bytes a
+   * millisecond (pcm@24000) — and still zero-filled, which is how it is told
+   * apart from `fakeCodec`'s tones (ASCII digits). */
+  let outboundAudioMs = 0;
   let realtimeCb!: RealtimeConnectParams["callbacks"];
   let connectParams!: RealtimeConnectParams;
 
@@ -363,6 +407,9 @@ async function attachWith(opts: ToolFakeOpts) {
   };
   const realtime: RealtimeProvider = {
     name: "fake-realtime",
+    audio: fakeRealtimeAudio,
+    openingDelivery: "turn",
+    continuesAfterToolResponse: opts.continuesAfterToolResponse ?? false,
     connect: async (p) => {
       connectParams = p;
       realtimeCb = p.callbacks;
@@ -374,6 +421,10 @@ async function attachWith(opts: ToolFakeOpts) {
       // The press path is the audio path now, so a carrier failure is a failure
       // to write audio.
       if (opts.dtmfThrows) throw new Error("carrier refused");
+      if (f.data.length > 0 && f.data.every((b) => b === 0)) {
+        outboundAudioMs += f.data.length / 48;
+        return;
+      }
       sentDtmf.push(f.data.toString("utf8"));
     },
     clearOutboundBuffer: () => {
@@ -389,6 +440,7 @@ async function attachWith(opts: ToolFakeOpts) {
   };
   const telephony: TelephonyProvider = {
     name: "fake-telephony",
+    mediaEncoding: MULAW_8K,
     originate: async () => ({ providerCallId: "CA1", status: "queued" }),
     buildAnswerResponse: () => ({ contentType: "text/xml", body: "<Response/>" }),
     verifyWebhookSignature: () => true,
@@ -406,11 +458,14 @@ async function attachWith(opts: ToolFakeOpts) {
     telephony,
     realtime,
     codec: fakeCodec,
+    convert: fakeConvert,
+    canConvert: fakeCanConvert,
     from: "+15555550142",
     answerWebhookUrl: "https://voice.example.com/twilio/answer",
     model: "test-model",
     ...(opts.execution ? { execution: opts.execution } : {}),
-    ...(opts.now ? { now: opts.now } : {})
+    ...(opts.now ? { now: opts.now } : {}),
+    ...(opts.onDiagnostic ? { onDiagnostic: opts.onDiagnostic } : {})
   });
   const handleOut = await cs.attach("CA1", new FakeSocket());
 
@@ -423,6 +478,12 @@ async function attachWith(opts: ToolFakeOpts) {
       return clearCount;
     },
     emitInterrupted: () => realtimeCb.onInterrupted(),
+    /** One frame of model audio, `ms` long (default one 20 ms frame). */
+    emitModelAudio: (ms = 20) =>
+      realtimeCb.onAudio({ encoding: PCM_24K, data: Buffer.alloc(ms * 48) }),
+    get outboundAudioMs() {
+      return outboundAudioMs;
+    },
     emitTranscript: (e: { speaker: "model" | "caller"; text: string; isFinal: boolean }) =>
       connectParams.callbacks.onTranscript(e),
     finishTurn: () => connectParams.callbacks.onTurnComplete?.(),
@@ -696,7 +757,8 @@ describe("CallSession closure", () => {
   it("an end_call tool call reaches the carrier through the guarded exit", async () => {
     const f = await attachWith({ execution: { closure: { requireOutcomeBeforeEnd: false } } });
     await f.fireToolCall({ id: "c1", name: "end_call", args: { reason: "done" } });
-    expect(f.responses).toEqual([{ id: "c1", result: "ok" }]);
+    // An accepted end_call answers with the closing literal (2026-09-30), not a bare "ok".
+    expect(f.responses).toEqual([{ id: "c1", result: "ok — say nothing more" }]);
     expect(f.hangups).toHaveLength(1);
     expect(f.handle.endedBy).toBe("model");
   });
@@ -748,6 +810,350 @@ describe("a model hangup waits for the turn it was asked in to finish", () => {
 
   it("hangs up straight away when no turn is in flight", async () => {
     const f = await attachWith({ execution: { closure: { requireOutcomeBeforeEnd: false } } });
+    await f.fireToolCall({ id: "c1", name: "end_call", args: { reason: "done" } });
+    expect(f.order).toEqual(["drain", "hangup"]);
+  });
+
+  // A turn is in flight from its first audio frame, not only from its first
+  // transcript fragment. Gemini's outputTranscription can trail the audio it
+  // describes, so a turn opened by transcript alone looked idle while its
+  // goodbye was already playing — and an end_call in that window drained and
+  // hung up over the rest of it.
+  it("waits on a turn whose audio has started but whose transcript has not", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = await attachWith({ execution: { closure: { requireOutcomeBeforeEnd: false } } });
+      f.emitModelAudio();
+      void f.fireToolCall({ id: "c1", name: "end_call", args: { reason: "done" } });
+      // Short of the turn-finish ceiling: only the turn's own end may release it.
+      await vi.advanceTimersByTimeAsync(3_900);
+      expect(f.order).toEqual([]);
+      f.finishTurn();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.order).toEqual(["drain", "hangup"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes an audio-opened turn on turnComplete, and counts it once", async () => {
+    const f = await attachWith({ execution: { closure: { requireOutcomeBeforeEnd: false } } });
+    f.emitModelAudio();
+    f.emitTranscript({ speaker: "model", text: "Goodbye.", isFinal: false });
+    f.emitModelAudio();
+    f.finishTurn();
+    expect(f.session.modelTurnsCompleted).toBe(1);
+    // Audio did not change how the words are stored: one coalesced entry.
+    expect(f.handle.transcript).toEqual([{ speaker: "model", text: "Goodbye.", isFinal: true }]);
+    // The turn is closed, so a hangup now does not wait.
+    await f.fireToolCall({ id: "c1", name: "end_call", args: { reason: "done" } });
+    expect(f.order).toEqual(["drain", "hangup"]);
+  });
+});
+
+/**
+ * Wire-observed on both shipped vendors (t20 wire logs): the model emits the
+ * tool call FIRST, and the goodbye is spoken by the turn that continues after
+ * the tool answer. Deepgram's `end_call` at 160123 ms had its goodbye audio
+ * start ~190 ms after the `FunctionCallResponse` and run 6.7 s. With no turn
+ * open at the moment of the call, `endCall` drained an empty queue and hung
+ * up over the whole goodbye.
+ */
+describe("a tool answer on a continuing provider opens the turn the goodbye is spoken in", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Frames every 20ms for `ms`, the way a vendor streams a spoken sentence. */
+  async function speakFor(f: Awaited<ReturnType<typeof attachWith>>, ms: number): Promise<void> {
+    for (let t = 0; t < ms; t += 20) {
+      f.emitModelAudio();
+      await vi.advanceTimersByTimeAsync(20);
+    }
+  }
+
+  const closure = { closure: { requireOutcomeBeforeEnd: false } };
+
+  it("end_call answered with no turn open waits for the continuation, then drains, then hangs up", async () => {
+    vi.useFakeTimers();
+    const f = await attachWith({ execution: closure, continuesAfterToolResponse: true });
+    void f.fireToolCall({ id: "c1", name: "end_call", args: { reason: "done" } });
+    await vi.advanceTimersByTimeAsync(0);
+    // An accepted end_call answers with the closing literal (2026-09-30), not a bare "ok".
+    expect(f.responses).toEqual([{ id: "c1", result: "ok — say nothing more" }]);
+    // No audio yet, and no turn was open when the call landed: the goodbye
+    // does not exist yet. Nothing may drain or hang up.
+    await vi.advanceTimersByTimeAsync(300);
+    expect(f.order).toEqual([]);
+
+    await speakFor(f, 1_000);
+    expect(f.order).toEqual([]);
+    f.finishTurn();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.order).toEqual(["drain", "hangup"]);
+    expect(f.handle.endedBy).toBe("model");
+  });
+
+  it("a six-second goodbye streamed every 20ms does not hit the four-second turn-finish cap", async () => {
+    vi.useFakeTimers();
+    const f = await attachWith({ execution: closure, continuesAfterToolResponse: true });
+    void f.fireToolCall({ id: "c1", name: "end_call", args: { reason: "done" } });
+    await vi.advanceTimersByTimeAsync(300);
+    // A goodbye this long is one long sentence: without its words, the
+    // after-end_call audio cap would cut it at three seconds (see below).
+    f.emitTranscript({
+      speaker: "model",
+      text: "Thank you so much for all of your help today, and goodbye for now, have a lovely afternoon!",
+      isFinal: false
+    });
+    await speakFor(f, 6_000);
+    // Well past four seconds since the wait began: each frame re-armed it.
+    expect(f.order).toEqual([]);
+    f.finishTurn();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.order).toEqual(["drain", "hangup"]);
+  });
+
+  it("stops waiting four seconds after the last frame when no turn end ever comes", async () => {
+    vi.useFakeTimers();
+    const f = await attachWith({ execution: closure, continuesAfterToolResponse: true });
+    void f.fireToolCall({ id: "c1", name: "end_call", args: { reason: "done" } });
+    await speakFor(f, 2_000);
+    await vi.advanceTimersByTimeAsync(3_900);
+    expect(f.order).toEqual([]);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(f.order).toEqual(["drain", "hangup"]);
+  });
+
+  it("stops waiting at the fifteen-second ceiling even while audio keeps coming", async () => {
+    vi.useFakeTimers();
+    const f = await attachWith({ execution: closure, continuesAfterToolResponse: true });
+    void f.fireToolCall({ id: "c1", name: "end_call", args: { reason: "done" } });
+    // One goodbye sentence long enough to outlast the ceiling, so neither the
+    // after-end_call audio cap nor its goodbye hold ends the wait first.
+    f.emitTranscript({
+      speaker: "model",
+      text: `Goodbye${", and thank you".repeat(13)}.`,
+      isFinal: false
+    });
+    await speakFor(f, 14_900);
+    expect(f.order).toEqual([]);
+    await speakFor(f, 200);
+    expect(f.order).toEqual(["drain", "hangup"]);
+  });
+
+  it("a provider that does not continue still hangs up straight away", async () => {
+    const f = await attachWith({ execution: closure, continuesAfterToolResponse: false });
+    await f.fireToolCall({ id: "c1", name: "end_call", args: { reason: "done" } });
+    expect(f.order).toEqual(["drain", "hangup"]);
+  });
+
+  it("an answered press opens the continuation without counting a turn or touching the transcript", async () => {
+    const f = await attachWith({
+      execution: {
+        ivr: { maxPresses: 3, allowedDigits: "0123456789", onUnrecognized: "zeroOut" },
+        ...closure
+      },
+      continuesAfterToolResponse: true
+    });
+    await f.fireToolCall({ id: "p1", name: "press_digits", args: { digits: "1" } });
+    expect(f.session.modelTurnsCompleted).toBe(0);
+    expect(f.handle.transcript).toEqual([]);
+    f.emitTranscript({ speaker: "model", text: "Pressed one.", isFinal: false });
+    f.finishTurn();
+    expect(f.session.modelTurnsCompleted).toBe(1);
+    expect(f.handle.transcript).toEqual([
+      { speaker: "model", text: "Pressed one.", isFinal: true }
+    ]);
+    // The continuation closed, so a hangup now does not wait on it.
+    await f.fireToolCall({ id: "c1", name: "end_call", args: { reason: "done" } });
+    f.finishTurn();
+    await f.settledOn("hangup");
+    expect(f.order).toEqual(["drain", "hangup"]);
+  });
+});
+
+/**
+ * Live, Gemini 3.8 (call CAb4dc604bca32abd05a6a4b009faa65be): the callee
+ * confirmed, the model called `record_outcome` then `end_call`, and then said
+ * "Thank you very much. Goodbye. I have successfully rescheduled the
+ * appointment." — the last sentence narration to the principal, heard by the
+ * callee. Once `end_call` is accepted, audio stops reaching the line once the
+ * goodbye has been spoken, or after AFTER_END_CALL_AUDIO_CAP_MS of audio.
+ *
+ * The model's transcript text LEADS its audio (measured: 0.72–1.14 s on
+ * Gemini; a whole sentence on Deepgram), so the stop is a hold of audio after
+ * the goodbye's words complete, not an instant cut.
+ */
+describe("after end_call, audio stops at the goodbye", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const closure = { closure: { requireOutcomeBeforeEnd: false } };
+
+  async function acceptedEndCall() {
+    vi.useFakeTimers();
+    const diagnostics: string[] = [];
+    const f = await attachWith({
+      execution: closure,
+      continuesAfterToolResponse: true,
+      onDiagnostic: (m) => diagnostics.push(m)
+    });
+    void f.fireToolCall({ id: "c1", name: "end_call", args: { reason: "done" } });
+    await vi.advanceTimersByTimeAsync(0);
+    const cut = () => diagnostics.filter((d) => d.startsWith("after end_call:"));
+    return { f, cut };
+  }
+
+  async function speak(f: Awaited<ReturnType<typeof attachWith>>, ms: number): Promise<void> {
+    for (let t = 0; t < ms; t += 20) {
+      f.emitModelAudio();
+      await vi.advanceTimersByTimeAsync(20);
+    }
+  }
+
+  it("goodbye then narration: the narration's audio is not forwarded and the hangup proceeds", async () => {
+    const { f, cut } = await acceptedEndCall();
+    // Text first, as Gemini sends it: the words lead the audio they describe.
+    f.emitTranscript({ speaker: "model", text: "Thank you very ", isFinal: false });
+    await speak(f, 760);
+    f.emitTranscript({ speaker: "model", text: "much. Goodbye.", isFinal: false });
+    await speak(f, 1_000);
+    f.emitTranscript({
+      speaker: "model",
+      text: " I have successfully rescheduled",
+      isFinal: false
+    });
+    await speak(f, 3_000);
+    // 760 ms when the goodbye's words completed, then the 1500 ms hold.
+    expect(f.outboundAudioMs).toBe(2_260);
+    expect(f.order).toEqual(["drain", "hangup"]);
+    expect(f.handle.endedBy).toBe("model");
+    expect(cut()).toEqual(["after end_call: stopped at goodbye at +2260ms"]);
+  });
+
+  it("does not wait for the model's turn to complete", async () => {
+    const { f } = await acceptedEndCall();
+    f.emitTranscript({ speaker: "model", text: "Goodbye. I have", isFinal: false });
+    await speak(f, 1_600);
+    expect(f.order).toEqual(["drain", "hangup"]);
+  });
+
+  it("with no goodbye, stops at three seconds of audio", async () => {
+    const { f, cut } = await acceptedEndCall();
+    f.emitTranscript({
+      speaker: "model",
+      text: "I have rescheduled the appointment.",
+      isFinal: false
+    });
+    await speak(f, 5_000);
+    expect(f.outboundAudioMs).toBe(3_000);
+    expect(f.order).toEqual(["drain", "hangup"]);
+    expect(cut()).toEqual(["after end_call: stopped at 3000 ms cap at +3000ms"]);
+  });
+
+  it("measures the cap in audio, not wall-clock time", async () => {
+    const { f } = await acceptedEndCall();
+    // Two seconds of audio delivered in a burst, then three seconds of quiet.
+    for (let i = 0; i < 100; i += 1) f.emitModelAudio();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(f.order).toEqual([]);
+    await speak(f, 2_000);
+    expect(f.outboundAudioMs).toBe(3_000);
+  });
+
+  it("detects a goodbye split across transcript fragments", async () => {
+    const { f, cut } = await acceptedEndCall();
+    f.emitTranscript({ speaker: "model", text: "Good", isFinal: false });
+    f.emitTranscript({ speaker: "model", text: "bye.", isFinal: false });
+    await speak(f, 4_000);
+    expect(f.outboundAudioMs).toBe(1_500);
+    expect(cut()).toEqual(["after end_call: stopped at goodbye at +1500ms"]);
+  });
+
+  it("counts bye and bye-bye, case-insensitive", async () => {
+    for (const text of ["Okay, BYE!", "Bye-bye now."]) {
+      const { f } = await acceptedEndCall();
+      f.emitTranscript({ speaker: "model", text, isFinal: false });
+      await speak(f, 4_000);
+      expect(f.outboundAudioMs).toBe(1_500);
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not count bye inside another word", async () => {
+    const { f, cut } = await acceptedEndCall();
+    f.emitTranscript({ speaker: "model", text: "We can bypass the queue.", isFinal: false });
+    await speak(f, 4_000);
+    expect(f.outboundAudioMs).toBe(3_000);
+    expect(cut()).toEqual(["after end_call: stopped at 3000 ms cap at +3000ms"]);
+  });
+
+  it("does not stop on a goodbye sentence that has not finished", async () => {
+    const { f } = await acceptedEndCall();
+    f.emitTranscript({ speaker: "model", text: "Goodbye and thank", isFinal: false });
+    await speak(f, 2_000);
+    // Neither the hold (no sentence has completed) nor the cap yet.
+    expect(f.order).toEqual([]);
+    expect(f.outboundAudioMs).toBe(2_000);
+  });
+
+  it("holds a long goodbye sentence for as long as its words take to say", async () => {
+    // Deepgram sends a sentence's text as its audio starts, so its lead is the
+    // whole sentence: 54 characters is 4860 ms at 90 ms a character.
+    const { f } = await acceptedEndCall();
+    f.emitTranscript({
+      speaker: "model",
+      text: "Thank you so much for all of your help today, goodbye!",
+      isFinal: true
+    });
+    await speak(f, 4_000);
+    expect(f.order).toEqual([]);
+    f.finishTurn();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.outboundAudioMs).toBe(4_000);
+    expect(f.order).toEqual(["drain", "hangup"]);
+  });
+
+  it("before end_call, nothing changes", async () => {
+    vi.useFakeTimers();
+    const diagnostics: string[] = [];
+    const f = await attachWith({
+      execution: closure,
+      continuesAfterToolResponse: true,
+      onDiagnostic: (m) => diagnostics.push(m)
+    });
+    f.emitTranscript({ speaker: "model", text: "Goodbye. I have rescheduled it.", isFinal: false });
+    await speak(f, 5_000);
+    expect(f.outboundAudioMs).toBe(5_000);
+    expect(f.order).toEqual([]);
+    expect(diagnostics.filter((d) => d.startsWith("after end_call:"))).toEqual([]);
+  });
+
+  it("a goodbye said before end_call (Deepgram-style) hangs up as before", async () => {
+    vi.useFakeTimers();
+    const diagnostics: string[] = [];
+    const f = await attachWith({
+      execution: closure,
+      continuesAfterToolResponse: true,
+      onDiagnostic: (m) => diagnostics.push(m)
+    });
+    f.emitTranscript({ speaker: "model", text: "Thanks, Brenda. Goodbye.", isFinal: true });
+    await speak(f, 800);
+    void f.fireToolCall({ id: "c1", name: "end_call", args: { reason: "done" } });
+    await vi.advanceTimersByTimeAsync(0);
+    // The rest of that goodbye's audio, still streaming after the answer.
+    await speak(f, 1_200);
+    f.finishTurn();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.outboundAudioMs).toBe(2_000);
+    expect(f.order).toEqual(["drain", "hangup"]);
+    expect(diagnostics.filter((d) => d.startsWith("after end_call:"))).toEqual([]);
+  });
+
+  it("a provider that does not continue is untouched", async () => {
+    const f = await attachWith({ execution: closure, continuesAfterToolResponse: false });
     await f.fireToolCall({ id: "c1", name: "end_call", args: { reason: "done" } });
     expect(f.order).toEqual(["drain", "hangup"]);
   });
@@ -818,6 +1224,8 @@ describe("carrier lifecycle events", () => {
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model",
@@ -836,6 +1244,8 @@ describe("carrier lifecycle events", () => {
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model"
@@ -858,6 +1268,8 @@ describe("carrier lifecycle events", () => {
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model",
@@ -887,6 +1299,8 @@ describe("CallSession.meetingBrief", () => {
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model",
@@ -908,6 +1322,8 @@ describe("CallSession.meetingBrief", () => {
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model",
@@ -928,10 +1344,147 @@ describe("CallSession.meetingBrief", () => {
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model"
     });
     expect(session.meetingBrief).toBeUndefined();
+  });
+});
+
+// A live call's goodbye was said twice and nothing on disk said when each
+// tool call, model turn and caller final landed. These lines are the timeline:
+// content-free (names, result kinds, offsets) so they are safe to keep.
+describe("CallSession timing diagnostics", () => {
+  const closure: CallExecution = {
+    closure: { requireOutcomeBeforeEnd: true },
+    outcome: { fields: [{ name: "x", description: "d" }] }
+  };
+
+  it("logs each routed tool call with its result kind and ms since start, never arguments", async () => {
+    let t = 5_000;
+    const lines: string[] = [];
+    const f = await attachWith({
+      execution: closure,
+      now: () => t,
+      onDiagnostic: (m) => lines.push(m)
+    });
+    t += 1_200;
+    await f.fireToolCall({
+      id: "c1",
+      name: "record_outcome",
+      args: { status: "completed", fields: { x: "hunter2" } }
+    });
+    t += 300;
+    await f.fireToolCall({ id: "c2", name: "end_call", args: { reason: "done" } });
+    const timing = lines.filter((l) => l.startsWith("tool "));
+    expect(timing).toEqual([
+      "tool record_outcome → recorded at +1200ms",
+      "tool end_call → ok at +1500ms"
+    ]);
+    expect(lines.join("\n")).not.toContain("hunter2");
+  });
+
+  it("names a refusal by its kind, up to the first dash", async () => {
+    let t = 0;
+    const lines: string[] = [];
+    const f = await attachWith({
+      execution: closure,
+      now: () => t,
+      onDiagnostic: (m) => lines.push(m)
+    });
+    t += 40;
+    await f.fireToolCall({ id: "c1", name: "end_call", args: {} });
+    expect(lines).toContain("tool end_call → refused: record the outcome first at +40ms");
+  });
+
+  it("logs model turn completion and the caller's final transcript without their text", async () => {
+    let t = 100;
+    const lines: string[] = [];
+    const f = await attachWith({ now: () => t, onDiagnostic: (m) => lines.push(m) });
+    t += 700;
+    f.emitCallerTranscript("my card is 4111");
+    t += 900;
+    f.finishTurn();
+    expect(lines).toContain("caller final at +700ms");
+    expect(lines).toContain("model turn complete at +1600ms");
+    expect(lines.join("\n")).not.toContain("4111");
+  });
+});
+
+/**
+ * The ToolGate's "they have not confirmed" rule decides on two facts only
+ * CallSession sees: the model producing AUDIO, and the far end speaking. Audio,
+ * not the model's transcript — Gemini's output transcription can trail the
+ * audio it describes, and the audio frames precede the tool call.
+ *
+ * Far-end speech is ANY non-empty far-end transcript, final or not. Gemini
+ * 3.8's input transcription never sets `finished`: on the 2026-10-01 incident
+ * call every caller entry was `isFinal: false` and no `caller final` line was
+ * logged on either Gemini call that day. Keyed to `isFinal`, the gate would
+ * have refused every completed record on Gemini.
+ */
+describe("CallSession feeds the confirmation gate", () => {
+  const exec: CallExecution = {
+    closure: { requireOutcomeBeforeEnd: true },
+    outcome: { fields: [{ name: "x", description: "d" }] }
+  };
+  const notConfirmed: ToolResult =
+    "refused: they have not confirmed what you just said — read the arrangement back exactly as they said it, wait for their yes, then record; do not end the call";
+  const record = {
+    id: "r",
+    name: "record_outcome",
+    args: { status: "completed", fields: { x: "v" } }
+  };
+
+  it("model audio after their last words refuses a completed record", async () => {
+    const f = await attachWith({ execution: exec });
+    f.emitTranscript({ speaker: "caller", text: "How about Monday at 9:26?", isFinal: true });
+    f.emitModelAudio();
+    await f.fireToolCall(record);
+    expect(f.responses).toEqual([{ id: "r", result: notConfirmed }]);
+    expect(f.session.gateSnapshot().outcome).toBeUndefined();
+  });
+
+  it("their words after the model's audio let it through — final or not (Gemini never marks finals)", async () => {
+    const f = await attachWith({ execution: exec });
+    f.emitModelAudio();
+    f.emitTranscript({ speaker: "caller", text: "Yes, that works.", isFinal: false });
+    await f.fireToolCall(record);
+    expect(f.session.gateSnapshot().outcome?.status).toBe("completed");
+  });
+
+  it("an empty far-end transcript is not speech", async () => {
+    const f = await attachWith({ execution: exec });
+    f.emitModelAudio();
+    f.emitTranscript({ speaker: "caller", text: "", isFinal: true });
+    await f.fireToolCall(record);
+    expect(f.responses).toEqual([{ id: "r", result: notConfirmed }]);
+  });
+
+  it("the model's transcript is not audio: text alone does not arm the gate", async () => {
+    const f = await attachWith({ execution: exec });
+    f.emitTranscript({ speaker: "caller", text: "Yes.", isFinal: true });
+    f.emitTranscript({ speaker: "model", text: "Great.", isFinal: true });
+    await f.fireToolCall(record);
+    expect(f.session.gateSnapshot().outcome?.status).toBe("completed");
+  });
+
+  it("logs the refusal by kind on the timing line", async () => {
+    let t = 0;
+    const lines: string[] = [];
+    const f = await attachWith({
+      execution: exec,
+      now: () => t,
+      onDiagnostic: (m) => lines.push(m)
+    });
+    f.emitModelAudio();
+    t += 700;
+    await f.fireToolCall(record);
+    expect(lines).toContain(
+      "tool record_outcome → refused: they have not confirmed what you just said at +700ms"
+    );
   });
 });

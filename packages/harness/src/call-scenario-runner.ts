@@ -1,35 +1,43 @@
-import { GoogleGenAI, Modality } from "@google/genai";
 import {
   anchorConsentBoundary,
   buildToolDeclarations,
-  MEETING_OPENING_TRIGGER,
-  OPENING_TRIGGER,
+  defaultTimeZone,
+  planOpening,
+  type TodayInput,
   renderSystemInstruction,
   routeToolCall,
   ToolGate,
-  type ToolResult
+  type ToolResult,
+  withOpening
 } from "@parley/core";
 import { composePolicy } from "@parley/policy";
-import type { CallScenario } from "./call-scenario.js";
+import { DEFAULT_GEMINI_MODEL } from "@parley/realtime-gemini";
+import type { CallScenario, ScenarioTurn } from "./call-scenario.js";
 import type { EndedBecause, ScenarioRun } from "./call-scenario-evaluation.js";
+import type { ScenarioTransport } from "./scenario-transport.js";
 
 /**
- * Drive one scenario against Gemini Live with a LIVE tool channel bound to a
- * recording mock carrier, so presses and hangups are captured as actions rather
- * than as things the model said it would do.
+ * Drive one scenario against a realtime model with a LIVE tool channel bound
+ * to a recording mock carrier, so presses and hangups are captured as actions
+ * rather than as things the model said it would do.
  *
  * SCOPE LIMIT, stated plainly: like runTextPreview, this bypasses
- * RealtimeProvider and talks to the genai SDK directly. The production
- * interface deliberately exposes no "send a text turn", and abusing
- * sendOpeningTrigger to fake one would corrupt the very guarantee under test.
- * So this proves POLICY, GATE and MODEL behavior — it proves nothing about the
- * audio path, the codec, or DTMF timing against a real IVR. Those remain the
- * live gate's job.
+ * RealtimeProvider and talks to the vendor directly, through a
+ * `ScenarioTransport` (`geminiTransport`, `deepgramTransport`). The
+ * production interface deliberately exposes no "send a text turn", and
+ * abusing sendOpeningTrigger to fake one would corrupt the very guarantee
+ * under test. So this proves POLICY, GATE and MODEL behavior — it proves
+ * nothing about the audio path, the codec, or DTMF timing against a real IVR.
+ * Those remain the live gate's job.
  *
  * It shares the part that must be identical to production: ToolGate and
- * routeToolCall are the same code a real call runs.
+ * routeToolCall are the same code a real call runs, and so is `planOpening`,
+ * which decides where the opening goes. Everything in this file
+ * is shared by every transport; a transport owns only the wire, so the
+ * scheduling below cannot differ between the providers being compared.
  *
- * THIS MAKES BILLED GEMINI CALLS. Never run it in CI.
+ * THIS MAKES BILLED MODEL CALLS through whichever transport it is given.
+ * Never run it in CI.
  *
  * SCHEDULING RULE — the one that decides whether a verdict means anything:
  * THE SCRIPT NEVER ADVANCES ON A TIMER. A callee line goes out when the model
@@ -46,7 +54,9 @@ import type { EndedBecause, ScenarioRun } from "./call-scenario-evaluation.js";
  * that was never coming. Timers that only ever END a run cannot produce any of
  * those, because a run they end is reported as ended, not as evidence.
  */
-export const DEFAULT_SCENARIO_MODEL = "gemini-3.1-flash-live-preview";
+// Production's model, so layers 1–3 measure what a real call runs rather than
+// a legacy preview.
+export const DEFAULT_SCENARIO_MODEL = DEFAULT_GEMINI_MODEL;
 
 export interface ScenarioTimings {
   /** No event of any kind — speech, turn completion, or tool call — for this
@@ -58,18 +68,36 @@ export interface ScenarioTimings {
   settleMs: number;
   /** Absolute cap on one scenario, whatever else is happening. */
   wallClockMs: number;
+  /** The ring before pickup: how long after connect the FIRST callee line goes
+   * out. The first line goes out on this clock and on nothing else — a phone
+   * is picked up whether or not the caller has said anything, and a model
+   * obeying the opening trigger completes no turn to wait on. It is one-shot
+   * and never re-armed, and it never looks at model state: a model completing
+   * a turn during the ring does not answer the phone early. Every later line
+   * follows the ordinary rule.
+   *
+   * `0` (the default) is a ring of zero: the first line goes out right after
+   * the opening trigger. It used to mean "the first line waits on the model's
+   * first completed turn", and that is a wait on an event a CORRECT model never
+   * produces — Gemini sends no `turnComplete` for a turn it does not take, so a
+   * model staying silent as the trigger says left 8 of 10 billed runs `stalled`
+   * before the callee had said a word. Where `planOpening` sent nothing at
+   * connect (a `"prompt"` transport's two-party scenario) there is no trigger
+   * to follow, and at `0` the first line goes out after `settleMs`.
+   *
+   * Above zero it also arms the trigger-silence check: any model speech before
+   * the first line is delivered is recorded as `spokeBeforeCallee`. At `0`
+   * there is no window for that to happen in. Must be shorter than `stallMs`,
+   * or a silent ring could only ever end the run as a stall. */
+  firstLineDelayMs?: number;
 }
 
 export const DEFAULT_SCENARIO_TIMINGS: ScenarioTimings = Object.freeze({
   stallMs: 30_000,
   settleMs: 1_200,
-  wallClockMs: 180_000
+  wallClockMs: 180_000,
+  firstLineDelayMs: 0
 });
-
-type GenAIFactory = (options: {
-  apiKey: string;
-  httpOptions: { apiVersion: string };
-}) => GoogleGenAI;
 
 /** Diagnostic stream. A scenario failure is usually one of two very different
  * things — the model behaved wrongly, or the scripted callee ran ahead of it —
@@ -79,8 +107,19 @@ export type ScenarioTraceEvent =
   | { type: "turn-held"; label: string; waitingFor: string; atMs: number }
   | { type: "turn-released"; label: string; afterPress: string; atMs: number }
   | { type: "model-turn-complete"; atMs: number; textSoFar: number }
-  | { type: "tool-call"; name: string; result: string; atMs: number }
-  | { type: "watchdog"; reason: EndedBecause; atMs: number };
+  /** `args` are the model's own arguments, as it sent them: what a
+   * `record_outcome` claimed is only readable from here once the run is on
+   * disk. Model output, never configuration — no key or environment. */
+  | {
+      type: "tool-call";
+      name: string;
+      args: Record<string, unknown>;
+      result: string;
+      atMs: number;
+    }
+  | { type: "watchdog"; reason: EndedBecause; atMs: number }
+  | { type: "transport-diagnostic"; message: string; atMs: number }
+  | { type: "transport-closed"; reason: string; atMs: number };
 
 /** Omit over a union does not distribute, so `Omit<ScenarioTraceEvent, "atMs">`
  * collapses to the shared keys and rejects every variant's own fields. */
@@ -91,26 +130,46 @@ type TraceEventInput = ScenarioTraceEvent extends infer T
   : never;
 
 export async function runCallScenario(params: {
-  apiKey: string;
   scenario: CallScenario;
-  model?: string;
-  genAIFactory?: GenAIFactory;
+  /** One session's worth of wire. A transport is connected once, so pass a
+   * fresh one per run. */
+  transport: ScenarioTransport;
   timings?: ScenarioTimings;
+  /** The clock and zone "today" is told in. Defaults to the wall clock and the
+   * host zone, which is what a real call sends; a test pins both. */
+  today?: TodayInput;
   trace?: (event: ScenarioTraceEvent) => void;
 }): Promise<ScenarioRun> {
-  const { scenario } = params;
-  const model = params.model ?? DEFAULT_SCENARIO_MODEL;
+  const { scenario, transport } = params;
   const timings = params.timings ?? DEFAULT_SCENARIO_TIMINGS;
-  const factory: GenAIFactory = params.genAIFactory ?? ((o) => new GoogleGenAI(o));
-  const ai = factory({ apiKey: params.apiKey, httpOptions: { apiVersion: "v1beta" } });
+  const ringMs = timings.firstLineDelayMs ?? 0;
+  if (ringMs > 0 && ringMs >= timings.stallMs) {
+    throw new Error(
+      `firstLineDelayMs (${ringMs}) must be shorter than stallMs (${timings.stallMs}): ` +
+        `a model silent through the ring would be reported as stalled before pickup`
+    );
+  }
 
   const { brief, policy, execution } = scenario.envelope;
-  const systemInstruction = renderSystemInstruction({
+  // Same choice `CallSession.attach` makes, by the same helper, off the same
+  // two inputs: the vendor's declared delivery and whether this is a meeting.
+  // A meeting gets its own trigger for the reason `CallSession` gives —
+  // `OPENING_TRIGGER` sent into a bridge resolves to "keep waiting", and a
+  // harness that kept sending it would reproduce that defect for every
+  // meeting scenario and report it as the model's behavior.
+  const opening = planOpening(transport.openingDelivery, execution.meeting !== undefined);
+  const rendered = renderSystemInstruction({
     persona: brief.persona,
     objective: brief.objective,
     facts: brief.facts,
-    guardrails: composePolicy(policy, brief.preferences ?? [])
+    guardrails: composePolicy(policy, brief.preferences ?? []),
+    // The same sentence `CallSession` sends, or the offline layers would
+    // measure a prompt nobody's call carries.
+    today: params.today ?? { now: new Date(), timeZone: defaultTimeZone() }
   });
+  // A Parley constant, never scenario content — joined by the helper a real
+  // call uses.
+  const systemInstruction = withOpening(rendered, opening);
 
   const gate = new ToolGate(execution);
   const startedAt = Date.now();
@@ -140,6 +199,13 @@ export async function runCallScenario(params: {
    * transcription of audio generated before it. A turn boundary cannot drift
    * that way. */
   let notetakingAuthorizedAtTurn: number | undefined;
+  /** Whether the model said anything before the first callee line went out.
+   * Only watched while a ring is configured: at `firstLineDelayMs: 0` the
+   * first line follows the trigger at once, and anything "before" it would be
+   * a race between two sends, not something the model chose to do. */
+  let spokeBeforeCallee = false;
+  /** The vendor's reason, when the session closed underneath the run. */
+  let closedReason: string | undefined;
   let ended = false;
   let turnsDelivered = 0;
 
@@ -192,7 +258,8 @@ export async function runCallScenario(params: {
      * completion. */
     let modelTurnOpen = false;
     /** Set only when a line went out while the model's turn was still open —
-     * which happens on exactly one path, a press releasing a gated line. The
+     * which happens on exactly one path, a press releasing a gated line on a
+     * transport that keeps the continuation's turn end apart. The
      * completion that lands a moment later belongs to the turn that ended
      * BEFORE that line, so advancing on it would talk over the model.
      *
@@ -202,36 +269,70 @@ export async function runCallScenario(params: {
      * live pair run stalled having delivered zero of eleven turns because of
      * it, and were reported inconclusive rather than judged. */
     let suppressNextCompletion = false;
-    let session:
-      | {
-          sendRealtimeInput: (i: { text: string }) => void;
-          sendToolResponse: (p: unknown) => void;
-          close: () => void;
-        }
-      | undefined;
+    /** Set the moment the run is decided either way, so the close `finish`
+     * asks for cannot be mistaken for the session dying underneath the run. */
+    let settled = false;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     let settle: ReturnType<typeof setTimeout> | undefined;
     /** One-shot timer for a line that is not a reply — see
      * `ScenarioTurn.unpromptedAfterMs`. Armed after each delivery (and at
      * connect) for the NEXT turn only, cleared the moment that turn goes out by
-     * any route. It is the one timer here that can cause a delivery, which is
-     * why it is armed for exactly one turn at a time and never re-armed for a
-     * turn already sent. */
+     * any route. It is one of only two timers here that can cause a delivery
+     * (the ring below is the other), which is why it is armed for exactly one
+     * turn at a time and never re-armed for a turn already sent. */
     let unprompted: ReturnType<typeof setTimeout> | undefined;
+    /** The ring — see `ScenarioTimings.firstLineDelayMs`. Armed once, at
+     * connect, for the first line only, whenever an opening trigger went out
+     * or a ring is configured — at `0` too; it replaces the first line's own
+     * unprompted timer rather than racing it, because nothing on the far end
+     * can be heard before pickup. */
+    let ring: ReturnType<typeof setTimeout> | undefined;
+    /** False until the ring has elapsed. Until then nothing the model does may
+     * deliver the first line. True from the start only on the one shape with
+     * no ring at all: nothing sent at connect and `firstLineDelayMs: 0`. */
+    let pickedUp = ringMs === 0 && opening.trigger === undefined;
 
     const wallClock = setTimeout(() => finish("wall-clock"), timings.wallClockMs);
 
-    const finish = (reason: EndedBecause): void => {
+    const stopTimers = (): void => {
+      clearTimeout(ring);
       clearTimeout(watchdog);
       clearTimeout(settle);
       clearTimeout(unprompted);
       clearTimeout(wallClock);
-      try {
-        session?.close();
-      } catch {
+    };
+
+    const finish = (reason: EndedBecause): void => {
+      if (settled) return;
+      settled = true;
+      stopTimers();
+      transport.close().catch(() => {
         /* already closing */
-      }
+      });
       resolve(reason);
+    };
+
+    /** The session failed or closed underneath a running scenario. Ended with
+     * its own reason rather than left to the stall timer — a stall reads as a
+     * model that went quiet, and sends someone tuning a rail that was never
+     * put to the test — and resolved rather than rejected, because layers 2–3
+     * read failure RATES and one flaky session must not abort the batch it is
+     * part of. The vendor's reason goes to the trace and onto the run. */
+    const transportClosed = (reason: string): void => {
+      if (settled) return;
+      closedReason = reason;
+      trace({ type: "transport-closed", reason });
+      finish("transport-closed");
+    };
+
+    /** The session never came up. Rejected: nothing was put to the model, and
+     * the usual cause — a bad key, refused settings — fails every run the
+     * same way, which is a configuration error to stop on, not a rate. */
+    const fail = (reason: string): void => {
+      if (settled) return;
+      settled = true;
+      stopTimers();
+      reject(new Error(reason));
     };
 
     /** Restart the silence watchdog. Called on every inbound event, so an
@@ -242,21 +343,46 @@ export async function runCallScenario(params: {
     const armWatchdog = (): void => {
       clearTimeout(watchdog);
       watchdog = setTimeout(() => {
-        const reason: EndedBecause =
-          cursor >= scenario.script.length ? "awaiting-closure" : "stalled";
+        // `end_call` answers before it hangs up, so a successful hang-up is
+        // normally seen on the model's next event. That event may never come
+        // — a session can go quiet once the call is over — and the call is
+        // over either way.
+        const reason: EndedBecause = ended
+          ? "model-ended"
+          : cursor >= scenario.script.length
+            ? "awaiting-closure"
+            : "stalled";
         trace({ type: "watchdog", reason });
         finish(reason);
       }, timings.stallMs);
     };
 
-    const pressedSoFar = (): string => (gate.snapshot().dtmf?.pressed ?? []).join("");
+    const pressesSoFar = (): readonly string[] => gate.snapshot().dtmf?.pressed ?? [];
+    /** How many presses had landed when the line at `cursor` became the next
+     * one due. A gate is satisfied only by presses after that point. */
+    let pressesBeforeCurrent = 0;
+
+    /** Whether `turn` is still waiting for its press. Only presses made since
+     * it became the next line count, never the call's cumulative keys:
+     * scripts gate several lines on the same digit, and "has 1 ever been
+     * pressed" stays true for the rest of the call, which opened every later
+     * gate at once and let any tool call — `record_outcome`, `end_call` —
+     * release the next line, on Deepgram as a barge-in over the model. It
+     * also keeps a blind press made before the menu was heard from counting
+     * as navigating it. An empty `afterPress` gates nothing. */
+    const gateHolds = (turn: ScenarioTurn): boolean =>
+      turn.afterPress !== undefined &&
+      turn.afterPress !== "" &&
+      !pressesSoFar().slice(pressesBeforeCurrent).join("").includes(turn.afterPress);
 
     /** True when the next line is gated on a press that has now landed. A real
      * IVR answers a keypress at once, whether or not the caller has stopped
-     * talking, so this releases immediately. */
+     * talking, so where the transport keeps the continuation's turn end apart
+     * this releases immediately. Where it cannot, the line waits for that turn
+     * end — see `ScenarioTransport.completesAfterToolResponse`. */
     const nextGateOpen = (): boolean => {
       const turn = scenario.script[cursor];
-      return turn?.afterPress !== undefined && pressedSoFar().includes(turn.afterPress);
+      return turn?.afterPress !== undefined && turn.afterPress !== "" && !gateHolds(turn);
     };
 
     /** Arm the unprompted timer for whatever turn is next, if that turn
@@ -282,7 +408,7 @@ export async function runCallScenario(params: {
         return finish("script-exhausted");
       }
       const turn = scenario.script[cursor];
-      if (turn.afterPress && !pressedSoFar().includes(turn.afterPress)) {
+      if (turn.afterPress && gateHolds(turn)) {
         if (heldOn !== turn.afterPress) {
           heldOn = turn.afterPress;
           trace({ type: "turn-held", label: turn.label, waitingFor: turn.afterPress });
@@ -299,140 +425,148 @@ export async function runCallScenario(params: {
         trace({ type: "turn-released", label: turn.label, afterPress: turn.afterPress });
         heldOn = undefined;
       }
-      if (modelTurnOpen) suppressNextCompletion = true;
+      // Only where the vendor is known to close the continuation with a
+      // turn-end even when it is silent — see
+      // `ScenarioTransport.completesAfterToolResponse`. Elsewhere the next
+      // turn-end may be the reply to this very line, and skipping it stalls.
+      if (modelTurnOpen && transport.completesAfterToolResponse) suppressNextCompletion = true;
+      // Whatever route delivered this line, a settle still pending was armed
+      // by a completion from BEFORE it, and firing it would send the next line
+      // with no model turn in between. A press releasing a gated line is the
+      // route that left it running.
+      clearTimeout(settle);
       clearTimeout(unprompted);
       cursor += 1;
+      pressesBeforeCurrent = pressesSoFar().length;
       turnsDelivered = cursor;
       heard.push({ text: turn.text, at: new Date().toISOString() });
+      // A delivered line is the far end speaking — what CallSession tells the
+      // gate on each far-end transcript. See `modelAudio` below for the other
+      // half of the completed-record confirmation rule.
+      gate.noteCallerSpeech();
       // Pin the boundary on the line itself, before the model's reply to it
       // can move `requestedAt` past it — see the declaration above.
       consentAnchor = anchorConsentBoundary(consentAnchor, heard, requestedAt, consentPhrases);
       trace({ type: "turn-sent", label: turn.label });
-      session?.sendRealtimeInput({ text: turn.text });
+      transport.sendCalleeText(turn.text);
       armWatchdog();
       armUnprompted();
     };
 
-    ai.live
+    transport
       .connect({
-        model,
-        config: {
-          responseModalities: [Modality.AUDIO],
-          outputAudioTranscription: {},
-          systemInstruction,
-          // Mirror what CallSession sends on a real call. Without this the
-          // scenario session drifts from production behaviour over a long
-          // conversation, and a scenario that does not behave like a call is
-          // not evidence about calls.
-          contextWindowCompression: { slidingWindow: {} },
-          ...(buildToolDeclarations(execution).length > 0
-            ? {
-                tools: [
-                  {
-                    functionDeclarations: buildToolDeclarations(execution).map((t) => ({
-                      name: t.name,
-                      description: t.description,
-                      parametersJsonSchema: t.parametersJsonSchema
-                    }))
-                  }
-                ]
-              }
-            : {})
-        },
-        callbacks: {
-          onopen: () => {},
-          onmessage: (message) => {
-            for (const fc of message.toolCall?.functionCalls ?? []) {
-              if (!fc.id || !fc.name) continue;
-              const call = { id: fc.id, name: fc.name, args: fc.args ?? {} };
-              void routeToolCall({
-                call,
-                gate,
-                carrier,
-                callId: "SCENARIO",
-                heard,
-                requestedAt: consentAnchor ?? requestedAt,
-                modelTurnsCompleted,
-                respond: (result: ToolResult) => {
-                  toolCalls.push({ name: call.name, args: call.args, result });
-                  trace({ type: "tool-call", name: call.name, result });
-                  if (call.name === "begin_notetaking" && result === "ok") {
-                    notetakingAuthorizedAtTurn ??= modelTurnsCompleted;
-                  }
-                  session?.sendToolResponse({
-                    functionResponses: [
-                      { id: call.id, name: call.name, response: { output: result } }
-                    ]
-                  });
-                  if (ended) return finish("model-ended");
-                  modelTurnOpen = true;
-                  armWatchdog();
-                  // A press is the event a gated turn is waiting for. Only an
-                  // open gate advances anything — an unrelated tool call must
-                  // not shove the script forward while the model is mid-turn.
-                  if (nextGateOpen()) tryAdvance();
+        systemInstruction,
+        tools: buildToolDeclarations(execution),
+        on: {
+          toolCall: (call) => {
+            // Where in the script the call landed, taken when it ARRIVES: a
+            // record made in reply to the offer and one made after the callee
+            // agreed are otherwise the same entry.
+            const deliveredAtCall = cursor;
+            void routeToolCall({
+              call,
+              gate,
+              carrier,
+              callId: "SCENARIO",
+              heard,
+              requestedAt: consentAnchor ?? requestedAt,
+              modelTurnsCompleted,
+              respond: (result: ToolResult) => {
+                toolCalls.push({
+                  name: call.name,
+                  args: call.args,
+                  result,
+                  turnsDelivered: deliveredAtCall
+                });
+                trace({ type: "tool-call", name: call.name, args: call.args, result });
+                if (call.name === "begin_notetaking" && result === "ok") {
+                  notetakingAuthorizedAtTurn ??= modelTurnsCompleted;
                 }
-              });
-            }
-            const delta = message.serverContent?.outputTranscription?.text;
-            if (delta) {
-              transcript += delta;
-              currentTurn += delta;
-              modelTurnOpen = true;
-              // Speech is activity, not completion. Advancing here would let
-              // the scripted callee talk over a model mid-sentence.
-              armWatchdog();
-            }
-            if (message.serverContent?.turnComplete) {
-              trace({ type: "model-turn-complete", textSoFar: transcript.length });
-              armWatchdog();
-              modelTurnOpen = false;
-              // Pushed even when empty. A turn in which the model said nothing
-              // is a real event and the ordinary correct one in a waiting room,
-              // so dropping it would renumber every turn after it and put the
-              // consent handoff on the wrong side of its own boundary.
-              modelTurns.push(currentTurn);
-              currentTurn = "";
-              modelTurnsCompleted += 1;
-              requestedAt = new Date().toISOString();
-              if (suppressNextCompletion) {
-                suppressNextCompletion = false;
-                return;
+                transport.sendToolResponse(call, result);
+                if (ended) return finish("model-ended");
+                modelTurnOpen = true;
+                armWatchdog();
+                // A press is the event a gated turn is waiting for, so only a
+                // press may release one — an unrelated tool call must not
+                // shove the script forward while the model is mid-turn. Nor
+                // may a press answer the phone during the ring.
+                if (call.name === "press_digits" && pickedUp && nextGateOpen()) {
+                  if (transport.completesAfterToolResponse) tryAdvance();
+                  // Where a line sent on top of the continuation would be
+                  // folded into it or dropped (Deepgram), the continuation's
+                  // own turn end releases the line through the ordinary
+                  // completion → settle → tryAdvance path, the gate now open.
+                  // A settle armed before the press must not beat it there.
+                  else clearTimeout(settle);
+                }
               }
-              clearTimeout(settle);
-              settle = setTimeout(tryAdvance, timings.settleMs);
+            });
+          },
+          // The fact, never the bytes. CallSession feeds the gate the same
+          // fact from the provider's audio frames; without it a completed
+          // record made after the model last spoke would pass offline and be
+          // refused on the call.
+          modelAudio: () => gate.noteModelAudio(),
+          modelText: (delta) => {
+            if (ringMs > 0 && heard.length === 0) spokeBeforeCallee = true;
+            transcript += delta;
+            currentTurn += delta;
+            modelTurnOpen = true;
+            // Speech is activity, not completion. Advancing here would let
+            // the scripted callee talk over a model mid-sentence.
+            armWatchdog();
+          },
+          turnComplete: () => {
+            trace({ type: "model-turn-complete", textSoFar: transcript.length });
+            armWatchdog();
+            modelTurnOpen = false;
+            // Pushed even when empty. A turn in which the model said nothing
+            // is a real event and the ordinary correct one in a waiting room,
+            // so dropping it would renumber every turn after it and put the
+            // consent handoff on the wrong side of its own boundary.
+            modelTurns.push(currentTurn);
+            currentTurn = "";
+            modelTurnsCompleted += 1;
+            requestedAt = new Date().toISOString();
+            if (suppressNextCompletion) {
+              suppressNextCompletion = false;
+              return;
             }
-          },
-          onerror: (event) => {
-            clearTimeout(watchdog);
+            // A turn completed during the ring is model state, and the first
+            // line waits for pickup, not for the model.
+            if (!pickedUp) return;
             clearTimeout(settle);
-            clearTimeout(wallClock);
-            reject(
-              new Error(
-                event?.error instanceof Error ? event.error.message : "unknown Gemini Live error"
-              )
-            );
+            settle = setTimeout(tryAdvance, timings.settleMs);
           },
-          onclose: () => {}
+          closed: (reason) => transportClosed(reason),
+          diagnostic: (message) => trace({ type: "transport-diagnostic", message })
         }
       })
-      .then((s) => {
-        session = s as unknown as typeof session;
-        // Same choice `CallSession.attach` makes, off the same signal, for the
-        // same reason: `OPENING_TRIGGER` sent into a bridge resolves to "keep
-        // waiting" and two live meeting calls sat silent on it. A harness that
-        // kept sending it would REPRODUCE that defect for every meeting
-        // scenario — including any scenario written to check the fix — and
-        // report it as the model's behavior.
-        session?.sendRealtimeInput({
-          text: execution.meeting ? MEETING_OPENING_TRIGGER : OPENING_TRIGGER
-        });
+      .then(() => {
+        if (settled) return;
+        // Planned above. On a "prompt" transport's two-party scenario nothing
+        // is sent here — the callee's first line is the opening, as on a
+        // real call there.
+        if (opening.trigger !== undefined) transport.sendCalleeText(opening.trigger);
         armWatchdog();
-        // The first line may itself be unprompted — a bridge's hold loop starts
-        // playing whether or not the leg that just joined says anything.
-        armUnprompted();
+        if (!pickedUp) {
+          // At `0` as well as above it. Waiting on the model's reply to the
+          // trigger instead is waiting on silence, which is the reply the
+          // trigger asks for. A bridge's hold loop is covered by this too: it
+          // starts playing whether or not the leg that just joined says
+          // anything.
+          ring = setTimeout(() => {
+            pickedUp = true;
+            tryAdvance();
+          }, ringMs);
+          return;
+        }
+        // Nothing was sent at connect and there is no ring: no reply is coming
+        // and nothing is ringing, so the callee speaks first, after the usual
+        // spacing.
+        settle = setTimeout(tryAdvance, timings.settleMs);
       })
-      .catch(reject);
+      .catch((err: unknown) => fail(err instanceof Error ? err.message : String(err)));
   });
 
   // A run ended by a watchdog or the wall clock can be cut off mid-turn, and
@@ -447,6 +581,8 @@ export async function runCallScenario(params: {
     toolCalls,
     snapshot: gate.snapshot(),
     endedBecause,
-    turnsDelivered
+    turnsDelivered,
+    ...(ringMs > 0 ? { spokeBeforeCallee } : {}),
+    ...(closedReason === undefined ? {} : { closedReason })
   };
 }

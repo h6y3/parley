@@ -113,6 +113,43 @@ describe("attachTwilioMediaStream", () => {
     expect(tail[80]).toBe(0xff); // padded to a full frame with silence
   });
 
+  // A provider that speaks mu-law natively hands the carrier frames of whatever
+  // size its vendor chose — no conversion step re-chunks them to 160 bytes any
+  // more. The pacer must re-frame across frame boundaries without losing,
+  // reordering or duplicating a byte, and pad only the very end.
+  it("re-frames odd-sized outbound frames across boundaries, byte for byte", () => {
+    const { socket, sent, emit } = makeFakeSocket();
+    const handle = attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: () => {}
+    });
+    emit("message", START);
+    // Distinct, non-silence bytes, so a dropped or shifted byte shows.
+    const pattern = (n: number, offset: number) =>
+      Buffer.from(Array.from({ length: n }, (_, i) => (i + offset) % 0xfe));
+    const first = pattern(563, 0);
+    const second = pattern(97, 563);
+    handle.sendOutboundAudio({ encoding: MULAW_8K, data: first });
+    handle.sendOutboundAudio({ encoding: MULAW_8K, data: second });
+
+    const expectedFrames = Math.ceil((563 + 97) / 160); // 5
+    vi.advanceTimersByTime(20 * expectedFrames); // one frame per tick
+    const frames = sent.map(decodePayload);
+    expect(frames).toHaveLength(expectedFrames);
+    for (const f of frames) expect(f.length).toBe(160);
+
+    const played = Buffer.concat(frames);
+    expect(played.subarray(0, 660).equals(Buffer.concat([first, second]))).toBe(true);
+    expect([...played.subarray(660)].every((b) => b === 0xff)).toBe(true);
+    expect(played.length - 660).toBe(140); // the padding, and only the padding
+
+    // The next tick is keep-alive silence, not a repeat of the tail.
+    vi.advanceTimersByTime(20);
+    expect([...decodePayload(sent[expectedFrames])].every((b) => b === 0xff)).toBe(true);
+  });
+
   it("sends μ-law silence as keep-alive while idle", () => {
     const { socket, sent, emit } = makeFakeSocket();
     attachTwilioMediaStream({

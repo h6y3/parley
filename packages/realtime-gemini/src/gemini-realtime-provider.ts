@@ -1,21 +1,23 @@
-import { GoogleGenAI, Modality, TurnCoverage } from "@google/genai";
+import { Behavior, GoogleGenAI, Modality, TurnCoverage } from "@google/genai";
 import {
   encodingEquals,
   formatEncoding,
   PCM_16K,
   PCM_24K,
   type AudioFrame,
+  type RealtimeAudioFormat,
   type RealtimeConnectParams,
   type RealtimeProvider,
   type RealtimeSession,
   type ToolCallRequest,
+  type ToolDeclaration,
   type ToolResult
 } from "@parley/core";
 
 /** Parley's V1 fixed model (design spec §4.5). Exported so callers building a
  * RealtimeConnectParams know what to pass — model selection is a per-connect
  * parameter on the RealtimeProvider interface, not provider-level config. */
-export const DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-live-preview";
+export const DEFAULT_GEMINI_MODEL = "gemini-3.8-live";
 /** Pinned default voice so every call sounds like the same assistant. Without a
  * voice the model picks one per session (male/female varies call to call). A
  * caller may still override via RealtimeConnectParams.voice. */
@@ -25,6 +27,28 @@ const DEFAULT_API_VERSION = "v1beta";
 export interface GeminiRealtimeProviderOptions {
   apiKey: string;
   apiVersion?: string;
+}
+
+/** Parley's tool declarations as Gemini Live function declarations. Exported
+ * so the harness declares tools exactly as a real call does: a harness that
+ * declared them differently would be measuring a different model. */
+export function geminiFunctionDeclarations(tools: readonly ToolDeclaration[]): {
+  name: string;
+  description: string;
+  behavior: Behavior;
+  parametersJsonSchema: unknown;
+}[] {
+  return tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    // gemini-3.8-live defaults function calls to NON-blocking: the model keeps
+    // talking while the call runs. ToolGate needs request/response — one
+    // call, one answer, then the model resumes — so every declaration opts
+    // back in. Never send thinkingLevel/thinkingConfig either: 3.8 does not
+    // support it.
+    behavior: Behavior.BLOCKING,
+    parametersJsonSchema: t.parametersJsonSchema
+  }));
 }
 
 type GenAIFactory = (options: {
@@ -40,6 +64,18 @@ type GenAIFactory = (options: {
  * privileged turn (design spec §7.2). */
 export class GeminiRealtimeProvider implements RealtimeProvider {
   readonly name = "gemini";
+  /** Gemini Live takes 16 kHz PCM in and speaks 24 kHz PCM out, so
+   * CallSession converts both directions against a mu-law carrier. */
+  readonly audio: RealtimeAudioFormat = { accepts: [PCM_16K], emits: PCM_24K };
+  /** The trigger goes as realtime text input, which Gemini Live treats as an
+   * input to the session, not as the far end speaking — so it is sent as its
+   * own turn, as it always has been. */
+  readonly openingDelivery = "turn" as const;
+  /** Every function is declared `behavior: BLOCKING`, so the model holds its
+   * turn while a call is outstanding and, once the response arrives, CONTINUES
+   * that turn — speaking the words that go with the call — and ends it with
+   * `turnComplete`. See `RealtimeProvider.continuesAfterToolResponse`. */
+  readonly continuesAfterToolResponse = true;
   private readonly apiKey: string;
   private readonly apiVersion: string;
   private readonly genAIFactory: GenAIFactory;
@@ -80,20 +116,15 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
       // execution plane is byte-identical to Parley before tools existed.
       ...(params.tools && params.tools.length > 0
         ? {
-            tools: [
-              {
-                functionDeclarations: params.tools.map((t) => ({
-                  name: t.name,
-                  description: t.description,
-                  parametersJsonSchema: t.parametersJsonSchema
-                }))
-              }
-            ]
+            tools: [{ functionDeclarations: geminiFunctionDeclarations(params.tools) }]
           }
         : {})
     };
 
     let sawModelFinalThisTurn = false;
+    // Logged on change only: it rides on most serverContent messages, and one
+    // line per message would bury every other diagnostic on a live call.
+    let lastInteractionStatus: string | undefined;
 
     const genAISession = await ai.live.connect({
       model: params.model,
@@ -111,8 +142,29 @@ export class GeminiRealtimeProvider implements RealtimeProvider {
             params.callbacks.onToolCall?.({ id: fc.id, name: fc.name, args: fc.args ?? {} });
           }
 
+          // The server announces an impending connection end (connections last
+          // ~10 min). Transport fact only: nothing here touches call content.
+          if (message.goAway) {
+            params.callbacks.onDiagnostic?.(
+              `gemini goAway: timeLeft=${message.goAway.timeLeft ?? "unknown"}`
+            );
+          }
+
           const serverContent = message.serverContent;
           if (!serverContent) return;
+
+          // Surfaced rather than acted on: turnComplete is still our turn-end
+          // signal on gemini-3.8-live, and logging this lets a change in what
+          // interactionStatus means be noticed instead of silently absorbed.
+          if (
+            serverContent.interactionStatus &&
+            serverContent.interactionStatus !== lastInteractionStatus
+          ) {
+            lastInteractionStatus = serverContent.interactionStatus;
+            params.callbacks.onDiagnostic?.(
+              `gemini interactionStatus: ${serverContent.interactionStatus}`
+            );
+          }
 
           if (serverContent.outputTranscription?.text) {
             const isFinal = Boolean(serverContent.outputTranscription.finished);

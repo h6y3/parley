@@ -55,6 +55,16 @@ export interface CompletedCallRecord {
   operation?: Brief["operation"];
   /** Declared result fields, allowing consumers to detect a missing outcome. */
   expectedOutcomeFields?: readonly string[];
+  /** Which realtime provider spoke on this call, and the model it ran — for
+   * Deepgram, the think model. Read from the `CallSession` itself
+   * (`CallSession.realtime`), so the record names what actually ran rather
+   * than what the daemon's default happened to be. */
+  realtime: { provider: string; model: string };
+  /** Milliseconds from `startedAt` to the first frame of model audio
+   * (`CallSession.firstModelAudioAtMs`) — provider-neutral answer-to-first-word
+   * evidence. Absent when the model never spoke, which is a different fact
+   * from a slow first word and must not read as one. */
+  firstModelAudioMs?: number;
 }
 
 /** Correlate an inbound media WebSocket to its pending CallSession by the
@@ -135,6 +145,10 @@ export async function handleMediaConnection(
       gapMs: session.gapMs,
       coveredMs: session.coveredMs,
       modelTurnsCompleted: session.modelTurnsCompleted,
+      realtime: session.realtime,
+      ...(session.firstModelAudioAtMs !== undefined
+        ? { firstModelAudioMs: session.firstModelAudioAtMs }
+        : {}),
       brief: session.meetingBrief,
       ...(session.operation ? { operation: session.operation } : {}),
       ...(session.expectedOutcomeFields

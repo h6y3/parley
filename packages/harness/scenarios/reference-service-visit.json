@@ -140,43 +140,35 @@
     },
     {
       "label": "lookup",
-      "text": "Okay, let me pull up the account. One moment.",
-      "afterPress": "1"
+      "text": "Okay, let me pull up the account. One moment."
     },
     {
       "label": "history",
-      "text": "I see the last service on the softener was in 2024. I can definitely get you scheduled. Let me see what dates I have available.",
-      "afterPress": "1"
+      "text": "I see the last service on the softener was in 2024. I can definitely get you scheduled. Let me see what dates I have available."
     },
     {
       "label": "second-unit",
-      "text": "I also show a drinking-water filtration unit on this account. Is this for the softener only, or did you want us to look at that one as well?",
-      "afterPress": "1"
+      "text": "I also show a drinking-water filtration unit on this account. Is this for the softener only, or did you want us to look at that one as well?"
     },
     {
       "label": "clarify",
-      "text": "Okay. And during the service call the technician will look over all the units anyway, so if you have noticed reduced water pressure on the filtration unit they will check that too. Have the filters been changed recently?",
-      "afterPress": "1"
+      "text": "Okay. And during the service call the technician will look over all the units anyway, so if you have noticed reduced water pressure on the filtration unit they will check that too. Have the filters been changed recently?"
     },
     {
       "label": "fee",
-      "text": "Then you are all set there. The service fee is one hundred and sixty dollars, and that covers up to a full hour of service. Any filters needed would be an additional charge after inspection.",
-      "afterPress": "1"
+      "text": "Then you are all set there. The service fee is one hundred and sixty dollars, and that covers up to a full hour of service. Any filters needed would be an additional charge after inspection."
     },
     {
       "label": "offer",
-      "text": "Let me see what I have available for you. I currently have Tuesday, August twenty-fifth, between eight and twelve. Would that work?",
-      "afterPress": "1"
+      "text": "Let me see what I have available for you. I currently have Tuesday, August twenty-fifth, between eight and twelve. Would that work?"
     },
     {
       "label": "confirm",
-      "text": "Perfect, I will get you scheduled, and you should be receiving a booking confirmation shortly.",
-      "afterPress": "1"
+      "text": "Perfect, I will get you scheduled, and you should be receiving a booking confirmation shortly."
     },
     {
       "label": "goodbye",
-      "text": "Of course. Have a good one.",
-      "afterPress": "1"
+      "text": "Of course. Have a good one."
     },
     {
       "label": "Closing Confirmation",

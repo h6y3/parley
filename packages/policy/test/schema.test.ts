@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { renderSystemInstruction } from "@parley/core";
+import { composePolicy } from "../src/compose.js";
 import { parseCallPolicy, parseCallEnvelope, WIRE_VERSION } from "../src/schema.js";
 
 const valid = {
@@ -70,6 +72,44 @@ describe("parseCallEnvelope", () => {
         policy: valid
       })
     ).toThrow();
+  });
+  it("accepts brief.keyterms and preserves them", () => {
+    const keyterms = Array.from({ length: 20 }, (_, i) => `term${i}`.padEnd(50, "x"));
+    const env = parseCallEnvelope({
+      version: WIRE_VERSION,
+      brief: { ...brief, keyterms },
+      policy: valid
+    });
+    expect(env.brief.keyterms).toEqual(keyterms);
+  });
+  it("rejects more than 20 keyterms", () => {
+    const keyterms = Array.from({ length: 21 }, (_, i) => `term${i}`);
+    expect(() =>
+      parseCallEnvelope({ version: WIRE_VERSION, brief: { ...brief, keyterms }, policy: valid })
+    ).toThrow();
+  });
+  it("rejects a keyterm over 50 characters or empty", () => {
+    for (const bad of ["y".repeat(51), ""]) {
+      expect(() =>
+        parseCallEnvelope({
+          version: WIRE_VERSION,
+          brief: { ...brief, keyterms: [bad] },
+          policy: valid
+        })
+      ).toThrow();
+    }
+  });
+  it("keyterms never reach the rendered system instruction", () => {
+    const render = (b: { persona: string; objective: string; facts: string[] }) =>
+      renderSystemInstruction({ ...b, guardrails: composePolicy(parseCallPolicy(valid)) });
+    const without = parseCallEnvelope({ version: WIRE_VERSION, brief, policy: valid });
+    const withTerms = parseCallEnvelope({
+      version: WIRE_VERSION,
+      brief: { ...brief, keyterms: ["Nguyen"] },
+      policy: valid
+    });
+    expect(render(withTerms.brief)).toBe(render(without.brief));
+    expect(render(withTerms.brief)).not.toContain("Nguyen");
   });
   it("rejects an unsupported wire version", () => {
     expect(() =>
@@ -496,6 +536,68 @@ describe("execution.dial — carrier-side DTMF at origination", () => {
     } catch (error) {
       expect(String((error as Error).message)).not.toContain("secretpasscode");
     }
+  });
+});
+
+/**
+ * `execution.realtime` chooses which of the daemon's realtime providers a call
+ * runs on. It names a provider and never a model: per-provider configuration is
+ * daemon-level, which keeps the surface a caller depends on small. Strict, so a
+ * caller that tries to smuggle a model (or anything else) in finds out.
+ */
+describe("execution.realtime — per-call provider selection", () => {
+  it.each(["gemini", "deepgram"])("accepts provider %s", (provider) => {
+    const envelope = parseCallEnvelope({
+      version: 2,
+      brief: execBrief,
+      policy: execPolicy,
+      execution: { realtime: { provider } }
+    });
+    expect(envelope.execution?.realtime).toEqual({ provider });
+  });
+
+  it("rejects a provider it does not know", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: execPolicy,
+        execution: { realtime: { provider: "openai" } }
+      })
+    ).toThrow();
+  });
+
+  it("rejects an unknown key inside execution.realtime (the envelope never picks a model)", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: execPolicy,
+        execution: { realtime: { provider: "gemini", model: "gemini-3.8-live" } }
+      })
+    ).toThrow();
+  });
+
+  it("rejects an empty execution.realtime", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 2,
+        brief: execBrief,
+        policy: execPolicy,
+        execution: { realtime: {} }
+      })
+    ).toThrow();
+  });
+
+  it("requires envelope version 2, like every execution field", () => {
+    expect(() =>
+      parseCallEnvelope({
+        version: 1,
+        brief: execBrief,
+        policy: execPolicy,
+        execution: { realtime: { provider: "deepgram" } }
+      })
+    ).toThrow();
   });
 });
 

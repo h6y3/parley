@@ -45,8 +45,8 @@ audio between them.
   └──────────┬────────────┘        ▼
              │ 8kHz μ-law   ┌──────────────────────┐
              │ frames (in)  │ Gemini Live session    │
-             ▼              │  gemini-3.1-flash-     │
-  ┌───────────────────────┐ │  live-preview          │
+             ▼              │  gemini-3.8-live       │
+  ┌───────────────────────┐ │                        │
   │  Audio bridge           │◄┤  responseModalities:  │
   │  (@parley/audio)        │ │  ["AUDIO"]             │
   │                          ├►│  24kHz PCM out         │
@@ -70,7 +70,12 @@ barge-in event flowing out of the Gemini session fans out to both the audio brid
 and a `clear` command sent back down to Twilio — stopping playback at both layers, not just one.
 
 The `systemInstruction` and the opening-trigger call happen exactly once each, at the top of the
-diagram, before any audio flows. Nothing in this dataflow allows the brief to re-enter as a
+diagram, before any audio flows. The diagram shows Gemini, which declares
+`openingDelivery: "turn"` and takes the trigger as its own input. A provider declaring `"prompt"`
+(Deepgram, whose only text input is a user turn its model hears as the callee) takes the same
+fixed text appended to its one-time `systemInstruction` instead; on a two-party call nothing is
+sent after connect, and a meeting sends only the short `MEETING_CONNECTED_CUE`. `planOpening`
+(`packages/core/src/render.ts`) makes that choice for `CallSession` and the harness alike. Nothing in this dataflow allows the brief to re-enter as a
 conversational turn later in the call — see `docs/prompt-guide.md` for why that boundary is
 enforced at the interface level, not just by convention.
 
@@ -196,8 +201,11 @@ Twilio opens the media WS to /media/:callId ──►
   9. wrap the `ws` socket as WebSocketLike; call session.attach(callId, socket)
  10. CallSession attaches the media stream FIRST (registers the socket listener), THEN awaits
      realtime.connect(); the provider parses `start` (captures streamSid), `media` →
-     AudioFrame{mulaw8k}; the opening trigger ("Begin the call naturally now.") is sent once
-     connect resolves
+     AudioFrame{mulaw8k}; the opening (`OPENING_TRIGGER`, or `MEETING_OPENING_TRIGGER` on a
+     meeting) is planned by `planOpening` from the provider's `openingDelivery` — sent once
+     connect resolves on a "turn" provider, appended to the connect-time systemInstruction on a
+     "prompt" provider (which is then sent nothing on a two-party call, and only
+     `MEETING_CONNECTED_CUE` on a meeting)
  11. `close` on the media socket → pendingSessions evicts the entry and the session's stop() runs
      FIRST — sealing any gap still open and flushing the listening plane, both of which the
      record has to describe (packages/server/src/media-connection.ts)
@@ -244,6 +252,23 @@ the μ-law and drains it through a 20 ms / 160-byte-frame pacer (with μ-law sil
 while idle), matching Twilio's reference cadence. Barge-in (`clearOutboundBuffer`) drops the
 queued audio and sends Twilio a `clear` so both layers stop together. Without this pacing the
 callee hears nothing — another live-gate finding.
+
+## The audio contract
+
+Each side of a call declares the audio it speaks, and `CallSession` bridges the difference. The
+carrier declares `TelephonyProvider.mediaEncoding` (`mulaw@8000` for Twilio); the realtime
+provider declares `audio: { accepts, emits }` — the encodings its `sendAudio` accepts, most
+preferred first, and the one encoding its `onAudio` frames arrive in. Gemini accepts `pcm@16000`
+and emits `pcm@24000`, so both directions convert; Deepgram speaks `mulaw@8000` both ways, so
+frames pass through untouched. `AudioCodec` carries only `dtmfTones`; the conversion itself is
+`convert` from `@parley/audio`, injected into `CallSession` together with `canConvert`.
+
+The pairing is checked when the call is originated, before a phone rings: a provider and carrier
+that cannot be bridged make `POST /call` answer `503` (`audio contract: ...`) rather than place a
+call that would be silent. A provider that declares `maxSessionSeconds` (7200 for Deepgram)
+is guarded at the same point: a call whose maximum speaking-plane lifetime exceeds it is refused
+with `422`. That fires only when a provider's limit is below the call's duration ceiling, which no
+valid envelope reaches with today's providers.
 
 ## Keypresses are audio
 
@@ -319,21 +344,21 @@ lives past the author who reasoned about it once, in a way a comment or a runtim
 
 ## Component map
 
-| Layer                            | Package                                                                                                                                                                                                                        | Depends on                                                                                                                                                                                              |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Orchestration                    | `@parley/core` (`CallSession`, prompt rendering, redaction)                                                                                                                                                                    | Nothing provider-specific — only its own `TelephonyProvider` / `RealtimeProvider` / `AudioCodec` / `WebSocketLike` interfaces                                                                           |
-| Policy                           | `@parley/policy` (`CallPolicy`/`CallEnvelope` schema, `composePolicy` guardrail composition, presets)                                                                                                                          | Nothing from `@parley/core` — deliberately decoupled; `CallEnvelope`'s `brief` shape is its own zod schema, not the `@parley/core` `Brief` type                                                         |
-| Audio resampling                 | `@parley/audio` (μ-law ⟷ PCM; inbound 8k→16k linear resample, outbound single ÷3 averaging decimation 24k→8k)                                                                                                                  | Nothing (standalone-usable)                                                                                                                                                                             |
-| Telephony                        | `@parley/telephony-twilio`                                                                                                                                                                                                     | `@parley/core`'s interfaces                                                                                                                                                                             |
-| Realtime (speaking plane)        | `@parley/realtime-gemini` (default `RealtimeProvider`)                                                                                                                                                                         | `@parley/core`'s interfaces, `@google/genai`                                                                                                                                                            |
-| Realtime (speaking plane, spike) | `@parley/realtime-deepgram` — a second `RealtimeProvider`, selected by `parley serve --realtime-provider deepgram` (default remains `gemini`); verdict "needs more work", see `docs/decisions/2026-08-19-voice-agent-spike.md` | `@parley/core`'s interfaces                                                                                                                                                                             |
-| Transcription (listening plane)  | `@parley/transcription-deepgram` — a `TranscriptionProvider` over Deepgram's Listen API                                                                                                                                        | `@parley/core`'s interfaces. A dependency of `@parley/cli`, which wires it into `parley serve` via `buildTranscription()` — see "Meetings — the listening plane" in `docs/configuration.md`             |
-| Daemon                           | `@parley/server` (plain `node:http` + `ws`, no web framework)                                                                                                                                                                  | `@parley/core` + `@parley/policy` + the telephony and (speaking-plane) realtime provider packages. `ParleyServerConfig`/`ServerDeps` also accept an optional listening-plane `transcription` dependency |
-| CLI                              | `@parley/cli` (`parley serve`, `parley call`, `parley harness …`, `parley doctor`; optional post-call command hook)                                                                                                            | all of the above, plus `@parley/realtime-deepgram`                                                                                                                                                      |
-| Reliability                      | `@parley/harness`                                                                                                                                                                                                              | `@parley/core`, `@parley/policy`, `@parley/realtime-gemini`                                                                                                                                             |
+| Layer                           | Package                                                                                                                                                                                                                                                                                    | Depends on                                                                                                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Orchestration                   | `@parley/core` (`CallSession`, prompt rendering, redaction)                                                                                                                                                                                                                                | Nothing provider-specific — only its own `TelephonyProvider` / `RealtimeProvider` / `AudioCodec` / `WebSocketLike` interfaces                                                                           |
+| Policy                          | `@parley/policy` (`CallPolicy`/`CallEnvelope` schema, `composePolicy` guardrail composition, presets)                                                                                                                                                                                      | Nothing from `@parley/core` — deliberately decoupled; `CallEnvelope`'s `brief` shape is its own zod schema, not the `@parley/core` `Brief` type                                                         |
+| Audio resampling                | `@parley/audio` (μ-law ⟷ PCM; inbound 8k→16k linear resample, outbound single ÷3 averaging decimation 24k→8k)                                                                                                                                                                              | Nothing (standalone-usable)                                                                                                                                                                             |
+| Telephony                       | `@parley/telephony-twilio`                                                                                                                                                                                                                                                                 | `@parley/core`'s interfaces                                                                                                                                                                             |
+| Realtime (speaking plane)       | `@parley/realtime-gemini` (default) and `@parley/realtime-deepgram` — both `RealtimeProvider`s; `parley serve` builds every keyed provider, `--realtime-provider` picks the default and `execution.realtime.provider` picks per call; see `docs/decisions/2026-08-19-voice-agent-spike.md` | `@parley/core`'s interfaces                                                                                                                                                                             |
+| Transcription (listening plane) | `@parley/transcription-deepgram` — a `TranscriptionProvider` over Deepgram's Listen API                                                                                                                                                                                                    | `@parley/core`'s interfaces. A dependency of `@parley/cli`, which wires it into `parley serve` via `buildTranscription()` — see "Meetings — the listening plane" in `docs/configuration.md`             |
+| Daemon                          | `@parley/server` (plain `node:http` + `ws`, no web framework)                                                                                                                                                                                                                              | `@parley/core` + `@parley/policy` + the telephony and (speaking-plane) realtime provider packages. `ParleyServerConfig`/`ServerDeps` also accept an optional listening-plane `transcription` dependency |
+| CLI                             | `@parley/cli` (`parley serve`, `parley call`, `parley harness …`, `parley doctor`; optional post-call command hook)                                                                                                                                                                        | all of the above, plus `@parley/realtime-deepgram`                                                                                                                                                      |
+| Reliability                     | `@parley/harness`                                                                                                                                                                                                                                                                          | `@parley/core`, `@parley/policy`, `@parley/realtime-gemini`                                                                                                                                             |
 
 `CallSession` (built in Milestone 2, unchanged in Milestone 3) depends only on the three injected
-interfaces — `TelephonyProvider`, `RealtimeProvider`, `AudioCodec` — and exposes
+interfaces — `TelephonyProvider`, `RealtimeProvider`, `AudioCodec` — plus the injected `convert` /
+`canConvert` audio functions (added in 0.4.0), and exposes
 `resolveSystemInstruction()`, `originate()`, and `attach(callId, socket)`. Milestone 3 is
 additive: it implements the interfaces (`@parley/telephony-twilio`, already-existing
 `@parley/realtime-gemini`) and wires a daemon (`@parley/server`) and a unified CLI

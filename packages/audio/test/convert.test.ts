@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MULAW_8K, PCM_16K, PCM_24K } from "@parley/core";
-import { convert } from "../src/convert.js";
+import { canConvert, convert } from "../src/convert.js";
 
 describe("convert", () => {
   it("returns the SAME frame object when the encoding already matches", () => {
@@ -27,5 +27,34 @@ describe("convert", () => {
     expect(() => convert(frame, { codec: "mulaw", sampleRate: 16000 })).toThrow(
       /pcm@16000.*mulaw@16000/
     );
+  });
+});
+
+describe("canConvert", () => {
+  it("is true for identity on every encoding Parley speaks", () => {
+    for (const e of [MULAW_8K, PCM_16K, PCM_24K]) expect(canConvert(e, e)).toBe(true);
+  });
+
+  it("is true for exactly the three paths convert implements", () => {
+    expect(canConvert(MULAW_8K, PCM_16K)).toBe(true);
+    expect(canConvert(PCM_24K, MULAW_8K)).toBe(true);
+    expect(canConvert(PCM_16K, MULAW_8K)).toBe(true);
+  });
+
+  it("is false where no path exists", () => {
+    expect(canConvert(MULAW_8K, PCM_24K)).toBe(false);
+    expect(canConvert(PCM_24K, PCM_16K)).toBe(false);
+  });
+
+  it("agrees with convert: it throws exactly where canConvert is false", () => {
+    const all = [MULAW_8K, PCM_16K, PCM_24K];
+    for (const from of all) {
+      for (const to of all) {
+        // 160 samples: an even byte count for pcm, one carrier frame for mulaw.
+        const frame = { encoding: from, data: Buffer.alloc(from.codec === "pcm" ? 320 : 160) };
+        if (canConvert(from, to)) expect(() => convert(frame, to)).not.toThrow();
+        else expect(() => convert(frame, to)).toThrow(/no conversion path/);
+      }
+    }
   });
 });

@@ -13,7 +13,3 @@ yarn.lock
 # documents as off-limits — these bytes are evidence of what Google actually
 # served, not source we own the style of.
 packages/meeting-browser/test/fixtures/google-meet/*.html
-
-# Generated visual-publishing artifacts. Reformatting these files creates
-# enormous non-semantic diffs and can invalidate their recorded checksums.
-docs/diagrams/*

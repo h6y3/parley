@@ -489,6 +489,7 @@ function completedCallRecordFixture(
     // consent (or further); override to 0 for the "never even reached the
     // room" cases.
     modelTurnsCompleted: 1,
+    realtime: { provider: "gemini", model: "gemini-3.8-live" },
     ...overrides
   };
 }
@@ -565,6 +566,52 @@ describe("runCompletedCallPostCall — the real production wiring cli.ts calls",
     // omitted, not stamped with a placeholder. See the "carries brief" and
     // "a title with no track" tests below for the populated cases.
     expect(written).not.toHaveProperty("brief");
+  });
+
+  // The provider A/B reads these off whichever record a call produced, so a
+  // meeting must not drop them on the way from CompletedCallRecord to
+  // MeetingRecord — on either the consented or the unconsented path.
+  it("carries realtime and firstModelAudioMs into the meeting record, consented or not", async () => {
+    const receipt = {
+      requestedAt: "2026-08-19T17:00:00.000Z",
+      grantedAt: "2026-08-19T17:00:01.000Z",
+      phrase: "go ahead",
+      matchedPhrase: "go ahead",
+      utterances: []
+    };
+    for (const consentReceipt of [receipt, undefined]) {
+      const dir = await mkdtemp(join(tmpdir(), "parley-ccpc-"));
+      const recordsPath = join(dir, "calls.jsonl");
+      const record = completedCallRecordFixture({
+        callId: "CA-meeting-ab",
+        isMeeting: true,
+        realtime: { provider: "deepgram", model: "gpt-4o-mini" },
+        firstModelAudioMs: 1234,
+        ...(consentReceipt ? { consentReceipt } : {})
+      });
+
+      await runCompletedCallPostCall(
+        { record, meetingsDir: join(dir, "meetings"), recordsPath },
+        {}
+      );
+
+      const written = JSON.parse((await readFile(recordsPath, "utf8")).trim());
+      expect(written.status).toBe(consentReceipt ? "completed" : "consent_refused");
+      expect(written.realtime).toEqual({ provider: "deepgram", model: "gpt-4o-mini" });
+      expect(written.firstModelAudioMs).toBe(1234);
+    }
+  });
+
+  it("omits firstModelAudioMs from the meeting record when the model never spoke", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "parley-ccpc-"));
+    const recordsPath = join(dir, "calls.jsonl");
+    const record = completedCallRecordFixture({ isMeeting: true, modelTurnsCompleted: 0 });
+
+    await runCompletedCallPostCall({ record, meetingsDir: join(dir, "meetings"), recordsPath }, {});
+
+    const written = JSON.parse((await readFile(recordsPath, "utf8")).trim());
+    expect(written).not.toHaveProperty("firstModelAudioMs");
+    expect(written.realtime).toEqual({ provider: "gemini", model: "gemini-3.8-live" });
   });
 
   it("carries a fully-supplied brief from the underlying call's execution.meeting.brief into the meeting record", async () => {

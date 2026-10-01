@@ -398,7 +398,14 @@ export async function runCompletedCallPostCall(
     // discarded: it drove `classifyMeetingOutcome` but was never part of
     // `base`, so it never reached this object at all (see
     // meeting-record.ts's doc on the field).
-    modelTurnsCompleted: record.modelTurnsCompleted
+    modelTurnsCompleted: record.modelTurnsCompleted,
+    // What the speaking plane ran on and how soon it first spoke — the two
+    // facts a provider A/B compares. Passed through verbatim, like everything
+    // above; `firstModelAudioMs` stays absent when the model never spoke.
+    realtime: record.realtime,
+    ...(record.firstModelAudioMs !== undefined
+      ? { firstModelAudioMs: record.firstModelAudioMs }
+      : {})
   };
 
   if (status === "completed") {

@@ -116,8 +116,8 @@ importers:
   packages/harness:
     dependencies:
       '@google/genai':
-        specifier: ^2.12.0
-        version: 2.13.0
+        specifier: ^2.24.0
+        version: 2.24.0
       '@parley/audio':
         specifier: workspace:*
         version: link:../audio
@@ -127,6 +127,9 @@ importers:
       '@parley/policy':
         specifier: workspace:*
         version: link:../policy
+      '@parley/realtime-deepgram':
+        specifier: workspace:*
+        version: link:../realtime-deepgram
       '@parley/realtime-gemini':
         specifier: workspace:*
         version: link:../realtime-gemini
@@ -234,8 +237,8 @@ importers:
   packages/realtime-gemini:
     dependencies:
       '@google/genai':
-        specifier: ^2.12.0
-        version: 2.13.0
+        specifier: ^2.24.0
+        version: 2.24.0
       '@parley/core':
         specifier: workspace:*
         version: link:../core
@@ -702,8 +705,8 @@ packages:
     resolution: {integrity: sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
 
-  '@google/genai@2.13.0':
-    resolution: {integrity: sha512-GM7C8Kaomvjz05x5JEO6+l3d/pciL9LxAG9dUjJLD7nTPZ9X0Cfsf2Z7eET6UjgWyUmxXCHtYnQoQ77F9+ZIOQ==}
+  '@google/genai@2.24.0':
+    resolution: {integrity: sha512-bIu5eoxF1AaPWs9ivmUJGp1RpDHyapoODvWvnkzRDx2CTIW6UJXFhDdjj0BlRve3ZHMMuEkQBVrA/ALqpW4apA==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': ^1.25.2
@@ -2194,7 +2197,7 @@ snapshots:
       '@eslint/core': 0.17.0
       levn: 0.4.1
 
-  '@google/genai@2.13.0':
+  '@google/genai@2.24.0':
     dependencies:
       google-auth-library: 10.9.1
       p-retry: 4.6.2

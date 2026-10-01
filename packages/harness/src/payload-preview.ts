@@ -1,8 +1,11 @@
 import {
-  OPENING_TRIGGER,
+  defaultTimeZone,
+  planOpening,
+  type TodayInput,
   renderSystemInstruction,
   type Brief,
-  type MeetingExecution
+  type MeetingExecution,
+  withOpening
 } from "@parley/core";
 import { composePolicy, type CallPolicy } from "@parley/policy";
 
@@ -29,17 +32,27 @@ export interface PayloadPreview {
 export function buildPayloadPreview(
   brief: Brief,
   policy: CallPolicy,
-  meetingBrief?: MeetingExecution["brief"]
+  meetingBrief?: MeetingExecution["brief"],
+  today: TodayInput = { now: new Date(), timeZone: defaultTimeZone() }
 ): PayloadPreview {
-  const systemInstruction = renderSystemInstruction({
+  const rendered = renderSystemInstruction({
     persona: brief.persona,
     objective: brief.objective,
     facts: brief.facts,
-    guardrails: composePolicy(policy)
+    guardrails: composePolicy(policy),
+    // As on a real call: the preview must show the sentence the model gets.
+    today
   });
+  // The preview shows the "turn" shape — Gemini's, and the one the text
+  // preview runs — planned and joined by the same helpers a real call uses.
+  // On a "prompt" provider the same trigger text is appended to the
+  // systemInstruction instead of being sent as a line (see `planOpening`).
+  const opening = planOpening("turn", false);
+  const systemInstruction = withOpening(rendered, opening);
+  const openingTrigger = opening.trigger!;
   return {
     systemInstruction,
-    openingTrigger: OPENING_TRIGGER,
+    openingTrigger,
     ...(meetingBrief ? { meetingBrief } : {})
   };
 }

@@ -1,9 +1,11 @@
 import {
+  MULAW_8K,
   SEND_DIGITS_MAX_LENGTH,
   SEND_DIGITS_PATTERN,
   type AnswerResponse,
   type AnswerResponseParams,
   type AttachMediaStreamParams,
+  type AudioEncoding,
   type MediaStreamHandle,
   type OriginateParams,
   type OriginateResult,
@@ -56,6 +58,9 @@ const KNOWN_STATUSES: OriginateResult["status"][] = ["queued", "ringing", "in-pr
  * media (no ws dependency). */
 export class TwilioTelephonyProvider implements TelephonyProvider {
   readonly name = "twilio";
+  /** Twilio Media Streams carry G.711 mu-law at 8 kHz, both ways, on every
+   * call — the `<Stream>` offers no other format. */
+  readonly mediaEncoding: AudioEncoding = MULAW_8K;
   private readonly accountSid: string;
   private readonly authToken: string;
   private readonly apiBase: string;

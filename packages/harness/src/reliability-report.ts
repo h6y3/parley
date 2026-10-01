@@ -7,6 +7,9 @@ export interface ScenarioReliabilityReport {
   longestCleanStreak: number;
   passed: boolean;
   failures: ScenarioResult[];
+  /** Dirty runs per typed code (a run with two codes counts under both), so a
+   * report says what failed and not only how often. */
+  failuresByCode: Record<string, number>;
 }
 
 const DEFAULT_REQUIRED_CONSECUTIVE_CLEAN = 20;
@@ -28,6 +31,7 @@ export function buildReliabilityReport(params: {
   let currentStreak = 0;
   let longestCleanStreak = 0;
   const failures: ScenarioResult[] = [];
+  const failuresByCode: Record<string, number> = {};
 
   for (const result of params.results) {
     if (result.clean) {
@@ -36,6 +40,7 @@ export function buildReliabilityReport(params: {
     } else {
       currentStreak = 0;
       failures.push(result);
+      for (const code of result.codes) failuresByCode[code] = (failuresByCode[code] ?? 0) + 1;
     }
   }
 
@@ -45,6 +50,7 @@ export function buildReliabilityReport(params: {
     runsCompleted: params.results.length,
     longestCleanStreak,
     passed: longestCleanStreak >= required,
-    failures
+    failures,
+    failuresByCode
   };
 }

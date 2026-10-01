@@ -58,14 +58,17 @@ export interface AudioSource {
 
 export const MIXED_SOURCE: AudioSource = Object.freeze({ streamId: "mixed" });
 
-/** Two-way audio bridge between the telephony carrier's encoding and the
- * realtime model's (design spec §3, §4.5). Implemented by @parley/audio and
- * injected into CallSession, so @parley/core carries no DSP dependency. */
+/** Signal generation the carrier needs that no realtime model provides.
+ * Implemented by @parley/audio and injected into CallSession, so @parley/core
+ * carries no DSP dependency.
+ *
+ * It used to carry the speaking plane's two conversions as well, hard-wired to
+ * one vendor's rates (carrier → pcm@16000, pcm@24000 → carrier). A provider
+ * that speaks the carrier's own encoding then had every frame converted into a
+ * format it could not read. Those conversions are now chosen per call from
+ * `RealtimeProvider.audio` and `TelephonyProvider.mediaEncoding` — see
+ * `CallSession.assertAudioContract`. */
 export interface AudioCodec {
-  /** Carrier inbound → model input: 8kHz μ-law → 16kHz PCM. */
-  decodeInbound(frame: AudioFrame): AudioFrame;
-  /** Model output → carrier outbound: 24kHz PCM → 8kHz μ-law. */
-  encodeOutbound(frame: AudioFrame): AudioFrame;
   /** Keypad digits as carrier-ready audio, to be sent IN-BAND down the stream
    * the call is already on — which is how a telephone keypad has always
    * worked. It lives on the codec rather than on the telephony provider
@@ -168,6 +171,13 @@ export interface MediaStreamHandle {
 /** A provider capable of originating and carrying a phone call's audio. */
 export interface TelephonyProvider {
   readonly name: string;
+  /** The encoding of the carrier's media stream, in both directions (mulaw@8000
+   * for Twilio). Declared on the provider rather than on the media handle
+   * because it must be known BEFORE any call exists: `CallSession.originate`
+   * checks it against the realtime provider's formats and refuses an
+   * unbridgeable pairing before a phone rings, not on the first frame after
+   * someone has answered. */
+  readonly mediaEncoding: AudioEncoding;
   /** Originate an outbound call. Returns provider-native identifiers for tracking. */
   originate(params: OriginateParams): Promise<OriginateResult>;
   /** Produce the response body for the provider's "call answered" webhook
@@ -179,8 +189,8 @@ export interface TelephonyProvider {
    * (design spec §8). */
   verifyWebhookSignature(request: WebhookVerificationRequest): boolean;
   /** Attach to a call's bidirectional media stream. `onInboundAudio` receives
-   * frames in the provider's native encoding (8kHz mu-law for Twilio); the
-   * returned handle accepts frames in the same encoding. */
+   * frames in `mediaEncoding`; the returned handle accepts frames in the same
+   * encoding. */
   attachMediaStream(params: AttachMediaStreamParams): MediaStreamHandle;
 
   /* NOTE: no sendDtmf. Keypresses are audio, sent in-band by the codec through
@@ -261,6 +271,10 @@ export interface RealtimeSessionCallbacks {
    * nobody has sent us yet, which is why a five-second drain still truncated a
    * farewell on a live call. */
   onTurnComplete?: () => void;
+  /** Transport facts a provider wants on the operator's diagnostic channel
+   * (e.g. the server announcing a connection end). Never call content: no
+   * transcript text, no tool arguments. */
+  onDiagnostic?: (message: string) => void;
   onError: (error: RealtimeProviderError) => void;
   onClose: (reason: string) => void;
 }
@@ -284,6 +298,10 @@ export interface RealtimeConnectParams {
    * fact. */
   speakerRole?: "caller" | "participant";
   turnDetection?: TurnDetectionConfig;
+  /** Speech-recognition hints from `Brief.keyterms`. A provider whose listener
+   * takes keyterms forwards them; one without ignores them. Never part of
+   * `systemInstruction`. */
+  keyterms?: readonly string[];
   /** Tools the model may call. Absent or empty means the session has NO tool
    * channel at all — byte-identical to Parley before tools existed. */
   tools?: readonly ToolDeclaration[];
@@ -315,6 +333,36 @@ export interface RealtimeSession {
   close(): Promise<void>;
 }
 
+/** What a realtime session's audio looks like on the wire. */
+export interface RealtimeAudioFormat {
+  /** Encodings the session's `sendAudio` accepts, most preferred first. A
+   * carrier frame in any of them passes through; otherwise it is converted to
+   * the first. */
+  readonly accepts: readonly AudioEncoding[];
+  /** The one encoding `onAudio` frames arrive in. */
+  readonly emits: AudioEncoding;
+}
+
+/** How a realtime provider takes the call's opening — Parley's fixed
+ * instruction for the seconds before anything has been heard.
+ *
+ * - `"turn"`: the opening is sent after connect as its own input, through
+ *   `sendOpeningTrigger`. Right for a vendor whose model reads a text input as
+ *   an instruction from the session rather than as the far end speaking
+ *   (Gemini Live's realtime text input).
+ * - `"prompt"`: the opening is appended to the one-time `systemInstruction`,
+ *   and on a two-party call nothing is sent afterwards — the agent waits for
+ *   the far end's voice. On a meeting one short Parley-authored cue
+ *   (`MEETING_CONNECTED_CUE`) is sent as the opening. Right for a vendor whose
+ *   only post-connect text input is a USER turn (Deepgram's
+ *   `InjectUserMessage`), which its LLM hears as the callee speaking: sent the
+ *   long trigger that way, models hung up during the ring or said "I'm
+ *   listening and waiting" aloud.
+ *
+ * Every text either path sends is a Parley constant — `planOpening`
+ * (`./render.ts`) decides which, for production and harness alike. */
+export type OpeningDelivery = "turn" | "prompt";
+
 /** A provider capable of hosting a realtime, audio-native conversational
  * session. Note what is deliberately absent: there is no method to update
  * `systemInstruction` after connect, and no general-purpose "send an arbitrary
@@ -327,6 +375,32 @@ export interface RealtimeSession {
  * RE-INSTRUCTED. */
 export interface RealtimeProvider {
   readonly name: string;
+  /** The encodings this vendor's session speaks. CallSession bridges each
+   * direction to the carrier from this declaration, so a vendor that speaks
+   * the carrier's own encoding passes through with no conversion at all. */
+  readonly audio: RealtimeAudioFormat;
+  /** Longest single session the vendor permits, if it bounds one. */
+  readonly maxSessionSeconds?: number;
+  /** How this vendor takes the call's opening — see `OpeningDelivery`.
+   * Required: a provider that has not decided is exactly how the opening
+   * ended up heard as the callee's words. */
+  readonly openingDelivery: OpeningDelivery;
+  /** Whether the model goes on speaking after a tool answer, in a turn that
+   * begins only once the answer is sent.
+   *
+   * `true` is how both shipped vendors behave, observed on their wires: the
+   * tool call arrives FIRST and the words that go with it — a goodbye after
+   * `end_call`, the acknowledgment after `begin_notetaking` — are spoken by
+   * the continuation, starting hundreds of milliseconds after the answer and
+   * running for seconds. `CallSession` therefore treats every answered tool
+   * call on such a provider as opening a model turn, so a hangup or a consent
+   * handoff waits for that turn's end before draining, rather than draining an
+   * empty queue and cutting the goodbye off before it exists.
+   *
+   * Required: a provider that has not decided is exactly how a goodbye ends
+   * up cut off unheard. Declare `false` only for a vendor that is known to say
+   * nothing after a tool answer. */
+  readonly continuesAfterToolResponse: boolean;
   /** Open a new realtime session. `systemInstruction` is sent exactly once, as
    * part of session setup, and is immutable for the session's lifetime. */
   connect(params: RealtimeConnectParams): Promise<RealtimeSession>;

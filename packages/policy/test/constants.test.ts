@@ -23,7 +23,9 @@ describe("guardrail prose constants (verbatim from current core)", () => {
   it("deferralRule ends with the anti-invention core", () => {
     expect(deferralRule("Alex Rivera")).toBe(
       "If you are asked something this brief does not cover, say plainly that you do not have " +
-        "that information and will need to follow up with Alex Rivera. " +
+        "that information and will follow up with Alex Rivera — then ask whether they can still " +
+        "go ahead without it. If they can, carry on and get as much of the task done on this call " +
+        "as you can; the missing piece is a follow-up item, not a reason to stop. " +
         DEFERRAL_CORE
     );
   });
@@ -205,12 +207,13 @@ describe("DEFERRAL_CORE names specifics, and what happens to a made-up one", () 
  * is worse than leaving it open — it stops anyone looking again.
  */
 describe("WRAP_UP_RULE asks what the other side still needs", () => {
-  it("asks before it confirms", () => {
+  it("checks once, before it records and says goodbye", () => {
+    // Changed 2026-09-30: was "ask whether they need ... to complete", ordered
+    // before "confirm the single key outcome". The confirm step is gone (see
+    // the describe below), so the check is now ordered before recording.
     const r = WRAP_UP_RULE;
-    expect(r).toMatch(/ask whether they need anything else from you to complete/);
-    expect(r.indexOf("ask whether they need")).toBeLessThan(
-      r.indexOf("confirm the single key outcome")
-    );
+    expect(r).toMatch(/check once whether they need anything else from you to act on it/);
+    expect(r.indexOf("check once")).toBeLessThan(r.indexOf("Then record the outcome"));
   });
 
   it("says what an incomplete arrangement is worth", () => {
@@ -226,6 +229,33 @@ describe("WRAP_UP_RULE asks what the other side still needs", () => {
     // record_outcome may not be declared on a given call, and telling a model
     // to use a tool it does not have is its own defect.
     expect(WRAP_UP_RULE).not.toMatch(/record_outcome|status|partial/);
+  });
+});
+
+/**
+ * Live A/B, 2026-09-30, a reschedule call: the model asked "Let me just confirm
+ * that's ... October 7th?" about a date the callee had already agreed, and got
+ * "Yeah. We already covered that." It then recapped the call, thanked them, and
+ * said goodbye several times over. The rail asked for exactly that ritual:
+ * "confirm the single key outcome in one short sentence, thank them and say
+ * goodbye". A re-confirmation of something settled is not care, it is a second
+ * question the callee has to answer.
+ */
+describe("WRAP_UP_RULE closes once, without re-confirming", () => {
+  it("is the approved closing, in order: check, record, one goodbye, end", () => {
+    expect(WRAP_UP_RULE).toMatch(
+      /^Nothing is settled until they have agreed to a specific arrangement in their own words; their offer or your proposal is not agreement — accept it, let them confirm, then close\. When the purpose is settled, check once whether they need anything else from you to act on it — an appointment nobody can act on is not an appointment\./
+    );
+    expect(WRAP_UP_RULE).toContain(
+      "Then record the outcome, say one short goodbye, and end the call. Do not ask them to " +
+        "re-confirm details they have already confirmed, and do not recap settled details back to them."
+    );
+  });
+
+  it("no longer asks for the confirm-and-thank ritual", () => {
+    expect(WRAP_UP_RULE).not.toMatch(/confirm the single key outcome/);
+    expect(WRAP_UP_RULE).not.toMatch(/thank them/);
+    expect(WRAP_UP_RULE).not.toMatch(/Before ending the call/);
   });
 });
 

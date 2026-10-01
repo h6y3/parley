@@ -1,10 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { GoogleGenAI } from "@google/genai";
 import {
   MULAW_8K,
   PCM_16K,
   PCM_24K,
   type RealtimeConnectParams,
-  type RealtimeSessionCallbacks
+  type RealtimeProvider,
+  type RealtimeSessionCallbacks,
+  type ToolName
 } from "@parley/core";
 import { DEFAULT_GEMINI_MODEL, GeminiRealtimeProvider } from "../src/gemini-realtime-provider.js";
 
@@ -189,6 +192,24 @@ describe("GeminiRealtimeProvider", () => {
   });
 });
 
+describe("declared audio format", () => {
+  it("accepts pcm@16000 and emits pcm@24000, with no session bound", () => {
+    const provider: RealtimeProvider = new GeminiRealtimeProvider({ apiKey: "fake" });
+    expect(provider.audio).toEqual({ accepts: [PCM_16K], emits: PCM_24K });
+    expect(provider.maxSessionSeconds).toBeUndefined();
+  });
+
+  it('takes the opening as its own turn ("turn" delivery)', () => {
+    expect(new GeminiRealtimeProvider({ apiKey: "fake" }).openingDelivery).toBe("turn");
+  });
+
+  // BLOCKING functions: the model continues its turn after the response and
+  // ends it with turnComplete — CallSession's hangup waits on that turn.
+  it("declares that it goes on speaking after a tool answer", () => {
+    expect(new GeminiRealtimeProvider({ apiKey: "fake" }).continuesAfterToolResponse).toBe(true);
+  });
+});
+
 describe("sendAudio input-encoding guard", () => {
   it("throws on a non-pcm@16000 frame", async () => {
     const { session } = await connectWithFakeGenAI();
@@ -314,6 +335,27 @@ describe("tool channel", () => {
     });
   });
 
+  it("declares every function BLOCKING — 3.8 defaults to non-blocking, which breaks ToolGate", async () => {
+    const decl = (name: ToolName) => ({
+      name,
+      description: "d",
+      parametersJsonSchema: { type: "object", properties: {} }
+    });
+    const { config } = await connectForTools({ tools: [decl("press_digits"), decl("end_call")] });
+    const tools = config.tools as Array<{ functionDeclarations: Array<{ behavior?: string }> }>;
+    expect(tools[0].functionDeclarations).toHaveLength(2);
+    for (const fd of tools[0].functionDeclarations) expect(fd.behavior).toBe("BLOCKING");
+  });
+
+  it("never sends thinkingConfig or thinkingLevel — unsupported on gemini-3.8-live", async () => {
+    const { config } = await connectForTools({
+      tools: [{ name: "end_call", description: "d", parametersJsonSchema: { type: "object" } }]
+    });
+    const wire = JSON.stringify(config);
+    expect(wire).not.toContain("thinkingConfig");
+    expect(wire).not.toContain("thinkingLevel");
+  });
+
   it("omits tools from the config entirely when none are passed", async () => {
     const { config } = await connectForTools();
     expect(config).not.toHaveProperty("tools");
@@ -395,5 +437,100 @@ describe("tool channel", () => {
       text: "far end speaking",
       isFinal: true
     });
+  });
+});
+
+describe("gemini-3.8-live server signals", () => {
+  it("defaults to gemini-3.8-live", () => {
+    expect(DEFAULT_GEMINI_MODEL).toBe("gemini-3.8-live");
+  });
+
+  it("reports goAway as a diagnostic carrying only the time left", async () => {
+    const onDiagnostic = vi.fn();
+    const run = await connectForTools({ callbacks: { ...makeCallbacks(), onDiagnostic } });
+    run.emitMessage({ goAway: { timeLeft: "5s" } });
+    expect(onDiagnostic).toHaveBeenCalledWith("gemini goAway: timeLeft=5s");
+  });
+
+  it("reports interactionStatus as a diagnostic so a semantic change is noticed", async () => {
+    const onDiagnostic = vi.fn();
+    const run = await connectForTools({ callbacks: { ...makeCallbacks(), onDiagnostic } });
+    run.emitMessage({ serverContent: { interactionStatus: "IN_PROGRESS" } });
+    expect(onDiagnostic).toHaveBeenCalledWith("gemini interactionStatus: IN_PROGRESS");
+  });
+
+  it("reports interactionStatus only when it changes, not per message", async () => {
+    const onDiagnostic = vi.fn();
+    const run = await connectForTools({ callbacks: { ...makeCallbacks(), onDiagnostic } });
+    run.emitMessage({ serverContent: { interactionStatus: "IN_PROGRESS" } });
+    run.emitMessage({ serverContent: { interactionStatus: "IN_PROGRESS" } });
+    expect(onDiagnostic).toHaveBeenCalledOnce();
+    run.emitMessage({ serverContent: { interactionStatus: "IDLE" } });
+    expect(onDiagnostic.mock.calls).toEqual([
+      ["gemini interactionStatus: IN_PROGRESS"],
+      ["gemini interactionStatus: IDLE"]
+    ]);
+  });
+
+  it("names a goAway with no timeLeft as unknown", async () => {
+    const onDiagnostic = vi.fn();
+    const run = await connectForTools({ callbacks: { ...makeCallbacks(), onDiagnostic } });
+    run.emitMessage({ goAway: {} });
+    expect(onDiagnostic).toHaveBeenCalledWith("gemini goAway: timeLeft=unknown");
+  });
+
+  it("still treats turnComplete as the end of the model turn", async () => {
+    const onTurnComplete = vi.fn();
+    const run = await connectForTools({ callbacks: { ...makeCallbacks(), onTurnComplete } });
+    run.emitMessage({ serverContent: { turnComplete: true, interactionStatus: "IDLE" } });
+    expect(onTurnComplete).toHaveBeenCalledOnce();
+  });
+
+  it("tolerates goAway when the caller wired no diagnostics channel", async () => {
+    const run = await connectForTools();
+    expect(() => run.emitMessage({ goAway: { timeLeft: "5s" } })).not.toThrow();
+  });
+});
+
+describe("GeminiRealtimeProvider — the explicit key wins over the environment", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // A pin on the REAL SDK, not a fake: the provider is constructed with an
+  // explicit key, and the environment can carry GOOGLE_API_KEY (which the SDK
+  // prefers over GEMINI_API_KEY when it reads the environment itself) for
+  // unrelated tools. The SDK prints "Using GOOGLE_API_KEY" in that case even
+  // though it then uses the explicit key — so the warning cannot be trusted,
+  // and this asserts what actually goes on the wire. If an SDK upgrade ever
+  // lets the environment win, a call would authenticate with whatever key
+  // happens to be exported, and this fails first. No network: the websocket
+  // factory is replaced and stops the connect at the URL.
+  it("puts the constructor's apiKey on the Live URL with GOOGLE_API_KEY and GEMINI_API_KEY both set", async () => {
+    vi.stubEnv("GOOGLE_API_KEY", "from-google-env");
+    vi.stubEnv("GEMINI_API_KEY", "from-gemini-env");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let seenKey: string | null = null;
+    const provider = new GeminiRealtimeProvider({ apiKey: "explicit-key" }, (opts) => {
+      const ai = new GoogleGenAI(opts);
+      (ai.live as unknown as { webSocketFactory: unknown }).webSocketFactory = {
+        create: (url: string) => {
+          seenKey = new URL(url).searchParams.get("key");
+          return {
+            connect: () => {
+              throw new Error("stop before the network");
+            },
+            send: () => {},
+            close: () => {}
+          };
+        }
+      };
+      return ai;
+    });
+    await expect(provider.connect(makeConnectParams(makeCallbacks()))).rejects.toThrow(
+      /stop before the network/
+    );
+    warn.mockRestore();
+    expect(seenKey).toBe("explicit-key");
   });
 });

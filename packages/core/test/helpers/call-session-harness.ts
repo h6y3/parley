@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 import type { CallSessionParams } from "../../src/call-session.js";
 import type { Brief } from "../../src/brief.js";
-import { MIXED_SOURCE, MULAW_8K, PCM_16K } from "../../src/types.js";
+import { MIXED_SOURCE, MULAW_8K, PCM_16K, PCM_24K } from "../../src/types.js";
 import type {
   AudioCodec,
   AudioEncoding,
@@ -9,6 +9,7 @@ import type {
   AudioSource,
   CallLifecycleEvent,
   MediaStreamHandle,
+  RealtimeAudioFormat,
   RealtimeConnectParams,
   RealtimeProvider,
   RealtimeSession,
@@ -43,10 +44,22 @@ export const brief: Brief = {
 
 export const guardrails: readonly string[] = ["Rule one.", "Rule two."];
 
-// Pass-through fake codec — this test verifies wiring, not DSP.
+/** Relabelling fake converter — these tests verify wiring, not DSP. The bytes
+ * are untouched and only the declared encoding changes, so a test can still
+ * see which way a frame was bridged. `audio-contract.test.ts` is where the
+ * real `convert` is exercised. */
+export const fakeConvert: FrameConverter = (f: AudioFrame, to: AudioEncoding) => ({
+  encoding: to,
+  data: f.data
+});
+export const fakeCanConvert = (): boolean => true;
+
+/** The fake realtime providers' declared formats: the Gemini shape, so every
+ * inbound carrier frame is bridged to pcm@16000 and every model frame to the
+ * carrier's mulaw@8000 — what the fixed codec used to do on every call. */
+export const fakeRealtimeAudio: RealtimeAudioFormat = { accepts: [PCM_16K], emits: PCM_24K };
+
 export const fakeCodec: AudioCodec = {
-  decodeInbound: (f: AudioFrame) => ({ encoding: PCM_16K, data: f.data }),
-  encodeOutbound: (f: AudioFrame) => ({ encoding: MULAW_8K, data: f.data }),
   // Recognisable stand-in for real tones: these tests verify that a press
   // reaches the OUTBOUND AUDIO STREAM, which is where keypresses now go. The
   // tone generation itself is @parley/audio's dtmf.test.ts, which checks the
@@ -116,6 +129,9 @@ export function fakes() {
   let connectParams!: RealtimeConnectParams;
   const realtime: RealtimeProvider = {
     name: "fake-realtime",
+    audio: fakeRealtimeAudio,
+    openingDelivery: "turn",
+    continuesAfterToolResponse: false,
     connect: async (p) => {
       connectParams = p;
       realtimeCb = p.callbacks;
@@ -136,6 +152,7 @@ export function fakes() {
   };
   const telephony: TelephonyProvider = {
     name: "fake-telephony",
+    mediaEncoding: MULAW_8K,
     originate: async () => ({ providerCallId: "call-1", status: "queued" }),
     buildAnswerResponse: () => ({ contentType: "text/xml", body: "<Response/>" }),
     verifyWebhookSignature: () => true,
@@ -205,6 +222,7 @@ export class FakeSocket implements WebSocketLike {
 function stubTelephony(onInboundFrame?: () => void): TelephonyProvider {
   return {
     name: "fake-telephony",
+    mediaEncoding: MULAW_8K,
     originate: async () => ({ providerCallId: "CA1", status: "queued" }),
     buildAnswerResponse: () => ({ contentType: "text/xml", body: "<Response/>" }),
     verifyWebhookSignature: () => true,
@@ -232,6 +250,9 @@ function stubTelephony(onInboundFrame?: () => void): TelephonyProvider {
 function stubRealtime(session: RealtimeSessionStub): RealtimeProvider {
   return {
     name: "fake-realtime",
+    audio: fakeRealtimeAudio,
+    openingDelivery: "turn",
+    continuesAfterToolResponse: false,
     // Records the callbacks even though this stub drives none of them itself:
     // `close()` needs `onClose` to fire, which is what a real provider does.
     connect: async (p) => {
@@ -253,6 +274,8 @@ export function makeSessionParams(
     telephony: stubTelephony(opts.onInboundFrame),
     realtime: stubRealtime(opts.realtimeSession ?? makeRealtimeSessionStub()),
     codec: fakeCodec,
+    convert: fakeConvert,
+    canConvert: fakeCanConvert,
     from: "+14155550000",
     answerWebhookUrl: "https://example.test/answer",
     model: "test-model"
@@ -467,6 +490,8 @@ export function makeMeetingFakes(
       telephony: f.telephony,
       realtime: f.realtime,
       codec: fakeCodec,
+      convert: fakeConvert,
+      canConvert: fakeCanConvert,
       from: "+14155550000",
       answerWebhookUrl: "https://example.test/answer",
       model: "test-model",

@@ -2,14 +2,15 @@ import { createServer, type Server } from "node:http";
 import { WebSocketServer, type WebSocket as WsSocket } from "ws";
 import type {
   AudioCodec,
+  AudioEncoding,
   FrameConverter,
-  RealtimeProvider,
   TelephonyProvider,
   TranscriptionProvider
 } from "@parley/core";
 import type { NumberAllowlist, HostAllowlist } from "./allowlist.js";
 import { handleMediaConnection, type CompletedCallRecord } from "./media-connection.js";
 import { PendingSessions } from "./pending-sessions.js";
+import type { RealtimeRegistry } from "./realtime-registry.js";
 import { handleHttpRequest, type ServerDeps } from "./request-handler.js";
 import { wrapWsSocket } from "./ws-adapter.js";
 
@@ -24,11 +25,18 @@ const DEFAULT_BIND_HOST = "127.0.0.1";
 
 export interface ParleyServerConfig {
   telephony: TelephonyProvider;
-  realtime: RealtimeProvider;
+  /** Every realtime provider the daemon holds, each with the model it runs,
+   * and the default a call gets when its envelope does not choose. A
+   * single-provider embedding passes a one-entry registry. */
+  realtime: RealtimeRegistry;
   codec: AudioCodec;
+  /** Bridges the carrier's encoding and the realtime provider's declared
+   * `audio`; pass @parley/audio's `convert` and `canConvert`. Passed straight
+   * through to `ServerDeps` like everything else here. */
+  convert: FrameConverter;
+  canConvert: (from: AudioEncoding, to: AudioEncoding) => boolean;
   from: string;
   publicHost: string;
-  model: string;
   numberAllowlist: NumberAllowlist;
   hostAllowlist: HostAllowlist;
   /** Shared secret required on POST /call. Required in the type, because
@@ -49,6 +57,12 @@ export function createParleyServer(config: ParleyServerConfig): {
   listen: (port: number, host?: string) => Promise<void>;
   close: () => Promise<void>;
 } {
+  // Fail at construction, not on the first call: a default that was never
+  // built would turn every envelope that does not choose a provider into a
+  // 503, which surfaces as an outage rather than as a misconfiguration.
+  if (!config.realtime.providers[config.realtime.default]) {
+    throw new Error(`default realtime provider "${config.realtime.default}" is not built`);
+  }
   const pending = new PendingSessions();
   const deps: ServerDeps = {
     ...config,
