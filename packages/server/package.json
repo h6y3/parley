@@ -1,6 +1,6 @@
 {
   "name": "@parley/server",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -24,6 +24,7 @@
     "@parley/audio": "workspace:*",
     "@parley/core": "workspace:*",
     "@parley/policy": "workspace:*",
+    "@parley/realtime-deepgram": "workspace:*",
     "@parley/realtime-gemini": "workspace:*",
     "@parley/telephony-twilio": "workspace:*",
     "ws": "^8.18.0"

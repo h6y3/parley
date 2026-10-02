@@ -12,7 +12,8 @@ export type {
   Identity,
   CallEnvelope,
   CallEnvelopeWithPolicy,
-  CallEnvelopeWithGuardrails
+  CallEnvelopeWithGuardrails,
+  RealtimeSettings
 } from "./schema.js";
 export { composePolicy, CANARY_PHRASES } from "./compose.js";
 export type { CallMode } from "./compose.js";

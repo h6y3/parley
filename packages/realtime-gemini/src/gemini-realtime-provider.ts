@@ -22,6 +22,42 @@ export const DEFAULT_GEMINI_MODEL = "gemini-3.8-live";
  * voice the model picks one per session (male/female varies call to call). A
  * caller may still override via RealtimeConnectParams.voice. */
 export const DEFAULT_GEMINI_VOICE = "Aoede";
+/** The Live API's prebuilt voices — what a per-call `execution.realtime.voice`
+ * may name on Gemini. `@parley/server` checks membership against this list
+ * and refuses anything else before dialling, so a typo is a 400 rather than a
+ * session the vendor refuses after the callee has already answered. */
+export const GEMINI_VOICES: readonly string[] = Object.freeze([
+  "Zephyr",
+  "Puck",
+  "Charon",
+  "Kore",
+  "Fenrir",
+  "Leda",
+  "Orus",
+  "Aoede",
+  "Callirrhoe",
+  "Autonoe",
+  "Enceladus",
+  "Iapetus",
+  "Umbriel",
+  "Algieba",
+  "Despina",
+  "Erinome",
+  "Algenib",
+  "Rasalgethi",
+  "Laomedeia",
+  "Achernar",
+  "Alnilam",
+  "Schedar",
+  "Gacrux",
+  "Pulcherrima",
+  "Achird",
+  "Zubenelgenubi",
+  "Vindemiatrix",
+  "Sadachbia",
+  "Sadaltager",
+  "Sulafat"
+]);
 const DEFAULT_API_VERSION = "v1beta";
 
 export interface GeminiRealtimeProviderOptions {

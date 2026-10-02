@@ -4,6 +4,112 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-10-01
+
+A call can now choose its own realtime settings, the callable-numbers allowlist can change without a
+restart, and a new package tests Parley over the real phone network against a simulated callee.
+
+### Added
+
+- **Per-call realtime settings in `execution.realtime`.** Besides `provider`, an envelope may now
+  set `think` (the Deepgram agent's language model), `voice`, `speed` (0.7–1.5, Deepgram) and
+  `expressivity` (an integer from -2 to 2, Deepgram's Beta `agent.speak.provider.expressivity`),
+  each overriding the daemon's default for that call only. The envelope schema checks shape; the
+  daemon checks each name against lists the provider packages now export (`DEEPGRAM_THINK_MODELS`,
+  `DEEPGRAM_VOICES`, `GEMINI_VOICES`) and refuses an unknown value, or a setting the chosen
+  provider does not take (`think`, `speed` or `expressivity` on Gemini), with `400` before
+  dialling. `RealtimeConnectParams` gains `settings: { think?, speed?, expressivity? }`, which the
+  Deepgram provider applies to that session without changing its configured defaults. The call
+  record's `realtime` becomes `{ provider, model, voice?, speed?, expressivity? }`: `model` is the
+  effective model and the other three appear only when chosen (`schema/meeting-record.schema.json`
+  gains them as optional). An envelope naming only `provider` connects and records exactly as
+  before. See `docs/configuration.md`, "Per-call realtime settings".
+- **Callable-numbers file re-read per call.** `PARLEY_CALLABLE_NUMBERS_FILE` names a file of extra
+  callable numbers (one E.164 per line, `#` comments), read on every call so numbers can be added
+  or removed without restarting the daemon. A missing or unreadable file adds no numbers and warns
+  once per distinct error. `PARLEY_CALLABLE_NUMBERS` still applies; the allowlist remains a typo
+  guard, not access control (`PARLEY_CALL_TOKEN` is).
+- **`@parley/phone-test`: phone test campaigns.** A new package that places real calls from a
+  running daemon to a simulated callee on a temporary Twilio number and scores them, with no
+  person on the line. Phone scenarios (`packages/phone-test/scenarios/`) hold a Parley job, the
+  callee personas and the expected outcome; configuration files (`packages/phone-test/configs/`)
+  name the per-call realtime settings to compare. Each call is scored on its outcome (typed codes
+  read from the call record), its timing (a per-channel energy VAD over the stereo capture:
+  `slow-response`, `spoke-before-callee`, `talk-over`, `slow-barge-in`, `talked-after-goodbye`,
+  `dead-air`, thresholds in `configs/thresholds.json`) and, optionally, a pairwise Gemini audio
+  judge run in both orders. The report gives failure rates per code, response-gap percentiles,
+  judge win rates and cost, picks finalists against the Gemini reference by a fixed rule, copies
+  the best recordings and writes a blind listening pack for checking the judge. See
+  `docs/phone-testing.md`.
+- **`parley sim serve`.** The simulated callee: answers the test number's Twilio webhook on
+  `127.0.0.1:3340` under `/sim/`, verifies Twilio signatures against `PARLEY_PUBLIC_HOST`, rejects
+  every caller but the daemon's number (`--caller`, else `TWILIO_FROM_NUMBER`), plays
+  the registered persona through the realtime provider not under test, and records a stereo WAV
+  (agent as heard, callee) with a timeline. Its control API (`/control/*`) is loopback-only.
+- **`parley campaign start|run|stop|status`.** `start` refuses on an existing campaign, a spent
+  monthly budget or a Twilio trial account, then buys one US local number, adds it to
+  `PARLEY_CALLABLE_NUMBERS_FILE` and starts the sim; `run` places calls serially, refusing any
+  number but the campaign's and any call whose worst case would exceed the budget (`--budget`,
+  default $50 a month), and books each call's estimated cost; `stop` is idempotent and safe after
+  a crash — it releases the number, removes it from the file, stops the sim and clears the state;
+  `status` shows the campaign, its age and the month's spend. State and spend live in
+  `~/.config/parley/` (`test-campaign.json`, `test-spend.jsonl`, mode 600). Secrets come from the
+  environment only.
+
+### Fixed
+
+- **A missed greeting no longer leaves a two-party call silent.** If the far end has spoken, in
+  speech that began within the first 10 s of the call (`NUDGE_OPENING_WINDOW_MS`), and the model
+  has produced no audio, text or tool call within 2.5 s of the end of that speech
+  (`MISSED_GREETING_NUDGE_MS`; far-end speech starting again holds the window until its
+  transcript), `CallSession` now sends the short `CALL_ANSWERED_CUE` once through
+  `sendOpeningTrigger` (planned as `OpeningPlan.answeredCue` for a two-party `"prompt"` opening
+  only, never a meeting, a call that declares `execution.ivr` (a menu can pause longer than the
+  window) or one the carrier says a machine answered; logged as `missed greeting: opening re-sent at +Nms`), because on live
+  calls since 0.4.1 put the opening in the prompt, a greeting the model missed — one transcript
+  held only "de Sesame" — left the agent with no turn at all until the callee said hello again or
+  the silence cap ended the call.
+
+### Known issues
+
+- **Deepgram Voice Agent can stay silent for a whole call.** In a 32-call phone-test campaign, the
+  Deepgram agent produced no speech in roughly one call in four with a realistic callee, across the
+  `gpt-4o-mini`, `claude-haiku-4-5` and `claude-sonnet-4-6` think models: the think stage reports
+  output, but no audio follows, even after the missed-greeting cue. Gemini is the default provider;
+  use Deepgram per call only for comparison until this is understood.
+- **A greeting that arrives before the realtime session is ready may not be transcribed**, and the
+  missed-greeting cue only arms on a far-end transcript, so such a call still waits for the callee
+  to speak again.
+- **The phone-test harness cannot yet verify phone-menu navigation:** the carrier does not report
+  the agent's in-band keypad tones to the simulated callee, so a menu persona never advances.
+
+### Upgrading
+
+No action is required for a client that sends `execution.realtime` with `provider` alone and
+reads call records leniently. Otherwise:
+
+- **Envelopes may now carry realtime settings.** `execution.realtime` accepts `think`, `voice`,
+  `speed` and `expressivity` besides `provider`. A client that validates envelopes against its own
+  copy of the schema must accept the new optional fields; a value outside the provider's lists, or
+  a setting the chosen provider does not take, is refused with `400` before dialling.
+- **The record's `realtime` carries the effective settings.** It is now
+  `{ provider, model, voice?, speed?, expressivity? }`, with `model` the effective model (a
+  per-call `think` when chosen). A strict consumer that rejects unknown record fields must accept
+  the three optional ones (`schema/meeting-record.schema.json` declares them).
+- **New optional environment variable `PARLEY_CALLABLE_NUMBERS_FILE`** on the daemon: a file of
+  extra callable numbers, re-read on every call. Unset keeps today's behaviour. The variable itself
+  is read at startup: **set it, then restart the daemon once**; after that, edits to the file need
+  no restart. Phone campaigns
+  also read `PARLEY_DAEMON_URL` (required by `campaign run`, no default there) and
+  `PARLEY_CALL_RECORDS` (defaults to `PARLEY_CALL_RECORDS_PATH`), and optionally
+  `PARLEY_TEST_OUT_DIR` (where reports go; default `./parley-tests/<campaign>/`).
+- **New package and commands.** `@parley/phone-test` and the `parley sim` / `parley campaign`
+  commands are additive; nothing runs unless invoked. A campaign needs a non-trial Twilio account,
+  `TWILIO_FROM_NUMBER` in the campaign's environment (the daemon's own caller number),
+  `PARLEY_CALLABLE_NUMBERS_FILE` set on the daemon, and a public route from
+  `https://<public host>/sim/*` to `127.0.0.1:3340` (`docs/phone-testing.md`).
+- **Every package is now 0.5.0**, in lockstep.
+
 ## [0.4.1] — 2026-10-01
 
 A call whose outcome asks who confirmed the arrangement now asks the person's name once, and a

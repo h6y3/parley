@@ -463,6 +463,28 @@ const meetingRecordFields = z.object({
         .describe(
           "The model that provider ran. For Deepgram this is the think model (the language " +
             "model behind the voice agent), not a speech-to-text or voice model."
+        ),
+      voice: z
+        .string()
+        .optional()
+        .describe(
+          "The voice the call chose per call (execution.realtime.voice). Absent when the " +
+            "daemon's default voice spoke."
+        ),
+      speed: z
+        .number()
+        .optional()
+        .describe(
+          "The speak speed the call chose per call (execution.realtime.speed, Deepgram only). " +
+            "Absent when the daemon's default applied."
+        ),
+      expressivity: z
+        .number()
+        .int()
+        .optional()
+        .describe(
+          "The speak expressivity the call chose per call (execution.realtime.expressivity, " +
+            "Deepgram only, -2 to 2). Absent when it was not sent."
         )
     })
     .optional()

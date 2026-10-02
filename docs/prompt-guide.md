@@ -19,12 +19,17 @@ else ever reaches the model as instruction-bearing content:
    update it later.
 2. **The opening trigger** — a single short, plain-language, generic sentence, sent exactly once
    via `RealtimeSession.sendOpeningTrigger()` immediately after connect. Parley's built-in trigger
-   is `"Begin the call naturally now."` (`OPENING_TRIGGER`, `packages/core/src/render.ts`)
-   — it never restates the persona, never restates the brief, never carries a structural marker,
-   and is never longer than one sentence. That is the path under `openingDelivery: "turn"`, which
+   (`OPENING_TRIGGER`, `packages/core/src/render.ts`) tells the model that nothing has been heard
+   yet and to wait for the other end — it never restates the persona, never restates the brief,
+   and never carries a structural marker. That is the path under `openingDelivery: "turn"`, which
    Gemini uses for a meeting. Under `"prompt"` — every two-party call on both shipped providers,
    and a Deepgram meeting — the same fixed text is appended to channel 1 instead, and a two-party
-   call is sent no trigger at all; see `planOpening` (`packages/core/src/render.ts`). Either way it is Parley's constant, never brief content.
+   call is sent no trigger at connect. If the far end then speaks within the first 10 s and the
+   model produces nothing for 2.5 s after that speech ends, `CallSession` sends one short statement of fact, `CALL_ANSWERED_CUE` ("The other end
+   has answered and spoken."), through the same path, once, so a missed greeting cannot leave the
+   agent silent (never on a call that declares `execution.ivr`, whose menu may pause longer than
+   that, nor one the carrier says a machine answered); see `planOpening` (`packages/core/src/render.ts`). Either way it is Parley's
+   constant, never brief content.
 
 `brief.keyterms` is not a third channel. It is a list of words the speech recognizer should
 expect (a name it would otherwise mishear), passed to the realtime provider as a recognition hint

@@ -8,10 +8,13 @@ import {
   DEEPGRAM_TURN_QUIET_MS,
   DEEPGRAM_SPEED_MAX,
   DEEPGRAM_SPEED_MIN,
+  DEEPGRAM_THINK_MODELS,
+  DEEPGRAM_VOICES,
   DEFAULT_DEEPGRAM_LISTEN_MODEL,
   DEFAULT_DEEPGRAM_SPEED,
   DEFAULT_DEEPGRAM_THINK,
-  DEFAULT_DEEPGRAM_VOICE
+  DEFAULT_DEEPGRAM_VOICE,
+  type DeepgramSettings
 } from "../src/index.js";
 import { FakeAgentSocket, connectProvider, startConnect } from "./helpers.js";
 
@@ -821,5 +824,112 @@ describe("KeepAlive", () => {
     await session.close();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(keepAlives(socket)).toHaveLength(0);
+  });
+});
+
+/** Per-call settings (`RealtimeConnectParams.settings`) override the provider's
+ * options for ONE session. The options themselves are never mutated: the next
+ * session on the same provider is back on the constructor's values. */
+describe("per-call settings", () => {
+  function twoSessionProvider(sockets: FakeAgentSocket[]) {
+    let i = 0;
+    return createDeepgramRealtimeProvider({
+      apiKey: "test-key",
+      wsFactory: () => sockets[i++] as never
+    });
+  }
+  const callbacks = {
+    onAudio: () => {},
+    onInterrupted: () => {},
+    onTranscript: () => {},
+    onError: () => {},
+    onClose: () => {}
+  };
+  async function open(
+    provider: ReturnType<typeof createDeepgramRealtimeProvider>,
+    socket: FakeAgentSocket,
+    extra: Partial<Parameters<typeof provider.connect>[0]> = {}
+  ): Promise<DeepgramSettings> {
+    const p = provider.connect({
+      model: "ignored",
+      systemInstruction: "P",
+      responseModality: "audio",
+      callbacks,
+      ...extra
+    });
+    socket.open();
+    socket.emitAgent({ type: "SettingsApplied" });
+    await p;
+    return socket.sent.find((m) => m.type === "Settings") as unknown as DeepgramSettings;
+  }
+
+  it("sends the per-call think model and speed, then reverts to the defaults", async () => {
+    const sockets = [new FakeAgentSocket(), new FakeAgentSocket()];
+    const provider = twoSessionProvider(sockets);
+    const first = await open(provider, sockets[0]!, {
+      settings: { think: { provider: "anthropic", model: "claude-haiku-4-5" }, speed: 1.1 }
+    });
+    expect(first.agent.think.provider).toEqual({ type: "anthropic", model: "claude-haiku-4-5" });
+    expect(first.agent.speak.provider.speed).toBe(1.1);
+
+    const second = await open(provider, sockets[1]!);
+    expect(second.agent.think.provider).toEqual({
+      type: DEFAULT_DEEPGRAM_THINK.provider,
+      model: DEFAULT_DEEPGRAM_THINK.model
+    });
+    expect(second.agent.speak.provider.speed).toBe(DEFAULT_DEEPGRAM_SPEED);
+  });
+
+  it("sends expressivity in speak.provider only when set", async () => {
+    const sockets = [new FakeAgentSocket(), new FakeAgentSocket()];
+    const provider = twoSessionProvider(sockets);
+    const set = await open(provider, sockets[0]!, { settings: { expressivity: -1 } });
+    expect(set.agent.speak.provider.expressivity).toBe(-1);
+    const unset = await open(provider, sockets[1]!);
+    expect("expressivity" in unset.agent.speak.provider).toBe(false);
+  });
+
+  it("sends expressivity 0 when set to 0 (a value, not an absence)", async () => {
+    const socket = new FakeAgentSocket();
+    const settings = await open(twoSessionProvider([socket]), socket, {
+      settings: { expressivity: 0 }
+    });
+    expect(settings.agent.speak.provider.expressivity).toBe(0);
+  });
+
+  it("rejects a per-call speed outside the range Deepgram accepts, before opening a socket", async () => {
+    const opened = vi.fn();
+    const provider = createDeepgramRealtimeProvider({ apiKey: "test-key", wsFactory: opened });
+    await expect(
+      provider.connect({
+        model: "m",
+        systemInstruction: "P",
+        responseModality: "audio",
+        callbacks,
+        settings: { speed: 2 }
+      })
+    ).rejects.toThrow(/speed/);
+    expect(opened).not.toHaveBeenCalled();
+  });
+
+  it("exports the think models it supports, each with its managed think provider", () => {
+    expect(DEEPGRAM_THINK_MODELS).toEqual({
+      "gpt-4o-mini": "open_ai",
+      "gpt-4.1-mini": "open_ai",
+      "gpt-5.4-mini": "open_ai",
+      "claude-haiku-4-5": "anthropic",
+      "claude-sonnet-4-6": "anthropic",
+      "gemini-3.5-flash": "google"
+    });
+    expect(DEEPGRAM_THINK_MODELS[DEFAULT_DEEPGRAM_THINK.model]).toBe(
+      DEFAULT_DEEPGRAM_THINK.provider
+    );
+  });
+
+  it("exports its voices, the default among them", () => {
+    expect(DEEPGRAM_VOICES).toContain(DEFAULT_DEEPGRAM_VOICE);
+    expect(DEEPGRAM_VOICES).toContain("flux-kit-en");
+    expect(DEEPGRAM_VOICES).toContain("aura-2-cordelia-en");
+    expect(new Set(DEEPGRAM_VOICES).size).toBe(DEEPGRAM_VOICES.length);
   });
 });

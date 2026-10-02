@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { canConvert, convert, createAudioCodec } from "@parley/audio";
 import { resolveTimeZone } from "@parley/core";
 import { runHarnessCli } from "@parley/harness";
@@ -20,6 +20,12 @@ import {
   runMeetingJoin,
   type MeetingJoinDeps
 } from "@parley/meeting-browser";
+import {
+  PHONE_TEST_USAGE,
+  runCampaignCli,
+  runSimCli,
+  type PhoneTestCliDeps
+} from "@parley/phone-test";
 import {
   createHostAllowlist,
   createNumberAllowlist,
@@ -143,7 +149,10 @@ async function serve(realtimeProviderKind: RealtimeProviderKind): Promise<void> 
     from: requireEnv("TWILIO_FROM_NUMBER"),
     publicHost: requireEnv("PARLEY_PUBLIC_HOST"),
     numberAllowlist: createNumberAllowlist(
-      parseCallableNumbers(process.env.PARLEY_CALLABLE_NUMBERS)
+      parseCallableNumbers(process.env.PARLEY_CALLABLE_NUMBERS),
+      process.env.PARLEY_CALLABLE_NUMBERS_FILE
+        ? { file: process.env.PARLEY_CALLABLE_NUMBERS_FILE }
+        : {}
     ),
     hostAllowlist: createHostAllowlist([requireEnv("PARLEY_PUBLIC_HOST")]),
     ...(transcription ? { transcription } : {}),
@@ -191,6 +200,26 @@ async function serve(realtimeProviderKind: RealtimeProviderKind): Promise<void> 
  * caller is unchanged. */
 export interface MainDeps {
   meeting?: MeetingJoinDeps;
+  /** The environment `sim` and `campaign` read; defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
+  /** Overrides for the phone-test commands' edges (log, Twilio, sim process). */
+  phoneTest?: Partial<Omit<PhoneTestCliDeps, "env">>;
+}
+
+/** The phone-test commands' wiring: the environment, how to run `parley`
+ * again (the sim is spawned as `parley sim serve`), and how to build the
+ * sim's callee provider — the same construction the daemon uses. */
+function phoneTestDeps(deps: MainDeps): PhoneTestCliDeps {
+  return {
+    env: deps.env ?? process.env,
+    parleyCommand: [process.execPath, fileURLToPath(import.meta.url)],
+    buildCallee: (kind, env) => {
+      const built = buildRealtimeProviders(env)[kind];
+      if (!built) throw new Error(`the ${kind} callee has no credential`);
+      return built;
+    },
+    ...deps.phoneTest
+  };
 }
 
 export async function main(
@@ -237,13 +266,22 @@ export async function main(
     case "doctor":
       console.log(runDoctor({ env: process.env }));
       return;
+    // The phone test harness. Configuration and secrets come from the
+    // environment only — run as `node --env-file ~/.config/parley/.env …`.
+    case "sim":
+      await runSimCli(args.sim!, phoneTestDeps(deps));
+      return;
+    case "campaign":
+      await runCampaignCli(args.campaign!, phoneTestDeps(deps));
+      return;
     default:
       console.log(
-        "Usage: parley <serve|call|harness|doctor|meeting>\n" +
+        "Usage: parley <serve|call|harness|doctor|meeting|sim|campaign>\n" +
           "  call --to <e164> --brief <path>\n" +
           "  harness <preview|scenarios|run-text-preview|reliability> ...\n" +
           "  meeting join <meeting-url> --display-name <name> --records-path <file> " +
-          "--audio-device <name>"
+          "--audio-device <name>\n" +
+          PHONE_TEST_USAGE
       );
   }
 }

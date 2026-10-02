@@ -1,0 +1,9 @@
+{
+  "slowResponseP50Ms": 1500,
+  "slowResponseP90Ms": 2500,
+  "talkOverMs": 300,
+  "slowBargeInMs": 800,
+  "talkedAfterGoodbyeMs": 1500,
+  "deadAirMs": 4000,
+  "bargeInMinCalleeMs": 600
+}

@@ -541,9 +541,8 @@ describe("execution.dial — carrier-side DTMF at origination", () => {
 
 /**
  * `execution.realtime` chooses which of the daemon's realtime providers a call
- * runs on. It names a provider and never a model: per-provider configuration is
- * daemon-level, which keeps the surface a caller depends on small. Strict, so a
- * caller that tries to smuggle a model (or anything else) in finds out.
+ * runs on. Strict, so a key it does not define — `model` included; the
+ * per-call model is `think` — is refused rather than ignored.
  */
 describe("execution.realtime — per-call provider selection", () => {
   it.each(["gemini", "deepgram"])("accepts provider %s", (provider) => {
@@ -598,6 +597,56 @@ describe("execution.realtime — per-call provider selection", () => {
         execution: { realtime: { provider: "deepgram" } }
       })
     ).toThrow();
+  });
+});
+
+/**
+ * `execution.realtime` may also carry per-call settings. The schema checks
+ * SHAPE only — which models and voices exist is the provider's knowledge, and
+ * `@parley/server` checks membership against the lists each provider exports.
+ */
+describe("execution.realtime — per-call settings (shape only)", () => {
+  const parse = (realtime: unknown) =>
+    parseCallEnvelope({
+      version: 2,
+      brief: execBrief,
+      policy: execPolicy,
+      execution: { realtime }
+    });
+
+  it("accepts think, voice, speed and expressivity", () => {
+    const realtime = {
+      provider: "deepgram",
+      think: "claude-haiku-4-5",
+      voice: "flux-kit-en",
+      speed: 1.1,
+      expressivity: -2
+    };
+    expect(parse(realtime).execution?.realtime).toEqual(realtime);
+  });
+
+  it("does not check membership — an unknown model is the server's call", () => {
+    expect(
+      parse({ provider: "gemini", think: "x", voice: "NotAVoice" }).execution?.realtime
+    ).toEqual({ provider: "gemini", think: "x", voice: "NotAVoice" });
+  });
+
+  it.each([0.7, 1.5])("accepts speed %s (the bounds)", (speed) => {
+    expect(parse({ provider: "deepgram", speed }).execution?.realtime?.speed).toBe(speed);
+  });
+
+  it.each([0.69, 1.51, 2])("rejects speed %s", (speed) => {
+    expect(() => parse({ provider: "deepgram", speed })).toThrow();
+  });
+
+  it.each([-3, 3, 0.5])("rejects expressivity %s (an integer from -2 to 2)", (expressivity) => {
+    expect(() => parse({ provider: "deepgram", expressivity })).toThrow();
+  });
+
+  it.each(["think", "voice"])("rejects an empty or over-long %s", (field) => {
+    expect(() => parse({ provider: "deepgram", [field]: "" })).toThrow();
+    expect(() => parse({ provider: "deepgram", [field]: "x".repeat(65) })).toThrow();
+    expect(() => parse({ provider: "deepgram", [field]: "x".repeat(64) })).not.toThrow();
   });
 });
 

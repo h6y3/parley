@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { canConvert, convert, createAudioCodec } from "@parley/audio";
 import {
+  CALL_ANSWERED_CUE,
   CallSession,
   MEETING_CONNECTED_CUE,
   MEETING_OPENING_TRIGGER,
+  MISSED_GREETING_NUDGE_MS,
   MIXED_SOURCE,
   MULAW_8K,
   OPENING_TRIGGER,
@@ -567,6 +569,84 @@ describe.each(["gemini", "deepgram"] as const)("CallSession invariants on %s", (
         { via: "sendRealtimeInput", input: { text: MEETING_OPENING_TRIGGER } }
       ]);
     }
+  });
+
+  /** The two-party "prompt" opening's one fallback: a greeting the model
+   * missed (answered instantly, or clipped — a live smoke call transcribed
+   * only "de Sesame") left the agent silent. Once the far end has spoken and
+   * the model has produced nothing for MISSED_GREETING_NUDGE_MS, the answered
+   * cue goes out once, as each vendor takes its opening line: a user turn on
+   * Deepgram, a realtime text input on Gemini. */
+  describe("missed greeting", () => {
+    const cueOnWire = (): unknown =>
+      name === "deepgram"
+        ? { type: "InjectUserMessage", content: CALL_ANSWERED_CUE }
+        : { via: "sendRealtimeInput", input: { text: CALL_ANSWERED_CUE } };
+    const cues = (sent: unknown[]): unknown[] =>
+      sent.filter((m) => JSON.stringify(m).includes(CALL_ANSWERED_CUE));
+
+    it("far end speaks and the model stays silent: the cue goes out once, on the vendor's opening path", async () => {
+      vi.useFakeTimers();
+      const { wire, diagnostics } = await placeCall();
+      wire.serverSays("transcript", { speaker: "caller", text: "de Sesame" });
+      await vi.advanceTimersByTimeAsync(MISSED_GREETING_NUDGE_MS - 1);
+      expect(cues(wire.sent())).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(cues(wire.sent())).toEqual([cueOnWire()]);
+      expect(diagnostics.filter((d) => d.startsWith("missed greeting: opening re-sent"))).toEqual([
+        `missed greeting: opening re-sent at +${MISSED_GREETING_NUDGE_MS}ms`
+      ]);
+
+      // The far end tries again; the cue is never repeated.
+      wire.serverSays("transcript", { speaker: "caller", text: "Hello? Anyone there?" });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(cues(wire.sent())).toEqual([cueOnWire()]);
+      // The opening itself is still delivered exactly once, in the setup.
+      expect(JSON.stringify(wire.sent()).split(OPENING_TRIGGER).length - 1).toBe(1);
+    });
+
+    /** Deepgram sends an utterance's text only when it ends: a short "Hi."
+     * then a long introduction must not get the cue mid-speech. The vendor's
+     * speech-start signal holds the window; the next transcript restarts it. */
+    it("far-end speech starting holds the window until its transcript", async () => {
+      vi.useFakeTimers();
+      const { wire } = await placeCall();
+      wire.serverSays("transcript", { speaker: "caller", text: "Hi." });
+      await vi.advanceTimersByTimeAsync(1_000);
+      wire.serverSays("interrupted");
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(cues(wire.sent())).toEqual([]);
+      wire.serverSays("transcript", {
+        speaker: "caller",
+        text: "This is the front desk, how can I help you today?"
+      });
+      await vi.advanceTimersByTimeAsync(MISSED_GREETING_NUDGE_MS);
+      expect(cues(wire.sent())).toEqual([cueOnWire()]);
+    });
+
+    it("model audio inside the window: the cue never goes out", async () => {
+      vi.useFakeTimers();
+      const { wire } = await placeCall();
+      wire.serverSays("transcript", { speaker: "caller", text: "Hello?" });
+      await vi.advanceTimersByTimeAsync(2_000);
+      wire.serverSays("audio", modelAudio(fake));
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(cues(wire.sent())).toEqual([]);
+    });
+
+    it("a meeting is never nudged", async () => {
+      vi.useFakeTimers();
+      const { wire } = await placeCall({
+        execution: {
+          meeting: {
+            consent: { phrase: "go ahead and take notes", timeoutSeconds: 180, onTimeout: "hangUp" }
+          }
+        }
+      });
+      wire.serverSays("transcript", { speaker: "caller", text: "Hi everyone, let's start." });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(cues(wire.sent())).toEqual([]);
+    });
   });
 
   it("modelTurnsCompleted counts one per turnComplete", async () => {

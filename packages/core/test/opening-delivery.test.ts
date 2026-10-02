@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CallSession } from "../src/call-session.js";
 import {
+  CALL_ANSWERED_CUE,
   MEETING_CONNECTED_CUE,
   MEETING_OPENING_TRIGGER,
   OPENING_TRIGGER,
@@ -55,7 +56,7 @@ describe("planOpening", () => {
   it.each([
     ["turn", false, { trigger: OPENING_TRIGGER }],
     ["turn", true, { trigger: MEETING_OPENING_TRIGGER }],
-    ["prompt", false, { promptSuffix: OPENING_TRIGGER }],
+    ["prompt", false, { promptSuffix: OPENING_TRIGGER, answeredCue: CALL_ANSWERED_CUE }],
     ["prompt", true, { promptSuffix: MEETING_OPENING_TRIGGER, trigger: MEETING_CONNECTED_CUE }]
   ] as const)("%s delivery, meeting=%s", (delivery, isMeeting, expected) => {
     expect(planOpening(delivery, isMeeting)).toEqual(expected);
@@ -74,11 +75,16 @@ describe("planOpening", () => {
   });
 
   it("never carries caller content: every text it returns is a Parley constant", () => {
-    const constants = new Set([OPENING_TRIGGER, MEETING_OPENING_TRIGGER, MEETING_CONNECTED_CUE]);
+    const constants = new Set([
+      OPENING_TRIGGER,
+      MEETING_OPENING_TRIGGER,
+      MEETING_CONNECTED_CUE,
+      CALL_ANSWERED_CUE
+    ]);
     for (const delivery of ["turn", "prompt"] as const) {
       for (const isMeeting of [false, true]) {
         const plan = planOpening(delivery, isMeeting);
-        for (const text of [plan.promptSuffix, plan.trigger]) {
+        for (const text of [plan.promptSuffix, plan.trigger, plan.answeredCue]) {
           if (text !== undefined) expect(constants.has(text)).toBe(true);
         }
       }

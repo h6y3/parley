@@ -135,8 +135,16 @@ text goes, and it is required: `CallSession`, and the harness runners, pass it t
   the vendor has a text input its model reads as an input to the session, not as the far end
   speaking. `GeminiRealtimeProvider` uses it for meetings; the trigger goes as realtime text input.
 - **`"prompt"`** — the trigger is appended to the one-time `systemInstruction`, and on a
-  two-party call `sendOpeningTrigger` is never called: the callee's own "hello" opens the call. On
-  a meeting it is called once, with `MEETING_CONNECTED_CUE`, a single short line. Declare this
+  two-party call `sendOpeningTrigger` is not called at connect: the callee's own "hello" opens the
+  call. If the far end speaks within the first 10 s (`NUDGE_OPENING_WINDOW_MS`) and the model
+  produces nothing at all for 2.5 s after that speech (`MISSED_GREETING_NUDGE_MS`), it is called
+  once with `CALL_ANSWERED_CUE`, a single short
+  statement of fact, so a missed greeting cannot leave the call silent — except on a call that
+  declares `execution.ivr`, whose menu may pause longer than that, or one answered by a machine.
+  The window is held while the far end is speaking, read from `onInterrupted`: a provider that
+  reports only whole utterances should raise it when the far end starts talking (Deepgram's
+  `UserStartedSpeaking`), or a long first sentence could be cut into. On a meeting it is called
+  once, with `MEETING_CONNECTED_CUE`, a single short line. Declare this
   when the vendor's only post-connect text input is a user turn. Deepgram's is
   `InjectUserMessage`, and sent the long trigger that way its model heard it as the callee: in
   billed text-mode runs one model hung up during the ring, and another said "I'm listening and
@@ -177,8 +185,8 @@ required, so every provider has to choose one.
 Read the shape of `RealtimeSession` closely: there is **no method to update `systemInstruction`
 after `connect()`**, and **no general-purpose "send an arbitrary turn" method**. The only two ways
 to put words in front of the model, ever, are `connect()`'s one-time `systemInstruction` parameter
-and `sendOpeningTrigger()`'s one-shot short line (which a `"prompt"` provider is only ever sent on
-a meeting). This is not an oversight to work around in a new
+and `sendOpeningTrigger()`'s one-shot short line (which a `"prompt"` provider is sent only on a
+meeting, or once on a two-party call whose greeting the model missed). This is not an oversight to work around in a new
 provider implementation — it is the interface-level enforcement of the correctness guarantee in
 `docs/prompt-guide.md`. A new `RealtimeProvider` implementation must not expose any additional
 method that would let a caller push a second privileged message mid-session, even if the

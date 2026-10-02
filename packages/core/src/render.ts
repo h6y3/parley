@@ -108,11 +108,35 @@ export const MEETING_OPENING_TRIGGER =
  * exactly what it is. One short line, no newline, no caller content. */
 export const MEETING_CONNECTED_CUE = "The meeting line is connected.";
 
+/** The opening on a `"prompt"`-delivery provider's TWO-PARTY call, sent at
+ * most once and only if it turns out to be needed: the far end has spoken,
+ * and the model has produced nothing at all within
+ * `MISSED_GREETING_NUDGE_MS` (`./call-session.ts`) of the end of that speech.
+ *
+ * With the opening in the prompt the model waits for the far end's voice, and
+ * nothing else ever starts the call. Twice live, a greeting the model did not
+ * register — a callee who answered instantly, or a "hello" clipped to
+ * fragments (one test call transcribed only "de Sesame") — left the agent
+ * silent until the callee said hello again or the silence cap hung up.
+ *
+ * It is the meeting cue's two-party counterpart, and holds to the same rules:
+ * a statement of fact, not an instruction, because on a user-turn vendor
+ * (Deepgram's `InjectUserMessage`) it is heard as someone on the line. It
+ * states exactly the condition `OPENING_TRIGGER` — already in the prompt —
+ * waits for, "the other end has spoken", and nothing more: the opening
+ * instruction stays the one in the prompt, delivered once, never restated.
+ * One short line, no newline, no caller content, within the bound the
+ * Deepgram provider enforces on this path. */
+export const CALL_ANSWERED_CUE = "The other end has answered and spoken.";
+
 /** What `planOpening` decided: text to append to the one-time system
- * instruction, and the line to send as the opening. Either may be absent. */
+ * instruction, the line to send as the opening, and — on a two-party call
+ * opened in the prompt — the line `CallSession` sends once if the far end's
+ * greeting was missed. Any may be absent. */
 export interface OpeningPlan {
   promptSuffix?: string;
   trigger?: string;
+  answeredCue?: string;
 }
 
 /** The one place the opening is decided — for `CallSession`, the scenario
@@ -122,7 +146,8 @@ export interface OpeningPlan {
  * `"turn"` is the long-standing behaviour, byte for byte: the trigger for the
  * call's shape, sent as its own input. `"prompt"` moves that same text into
  * the system instruction and sends nothing on a two-party call (the callee's
- * "hello" is the opening), or `MEETING_CONNECTED_CUE` on a meeting. See
+ * "hello" is the opening — with `CALL_ANSWERED_CUE` held back in case that
+ * "hello" is missed), or `MEETING_CONNECTED_CUE` on a meeting. See
  * `OpeningDelivery` (`./types.ts`) for why a vendor declares one or the
  * other, and `OpeningDeliveryByShape` for a vendor that declares each call
  * shape separately. Every string returned is a constant in this file. */
@@ -140,7 +165,7 @@ export function planOpening(
   if (delivery === "turn") return { trigger: opening };
   return isMeeting
     ? { promptSuffix: opening, trigger: MEETING_CONNECTED_CUE }
-    : { promptSuffix: opening };
+    : { promptSuffix: opening, answeredCue: CALL_ANSWERED_CUE };
 }
 
 /** The full system instruction a connect sends: the rendered brief, plus the

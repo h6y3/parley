@@ -1,9 +1,15 @@
+import {
+  parseCampaignArgs,
+  parseSimArgs,
+  type CampaignArgs,
+  type SimServeArgs
+} from "@parley/phone-test";
 import type { RealtimeProviderKind } from "@parley/server";
 
 export type { RealtimeProviderKind };
 
 export interface ParleyArgs {
-  command: "serve" | "call" | "harness" | "doctor" | "meeting" | "help";
+  command: "serve" | "call" | "harness" | "doctor" | "meeting" | "sim" | "campaign" | "help";
   to?: string;
   briefPath?: string;
   /** Only meaningful for `serve`. The daemon's default realtime provider.
@@ -11,6 +17,10 @@ export interface ParleyArgs {
    * providers are built whenever their key is set — this only chooses which
    * one a call uses when nothing else does. */
   realtimeProvider?: RealtimeProviderKind;
+  /** `sim`: the phone-test harness's simulated callee. */
+  sim?: SimServeArgs;
+  /** `campaign`: the phone-test harness's campaign lifecycle and runs. */
+  campaign?: CampaignArgs;
   rest: string[];
 }
 
@@ -43,6 +53,13 @@ export function parseParleyArgs(argv: readonly string[]): ParleyArgs {
     // give the usage text two places to drift apart.
     case "meeting":
       return { command: "meeting", rest };
+    // Parsed strictly here, by @parley/phone-test's own parsers: these
+    // commands buy numbers and place billed calls, so an unknown or misspelt
+    // flag must fail before anything runs, never fall back to a default.
+    case "sim":
+      return { command: "sim", sim: parseSimArgs(rest), rest };
+    case "campaign":
+      return { command: "campaign", campaign: parseCampaignArgs(rest), rest };
     case "doctor":
       return { command: "doctor", rest };
     default:

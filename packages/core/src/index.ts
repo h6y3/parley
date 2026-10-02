@@ -17,6 +17,7 @@ export type {
   RealtimeAudioFormat,
   RealtimeClose,
   RealtimeConnectParams,
+  RealtimeConnectSettings,
   RealtimeProvider,
   RealtimeProviderError,
   RealtimeSession,
@@ -45,6 +46,7 @@ export type { Brief } from "./brief.js";
 export { redactCloseReason, redactPhoneNumber, redactSecrets } from "./redaction.js";
 
 export {
+  CALL_ANSWERED_CUE,
   MEETING_CONNECTED_CUE,
   MEETING_OPENING_TRIGGER,
   OPENING_TRIGGER,
@@ -62,6 +64,8 @@ export {
   CallSession,
   CONSENT_HANDOFF_MAX_MS,
   describeLifecycleEvent,
+  MISSED_GREETING_NUDGE_MS,
+  NUDGE_OPENING_WINDOW_MS,
   TRANSCRIPTION_CONNECT_TIMEOUT_MS
 } from "./call-session.js";
 export type {
@@ -70,7 +74,8 @@ export type {
   CallPhase,
   CallSessionHandle,
   CallSessionParams,
-  EndReason
+  EndReason,
+  RealtimeRecord
 } from "./call-session.js";
 
 export { AudioBridge } from "./audio-bridge.js";
@@ -103,6 +108,7 @@ export {
   findConsentMatch,
   isConsentDenial,
   isWhoConfirmedField,
+  isRolePlaceholder,
   ToolGate,
   routeToolCall
 } from "./execution.js";

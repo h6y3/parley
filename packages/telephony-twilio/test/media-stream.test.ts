@@ -477,3 +477,58 @@ describe("drainOutbound", () => {
     await handle.drainOutbound(500);
   });
 });
+
+describe("dtmf events", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("surfaces each Twilio dtmf event's digit through onDtmf", () => {
+    const { socket, emit } = makeFakeSocket();
+    const digits: string[] = [];
+    attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: () => {},
+      onDtmf: (d) => digits.push(d)
+    });
+    emit("message", START);
+    for (const digit of ["2", "#"]) {
+      emit(
+        "message",
+        JSON.stringify({
+          event: "dtmf",
+          streamSid: "MZ123",
+          sequenceNumber: "5",
+          dtmf: { track: "inbound_track", digit }
+        })
+      );
+    }
+    expect(digits).toEqual(["2", "#"]);
+  });
+
+  it("drops a dtmf event that carries no single keypad digit, and needs no handler", () => {
+    const { socket, emit } = makeFakeSocket();
+    const digits: string[] = [];
+    attachTwilioMediaStream({
+      callId: "CA123",
+      socket,
+      onInboundAudio: () => {},
+      onCallEvent: () => {},
+      onDtmf: (d) => digits.push(d)
+    });
+    emit("message", JSON.stringify({ event: "dtmf", dtmf: { digit: "pressed 2" } }));
+    emit("message", JSON.stringify({ event: "dtmf" }));
+    expect(digits).toEqual([]);
+    const bare = makeFakeSocket();
+    attachTwilioMediaStream({
+      callId: "CA123",
+      socket: bare.socket,
+      onInboundAudio: () => {},
+      onCallEvent: () => {}
+    });
+    expect(() =>
+      bare.emit("message", JSON.stringify({ event: "dtmf", dtmf: { digit: "1" } }))
+    ).not.toThrow();
+  });
+});

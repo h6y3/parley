@@ -361,7 +361,10 @@ Where the opening goes follows the transport's `openingDelivery`, planned by
 `planOpening` exactly as a real call's is. A two-party scenario on either
 transport (`"prompt"`) appends the trigger to the session's one prompt and
 sends nothing at connect — so at `0` there is no trigger to follow and the first
-line goes out after `settleMs`. A meeting scenario on Gemini (which declares
+line goes out after `settleMs`. (A real call also sends `CALL_ANSWERED_CUE`
+once if the far end speaks in the first 10 s and the model stays silent for
+2.5 s after, unless the call declares `execution.ivr` or a machine answered; the scenario
+runner never models that, because its callee lines always reach the model.) A meeting scenario on Gemini (which declares
 `{ twoParty: "prompt", meeting: "turn" }`) sends the trigger as a line at
 connect; on Deepgram it rides in the Settings prompt and the short
 `MEETING_CONNECTED_CUE` is sent in its place. Gemini two-party scenarios moved

@@ -27,6 +27,7 @@ import type {
   CallLifecycleEvent,
   MediaStreamHandle,
   OriginateResult,
+  RealtimeConnectSettings,
   RealtimeProvider,
   RealtimeSession,
   SpeakerRole,
@@ -35,6 +36,15 @@ import type {
   TranscriptEvent,
   WebSocketLike
 } from "./types.js";
+
+/** What `CallSession.realtime` reports for the call record. */
+export interface RealtimeRecord {
+  provider: string;
+  model: string;
+  voice?: string;
+  speed?: number;
+  expressivity?: number;
+}
 
 export interface CallSessionParams {
   brief: Brief;
@@ -56,6 +66,13 @@ export interface CallSessionParams {
   answerWebhookUrl: string;
   /** Realtime model id (e.g. @parley/realtime-gemini DEFAULT_GEMINI_MODEL). */
   model: string;
+  /** A per-call voice (`execution.realtime.voice`), passed to `connect` as
+   * `RealtimeConnectParams.voice`. Absent means the provider's default. */
+  voice?: string;
+  /** Per-call provider settings (`execution.realtime`), passed to `connect`
+   * as `RealtimeConnectParams.settings`. Absent means the provider's
+   * configured defaults. */
+  realtimeSettings?: RealtimeConnectSettings;
   statusCallbackUrl?: string;
   /** The BINDING plane. Absent means no tools are declared and no caps are
    * armed — identical to Parley before the execution plane existed. */
@@ -105,6 +122,22 @@ export interface BridgeCounts {
 
 /** Why a call ended. `remote` means the far end hung up (so there is nothing to
  * ask the carrier to do); `error` means our own teardown failed. */
+/** How long after the far end's speech ends a two-party call opened in the
+ * prompt waits for ANY model audio before sending `CALL_ANSWERED_CUE`, once.
+ * The opening in the prompt tells the model to wait for the other end; when
+ * the greeting itself is missed (answered instantly, or clipped — a smoke call
+ * transcribed only "de Sesame"), nothing else ever starts the call, and the
+ * agent sat silent until the callee repeated "hello" or the silence cap hung
+ * up. Long next to a model's normal reply latency, short next to a person
+ * deciding the line is dead. */
+export const MISSED_GREETING_NUDGE_MS = 2_500;
+
+/** The nudge covers the OPENING only (ruling R21): it arms only for far-end
+ * speech that started within this long of the media stream starting. Speech
+ * that begins later is a call already under way — a hold, a transfer, a
+ * person thinking — where a cue would be an interruption, not a rescue. */
+export const NUDGE_OPENING_WINDOW_MS = 10_000;
+
 /** Ceiling on waiting for the carrier to confirm playout. Generous next to a
  * closing sentence and short next to a call: it bounds a confirmation that
  * never arrives, and is never the thing being waited for. */
@@ -352,6 +385,17 @@ export class CallSession {
   private settled = false;
   private durationTimer?: ReturnType<typeof setTimeout>;
   private silenceTimer?: ReturnType<typeof setTimeout>;
+  /** `CALL_ANSWERED_CUE` while it may still be sent — set at attach only when
+   * `planOpening` held it back (a two-party call opened in the prompt), and
+   * cleared for good the moment the model produces anything, the call ends,
+   * or it is sent. Undefined means the nudge can never fire again. */
+  private missedGreetingCue?: string;
+  private missedGreetingTimer?: ReturnType<typeof setTimeout>;
+  /** When the far end's current speech began, ms since the stream started:
+   * set by the first speech-start signal or far-end fragment while the cue is
+   * held, and kept while the speech continues. Every path out of an utterance
+   * either sends the cue or drops it, so this is never stale. */
+  private farEndSpeechStartOffsetMs?: number;
   private readonly sinks: AudioSink[] = [];
   private readonly phaseSet = new Set<CallPhase>();
   private preConsent: { speaker: SpeakerRole; text: string; at: string }[] = [];
@@ -618,6 +662,12 @@ export class CallSession {
         model: this.params.model,
         systemInstruction,
         responseModality: "audio",
+        // Per-call voice and settings, only when the envelope chose them: a
+        // call that chose none connects exactly as it did before they existed.
+        ...(this.params.voice !== undefined ? { voice: this.params.voice } : {}),
+        ...(this.params.realtimeSettings !== undefined
+          ? { settings: this.params.realtimeSettings }
+          : {}),
         tools: buildToolDeclarations(execution),
         // Tag the far end at source: "participant" on a declared meeting,
         // absent (provider default "caller") on an ordinary two-party call.
@@ -668,6 +718,7 @@ export class CallSession {
             // still bounds the total).
             for (const rearm of this.turnWaitRearms) rearm();
             this.firstModelAudioOffsetMs ??= this.nowMs() - this.startedAtMs;
+            this.cancelMissedGreetingNudge();
             this.media?.sendOutboundAudio(outbound.adapt(frame));
             if (this.afterEndCall) {
               this.afterEndCall.audioMs += frameDurationMs(frame);
@@ -681,6 +732,13 @@ export class CallSession {
             // real call proved it does. Outside a burst this still clears on
             // every interrupt exactly as before — that path is a live-call
             // fix in its own right (barge-in must keep working).
+            // The far end started speaking (Deepgram `UserStartedSpeaking`,
+            // Gemini `interrupted`). Deepgram sends each utterance's text only
+            // when it ENDS, so a window still counting from an earlier short
+            // "Hi." would fire mid-introduction — and there the cue is a user
+            // turn the agent answers over the callee. Hold the window; the
+            // utterance's own transcript restarts it.
+            this.holdMissedGreetingNudge();
             if (this.nowMs() < this.dtmfInFlightUntilMs) return;
             this.media?.clearOutboundBuffer();
           },
@@ -712,6 +770,10 @@ export class CallSession {
               // goes too, fragments as they came, for the gate's agreement
               // check — `noteCallerSpeech` says how it joins them.
               if (event.text !== "") this.gate?.noteCallerSpeech(event.text, event.isFinal);
+              // The far end has spoken: (re)start the missed-greeting window
+              // from the end of what it said. A no-op unless the cue is still
+              // held — never on a meeting, never once the model has spoken.
+              if (event.text.trim() !== "") this.armMissedGreetingNudge();
               this.closeModelEntry();
               this.noteTranscript(event);
               return;
@@ -721,6 +783,7 @@ export class CallSession {
               return;
             }
             this.modelTurnOpen = true;
+            this.cancelMissedGreetingNudge();
             this.noteTextAfterEndCall(event.text);
             if (this.openModelEntry) this.openModelEntry.text += event.text;
             else {
@@ -768,6 +831,9 @@ export class CallSession {
             for (const waiter of [...this.turnFinishedWaiters]) waiter();
           },
           onToolCall: (call) => {
+            // The model acting — a keypress into a menu, say — is the model
+            // having responded: the missed-greeting cue must not follow it.
+            this.cancelMissedGreetingNudge();
             // Fire-and-forget: the provider's onmessage handler is synchronous,
             // and every path inside handleToolCall answers the call itself.
             //
@@ -853,6 +919,19 @@ export class CallSession {
     // A provider may declare the two shapes separately (Gemini: a two-party
     // call in the prompt, a meeting as a turn); `planOpening` resolves that.
     if (opening.trigger !== undefined) session.sendOpeningTrigger(opening.trigger);
+    // Held back, not sent: the two-party "prompt" opening's one fallback, for
+    // when the far end's greeting is missed. `planOpening` plans it for that
+    // shape only, so a meeting — whose silence until people are heard is the
+    // consent invariant — and a "turn" provider never carry it.
+    //
+    // Never on a call that declares IVR navigation (R20): a recorded menu can
+    // pause between options for longer than MISSED_GREETING_NUDGE_MS while the
+    // model rightly waits for it to finish, and the cue would then have the
+    // agent talk over the menu.
+    // Nor once the carrier has said a machine answered (R21) — a verdict that
+    // can land during the connect, before this line.
+    this.missedGreetingCue =
+      execution.ivr || this.answeredByValue === "machine" ? undefined : opening.answeredCue;
     this.armTimers();
 
     // An arrow captures `this` lexically, so the getter reads the LIVE value
@@ -1504,11 +1583,21 @@ export class CallSession {
   }
 
   /** Which realtime provider and model this call's speaking plane runs on —
-   * the provider's own `name` and the model the session was connected with.
+   * the provider's own `name` and the model the session was connected with —
+   * plus any per-call voice, speed or expressivity it was connected with.
    * For the call record, so a record says what it ran on without anyone
-   * having to reconstruct the daemon's configuration at the time. */
-  get realtime(): { provider: string; model: string } {
-    return { provider: this.params.realtime.name, model: this.params.model };
+   * having to reconstruct the daemon's configuration at the time. A setting
+   * the call did not choose is absent (the daemon's default ran), so a call
+   * with none reads exactly as it did before per-call settings existed. */
+  get realtime(): RealtimeRecord {
+    const settings = this.params.realtimeSettings;
+    return {
+      provider: this.params.realtime.name,
+      model: this.params.model,
+      ...(this.params.voice !== undefined ? { voice: this.params.voice } : {}),
+      ...(settings?.speed !== undefined ? { speed: settings.speed } : {}),
+      ...(settings?.expressivity !== undefined ? { expressivity: settings.expressivity } : {})
+    };
   }
 
   /** Per direction, whether frames were handed straight across or converted
@@ -1713,6 +1802,7 @@ export class CallSession {
     clearTimeout(this.silenceTimer);
     clearTimeout(this.consentTimer);
     clearTimeout(this.departureTimer);
+    this.cancelMissedGreetingNudge();
     // Nothing said before consent survives a call that never got it. Not an
     // optimisation — it is the promise the announcement made.
     //
@@ -1800,6 +1890,59 @@ export class CallSession {
     await this.session?.close();
   }
 
+  /** Start, or restart, the missed-greeting window. Restarted on every far-end
+   * fragment, so it runs from the END of the far end's speech. Does nothing
+   * once the cue is gone — sent, cancelled by the model producing anything,
+   * or never planned — or once the call has ended. */
+  private armMissedGreetingNudge(): void {
+    if (this.missedGreetingCue === undefined || this.settled) return;
+    const startedAt = (this.farEndSpeechStartOffsetMs ??= this.nowMs() - this.startedAtMs);
+    // Opening only (R21). Later speech can only start later still, so the
+    // cue is dropped for good rather than merely not armed.
+    if (startedAt > NUDGE_OPENING_WINDOW_MS) {
+      this.cancelMissedGreetingNudge();
+      return;
+    }
+    clearTimeout(this.missedGreetingTimer);
+    this.missedGreetingTimer = setTimeout(
+      () => this.sendMissedGreetingCue(),
+      MISSED_GREETING_NUDGE_MS
+    );
+  }
+
+  /** The far end has started speaking: stop the pending window without
+   * dropping the cue, and remember when that speech began. */
+  private holdMissedGreetingNudge(): void {
+    if (this.missedGreetingCue === undefined) return;
+    clearTimeout(this.missedGreetingTimer);
+    this.missedGreetingTimer = undefined;
+    this.farEndSpeechStartOffsetMs ??= this.nowMs() - this.startedAtMs;
+  }
+
+  /** Drop the cue for good: the model produced audio, text or a tool call,
+   * a machine answered, the opening window passed, or the call ended. */
+  private cancelMissedGreetingNudge(): void {
+    clearTimeout(this.missedGreetingTimer);
+    this.missedGreetingTimer = undefined;
+    this.missedGreetingCue = undefined;
+  }
+
+  /** The far end spoke and the model produced nothing for the whole window:
+   * send the plan's answered cue, once, through the opening path. */
+  private sendMissedGreetingCue(): void {
+    const cue = this.missedGreetingCue;
+    this.cancelMissedGreetingNudge();
+    if (cue === undefined || this.settled || this.firstModelAudioOffsetMs !== undefined) return;
+    this.logAt("missed greeting: opening re-sent");
+    try {
+      this.session?.sendOpeningTrigger(cue);
+    } catch (err) {
+      this.params.onDiagnostic?.(
+        `missed greeting: cue refused: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
   private armTimers(): void {
     const limits = this.params.execution?.limits;
     if (limits) {
@@ -1838,6 +1981,9 @@ export class CallSession {
    * never anything anyone said on it. */
   noteLifecycleEvent(event: CallLifecycleEvent): void {
     if (event.type === "answered" && event.answeredBy) this.answeredByValue = event.answeredBy;
+    // A machine has no greeting to miss, and a cue into a voicemail greeting
+    // is the agent talking over a recording (R21).
+    if (this.answeredByValue === "machine") this.cancelMissedGreetingNudge();
     this.params.onDiagnostic?.(`carrier lifecycle: ${describeLifecycleEvent(event)}`);
   }
 

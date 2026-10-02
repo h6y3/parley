@@ -1,0 +1,12 @@
+[
+  { "name": "gemini-default", "realtime": { "provider": "gemini" } },
+  { "name": "deepgram-4omini", "realtime": { "provider": "deepgram", "think": "gpt-4o-mini" } },
+  {
+    "name": "deepgram-haiku",
+    "realtime": { "provider": "deepgram", "think": "claude-haiku-4-5" }
+  },
+  {
+    "name": "deepgram-sonnet",
+    "realtime": { "provider": "deepgram", "think": "claude-sonnet-4-6" }
+  }
+]

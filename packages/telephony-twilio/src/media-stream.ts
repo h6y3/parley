@@ -14,7 +14,19 @@ interface TwilioInbound {
   start?: { streamSid: string; callSid: string };
   media?: { track?: string; payload: string; timestamp?: string };
   mark?: { name: string };
+  dtmf?: { track?: string; digit?: string };
 }
+
+/** `AttachMediaStreamParams` plus Twilio's keypad events. Optional: Parley's
+ * own calls send keypresses in-band and never read them back, so the daemon
+ * passes nothing here. A callee that has to hear keypresses (a simulated phone
+ * menu) passes `onDtmf`. */
+export interface TwilioMediaStreamParams extends AttachMediaStreamParams {
+  /** One keypad digit (`0`-`9`, `*`, `#`) Twilio detected on the inbound track. */
+  onDtmf?: (digit: string) => void;
+}
+
+const KEYPAD_DIGIT = /^[0-9*#]$/;
 
 // Twilio plays outbound audio on a bidirectional <Connect><Stream> at the
 // real-time telephony rate and silently DROPS audio delivered faster than real
@@ -63,8 +75,8 @@ export function outboundFramesDue(
  * `mark`, `stop`. Outbound audio is paced through a 20 ms frame pacer (see
  * above); barge-in sends `clear`. Operates on the WebSocketLike abstraction so
  * this package needs no `ws` dependency — the server wraps its real socket. */
-export function attachTwilioMediaStream(params: AttachMediaStreamParams): MediaStreamHandle {
-  const { socket, onInboundAudio, onCallEvent } = params;
+export function attachTwilioMediaStream(params: TwilioMediaStreamParams): MediaStreamHandle {
+  const { socket, onInboundAudio, onCallEvent, onDtmf } = params;
   let streamSid: string | undefined;
   let lastTimestampMs = 0;
   let outboundQueue = Buffer.alloc(0);
@@ -170,8 +182,13 @@ export function attachTwilioMediaStream(params: AttachMediaStreamParams): MediaS
         }
         break;
       }
+      case "dtmf": {
+        const digit = msg.dtmf?.digit;
+        if (typeof digit === "string" && KEYPAD_DIGIT.test(digit)) onDtmf?.(digit);
+        break;
+      }
       default:
-        break; // connected, dtmf — not consumed in V1
+        break; // connected — nothing to do
     }
   });
 

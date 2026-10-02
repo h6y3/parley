@@ -1,6 +1,6 @@
 {
   "name": "@parley/cli",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -29,6 +29,7 @@
     "@parley/core": "workspace:*",
     "@parley/harness": "workspace:*",
     "@parley/meeting-browser": "workspace:*",
+    "@parley/phone-test": "workspace:*",
     "@parley/realtime-deepgram": "workspace:*",
     "@parley/realtime-gemini": "workspace:*",
     "@parley/server": "workspace:*",

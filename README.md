@@ -233,9 +233,10 @@ See [Scenario Authoring](docs/scenario-authoring.md), especially
 | [`@parley/realtime-deepgram`](packages/realtime-deepgram)           | Deepgram Voice Agent speaking-plane provider                                             |
 | [`@parley/transcription-deepgram`](packages/transcription-deepgram) | Silent meeting transcription provider                                                    |
 | [`@parley/server`](packages/server)                                 | Authenticated call API, answer webhook, media WebSocket, and operation reservations      |
-| [`@parley/cli`](packages/cli)                                       | `serve`, `call`, `doctor`, and `harness` commands                                        |
+| [`@parley/cli`](packages/cli)                                       | `serve`, `call`, `doctor`, `harness`, `meeting`, `sim`, and `campaign` commands          |
 | [`@parley/harness`](packages/harness)                               | Preview, reliability, scenario, and metamorphic testing                                  |
 | [`@parley/meeting-browser`](packages/meeting-browser)               | Browser-driven meeting transport, consent disclosure, captions, and attribution          |
+| [`@parley/phone-test`](packages/phone-test)                         | Phone test campaigns: simulated callee, temporary number, budget, scoring and report     |
 
 ## Documentation
 
@@ -250,6 +251,7 @@ See [Scenario Authoring](docs/scenario-authoring.md), especially
 | [Deployment](docs/runbooks/deployment.md)              | Run the daemon under launchd or systemd               |
 | [Provider Authoring](docs/provider-authoring-guide.md) | Add telephony or realtime providers                   |
 | [Scenario Authoring](docs/scenario-authoring.md)       | Generate and evaluate call scenarios                  |
+| [Phone Testing](docs/phone-testing.md)                 | Score real phone calls against a simulated callee     |
 | [Examples](examples/scenarios/README.md)               | Ready-to-run scenarios and briefs                     |
 
 ## Lawful use

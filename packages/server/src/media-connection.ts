@@ -3,6 +3,7 @@ import type {
   ConsentReceipt,
   EndReason,
   MeetingExecution,
+  RealtimeRecord,
   RecordedOutcome,
   TranscriptEvent,
   TranscriptGap,
@@ -58,8 +59,11 @@ export interface CompletedCallRecord {
   /** Which realtime provider spoke on this call, and the model it ran — for
    * Deepgram, the think model. Read from the `CallSession` itself
    * (`CallSession.realtime`), so the record names what actually ran rather
-   * than what the daemon's default happened to be. */
-  realtime: { provider: string; model: string };
+   * than what the daemon's default happened to be. `model` is the effective
+   * one (a per-call `execution.realtime.think` when chosen); `voice`, `speed`
+   * and `expressivity` appear only when the call chose them per call, and are
+   * absent when the daemon's default ran. */
+  realtime: RealtimeRecord;
   /** Milliseconds from `startedAt` to the first frame of model audio
    * (`CallSession.firstModelAudioAtMs`) — provider-neutral answer-to-first-word
    * evidence. Absent when the model never spoke, which is a different fact

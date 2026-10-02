@@ -64,6 +64,72 @@ export const DEFAULT_DEEPGRAM_SPEED = 1.25;
 export const DEEPGRAM_SPEED_MIN = 0.7;
 export const DEEPGRAM_SPEED_MAX = 1.5;
 
+/** The think models a call may choose per call (`execution.realtime.think`),
+ * each mapped to the MANAGED think provider that serves it — the
+ * `agent.think.provider.type` Deepgram expects. Managed providers need no
+ * endpoint and no separate vendor key, only the Deepgram key already on the
+ * connection, which is why the list is closed: a model outside it would need
+ * a credential this daemon does not hold. `@parley/server` refuses any other
+ * name before dialling. */
+export const DEEPGRAM_THINK_MODELS: Readonly<Record<string, string>> = Object.freeze({
+  "gpt-4o-mini": "open_ai",
+  "gpt-4.1-mini": "open_ai",
+  "gpt-5.4-mini": "open_ai",
+  "claude-haiku-4-5": "anthropic",
+  "claude-sonnet-4-6": "anthropic",
+  "gemini-3.5-flash": "google"
+});
+
+const FLUX_VOICE_NAMES = [
+  "hannah",
+  "alexis",
+  "sienna",
+  "brooke",
+  "haley",
+  "heather",
+  "bree",
+  "brittany",
+  "elise",
+  "kelsey",
+  "meghan",
+  "paige",
+  "gemma",
+  "maeve",
+  "sharon",
+  "meena",
+  "priya",
+  "cliff",
+  "cole",
+  "miles",
+  "bruce",
+  "donovan",
+  "drew",
+  "marcus",
+  "wade",
+  "wes",
+  "kit",
+  "colin",
+  "sean",
+  "conor",
+  "jack",
+  "rufus",
+  "tanner",
+  "kai",
+  "marcelo",
+  "naveen"
+] as const;
+
+/** The voices a call may choose per call (`execution.realtime.voice`): the
+ * Flux TTS voices, plus the Aura voices this repository has used (the spike's
+ * provisional default and its two runners-up). `@parley/server` refuses any
+ * other name before dialling. */
+export const DEEPGRAM_VOICES: readonly string[] = Object.freeze([
+  ...FLUX_VOICE_NAMES.map((name) => `flux-${name}-en`),
+  "aura-2-cordelia-en",
+  "aura-2-helena-en",
+  "aura-2-juno-en"
+]);
+
 /** Deepgram closes an agent socket that goes quiet; its docs ask for a
  * KeepAlive every 8 s when no audio flows. The carrier normally streams
  * continuously, so this only covers a stall. */
@@ -128,6 +194,9 @@ export interface ResolvedDeepgramOptions {
   listenModel: string;
   voice: string;
   speed: number;
+  /** Speak expressivity (Beta), -2 to 2. Absent means it is not sent at all
+   * and Deepgram applies its own default. */
+  expressivity?: number;
 }
 
 export interface DeepgramFunctionDeclaration {
@@ -156,7 +225,13 @@ export interface DeepgramSettings {
       functions?: DeepgramFunctionDeclaration[];
     };
     speak: {
-      provider: { type: "deepgram"; version?: "v1" | "v2"; model: string; speed: number };
+      provider: {
+        type: "deepgram";
+        version?: "v1" | "v2";
+        model: string;
+        speed: number;
+        expressivity?: number;
+      };
     };
   };
 }
@@ -166,21 +241,35 @@ export interface DeepgramSettings {
  * Deepgram's own default. */
 function speakProvider(
   voice: string,
-  speed: number
+  speed: number,
+  expressivity: number | undefined
 ): DeepgramSettings["agent"]["speak"]["provider"] {
   const version = voice.startsWith("flux-") ? "v2" : voice.startsWith("aura-") ? "v1" : undefined;
-  return { type: "deepgram", ...(version ? { version } : {}), model: voice, speed };
+  return {
+    type: "deepgram",
+    ...(version ? { version } : {}),
+    model: voice,
+    speed,
+    // Sent only when chosen: an absent field leaves the Settings exactly as
+    // they were before expressivity existed.
+    ...(expressivity !== undefined ? { expressivity } : {})
+  };
 }
 
 /** Build the one `Settings` message for a session. Pure: no socket, no
  * clock, so the harness can reuse it and harness Settings cannot drift from
  * production's. `params.model` is not read — Deepgram's model choice is the
- * `think` option, because swapping it per connect would also mean reasoning
- * about the managed-provider credential behind it. */
+ * `think` option, overridden per connect only through `params.settings.think`,
+ * which names the managed think provider alongside the model (see
+ * `DEEPGRAM_THINK_MODELS`). `params.settings` and `params.voice` override
+ * `opts` for this session only; `opts` is never mutated. */
 export function buildDeepgramSettings(
   params: RealtimeConnectParams,
   opts: ResolvedDeepgramOptions
 ): DeepgramSettings {
+  const think = params.settings?.think ?? opts.think;
+  const speed = params.settings?.speed ?? opts.speed;
+  const expressivity = params.settings?.expressivity ?? opts.expressivity;
   const encoding = {
     encoding: DEEPGRAM_AUDIO_ENCODING.codec,
     sample_rate: DEEPGRAM_AUDIO_ENCODING.sampleRate
@@ -204,7 +293,7 @@ export function buildDeepgramSettings(
         }
       },
       think: {
-        provider: { type: opts.think.provider, model: opts.think.model },
+        provider: { type: think.provider, model: think.model },
         // Sent exactly once, here, as part of Settings — never again for the
         // life of the session (core/types.ts).
         prompt: params.systemInstruction,
@@ -224,7 +313,7 @@ export function buildDeepgramSettings(
             }
           : {})
       },
-      speak: { provider: speakProvider(params.voice ?? opts.voice, opts.speed) }
+      speak: { provider: speakProvider(params.voice ?? opts.voice, speed, expressivity) }
     }
   };
 }
@@ -256,6 +345,16 @@ interface DeepgramAgentMessage {
 export const defaultWsFactory: WsFactory = (url, headers) =>
   new WebSocket(url, { headers }) as unknown as AgentSocket;
 
+/** Refuse a speak speed Deepgram would not accept — at construction for the
+ * provider option, and per connect for a per-call setting. */
+function assertSpeed(speed: number): void {
+  if (!Number.isFinite(speed) || speed < DEEPGRAM_SPEED_MIN || speed > DEEPGRAM_SPEED_MAX) {
+    throw new Error(
+      `deepgram: speed must be a number from ${DEEPGRAM_SPEED_MIN} to ${DEEPGRAM_SPEED_MAX}`
+    );
+  }
+}
+
 /** A RealtimeProvider over Deepgram's Voice Agent API (STT -> LLM -> TTS on
  * one socket, mu-law 8k both directions — no resampling on the call path). A
  * factory function, matching `@parley/transcription-deepgram`'s
@@ -272,11 +371,7 @@ export function createDeepgramRealtimeProvider(
 ): RealtimeProvider {
   const apiKey = opts.apiKey;
   const speed = opts.speed ?? DEFAULT_DEEPGRAM_SPEED;
-  if (!Number.isFinite(speed) || speed < DEEPGRAM_SPEED_MIN || speed > DEEPGRAM_SPEED_MAX) {
-    throw new Error(
-      `deepgram: speed must be a number from ${DEEPGRAM_SPEED_MIN} to ${DEEPGRAM_SPEED_MAX}`
-    );
-  }
+  assertSpeed(speed);
   const resolved: ResolvedDeepgramOptions = {
     think: opts.think ?? DEFAULT_DEEPGRAM_THINK,
     listenModel: opts.listenModel ?? DEFAULT_DEEPGRAM_LISTEN_MODEL,
@@ -305,6 +400,9 @@ export function createDeepgramRealtimeProvider(
 
     async connect(params: RealtimeConnectParams): Promise<RealtimeSession> {
       const { callbacks } = params;
+      // A per-call speed is checked before any socket opens, like the
+      // provider option is at construction.
+      if (params.settings?.speed !== undefined) assertSpeed(params.settings.speed);
       let socket: AgentSocket;
       try {
         // The key travels in a header and never in the URL — a URL reaches

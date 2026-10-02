@@ -9,7 +9,12 @@ import {
   type RealtimeSessionCallbacks,
   type ToolName
 } from "@parley/core";
-import { DEFAULT_GEMINI_MODEL, GeminiRealtimeProvider } from "../src/gemini-realtime-provider.js";
+import {
+  DEFAULT_GEMINI_MODEL,
+  DEFAULT_GEMINI_VOICE,
+  GEMINI_VOICES,
+  GeminiRealtimeProvider
+} from "../src/index.js";
 
 function makeCallbacks(): RealtimeSessionCallbacks & {
   onAudio: ReturnType<typeof vi.fn>;
@@ -541,5 +546,34 @@ describe("GeminiRealtimeProvider — the explicit key wins over the environment"
     );
     warn.mockRestore();
     expect(seenKey).toBe("explicit-key");
+  });
+});
+
+/** The voices a per-call `execution.realtime.voice` may name on Gemini —
+ * `@parley/server` checks membership against this list before dialling. */
+describe("GEMINI_VOICES", () => {
+  it("lists the thirty Live prebuilt voices, the default among them, without duplicates", () => {
+    expect(GEMINI_VOICES).toContain(DEFAULT_GEMINI_VOICE);
+    expect(GEMINI_VOICES).toContain("Puck");
+    expect(GEMINI_VOICES).toHaveLength(30);
+    expect(new Set(GEMINI_VOICES).size).toBe(30);
+  });
+
+  it("sends a per-connect voice as the prebuilt voice name", async () => {
+    let capturedConfig: unknown;
+    const fakeGenAI = {
+      live: {
+        connect: vi.fn(async (params: { config: unknown }) => {
+          capturedConfig = params.config;
+          return { sendRealtimeInput: vi.fn(), close: vi.fn() };
+        })
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const provider = new GeminiRealtimeProvider({ apiKey: "fake" }, () => fakeGenAI);
+    await provider.connect({ ...makeConnectParams(makeCallbacks()), voice: "Puck" });
+    expect(capturedConfig).toMatchObject({
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } } }
+    });
   });
 });

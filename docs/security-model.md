@@ -185,12 +185,16 @@ union, unchanged.
 
 Where the opening goes is the provider's declaration (`RealtimeProvider.openingDelivery`), and
 either way it is Parley's own fixed text, never caller content. On a two-party call both shipped
-providers append the trigger to the one-time setup prompt and send nothing after connect. A Gemini
+providers append the trigger to the one-time setup prompt and send nothing after connect, except
+one fixed statement of fact, `CALL_ANSWERED_CUE`, sent at most once if the far end has spoken and
+the model has produced nothing for 2.5 s (a missed greeting) — only for speech that began in the
+call's first 10 s, and never on a call that declares `execution.ivr` or that a machine answered. A Gemini
 meeting receives `MEETING_OPENING_TRIGGER` as its own input after connect (Gemini declares
 `{ twoParty: "prompt", meeting: "turn" }`). Deepgram (`"prompt"`) has only one post-connect text
 input, `InjectUserMessage`, which its model hears as the callee speaking, so its meeting trigger
 is appended to the `Settings` prompt too, and the meeting sends one short Parley-authored cue
-(`MEETING_CONNECTED_CUE`) as a user turn, never as speech. The provider refuses any longer or multi-line line on that path, so it
+(`MEETING_CONNECTED_CUE`) as a user turn, never as speech; `CALL_ANSWERED_CUE` goes the same way.
+The provider refuses any longer or multi-line line on that path, so it
 cannot become a re-instruction channel. Appending a constant to the system instruction keeps the
 one-shot rule intact: it is still built once, before connect, and never touched again.
 

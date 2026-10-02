@@ -291,6 +291,16 @@ export interface RealtimeClose {
   reason?: string;
 }
 
+/** See `RealtimeConnectParams.settings`. */
+export interface RealtimeConnectSettings {
+  /** The think (language) model and the managed provider that serves it. */
+  think?: { provider: string; model: string };
+  /** Speak pace multiplier, 0.7 to 1.5. */
+  speed?: number;
+  /** Speak expressivity, an integer from -2 to 2. */
+  expressivity?: number;
+}
+
 export interface RealtimeConnectParams {
   model: string;
   /** Plain prose; persona -> rules/objective -> guardrails, per design spec
@@ -298,6 +308,14 @@ export interface RealtimeConnectParams {
   systemInstruction: string;
   responseModality: "audio";
   voice?: string;
+  /** Per-call overrides of the provider's own configuration, for THIS session
+   * only (`execution.realtime`, validated by `@parley/server` against the
+   * provider's exported lists before the call is dialled). Absent, or a field
+   * absent, means the provider's configured default — a session with no
+   * settings is exactly what it was before this field existed. A provider
+   * that has no such setting never receives it: the server refuses the call
+   * instead. */
+  settings?: RealtimeConnectSettings;
   /** How to tag the FAR END's transcript events at source. Absent (or
    * `"caller"`) is the ordinary two-party call — unchanged from before this
    * field existed. A meeting call passes `"participant"` so a human on the

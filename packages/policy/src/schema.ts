@@ -14,6 +14,15 @@ export const WIRE_VERSION = 2;
 
 const versionSchema = z.union([z.literal(1), z.literal(2)]);
 
+/** Shape bounds for `execution.realtime`'s per-call settings. A model or voice
+ * name longer than this is not one any provider offers. */
+const REALTIME_SETTING_MAX_LENGTH = 64;
+/** The speak speed range Deepgram accepts (`agent.speak.provider.speed`). */
+const REALTIME_SPEED_MIN = 0.7;
+const REALTIME_SPEED_MAX = 1.5;
+/** Deepgram's speak expressivity is an integer from -2 to 2. */
+const REALTIME_EXPRESSIVITY_MAX = 2;
+
 /** Every negated form `phrase` collides with around the standalone word
  * "do" — the one word call `CA0573ebc91a165c9c0230f8890915f87b` (2026-08-20)
  * found the hole in. Two shapes, both built by leaving the rest of the
@@ -221,17 +230,40 @@ export const callExecutionSchema = z
       })
       .strict()
       .optional(),
-    // Which of the daemon's realtime providers speaks on this call. Absent
-    // means the daemon's default. It names a PROVIDER and never a model:
-    // per-provider configuration is daemon-level, which keeps the surface a
-    // caller depends on small — so `.strict()` rejects a `model` here rather
-    // than ignoring it. A named provider the daemon has not built is refused
+    // Which of the daemon's realtime providers speaks on this call, and
+    // optionally how. Absent means the daemon's default provider; each
+    // setting left out means the daemon's default for that provider, so an
+    // envelope naming only `provider` behaves exactly as it did before the
+    // settings existed. A named provider the daemon has not built is refused
     // at POST /call before anything is dialled; there is no silent fallback.
-    // Read by `@parley/server`'s `handleCall`, never by CallSession, and it
-    // needs no `policy` pairing for the same reason `dial` does not: there is
+    //
+    // This schema checks SHAPE only and stays provider-agnostic: which think
+    // models and voices exist, and which settings a provider supports at all,
+    // is the provider's knowledge. `@parley/server` checks membership against
+    // the lists each provider package exports (`DEEPGRAM_THINK_MODELS`,
+    // `DEEPGRAM_VOICES`, `GEMINI_VOICES`) and refuses an unknown value, or a
+    // setting the chosen provider does not take, with a 400 before dialling.
+    // `.strict()` still rejects any other key — `model` included; the per-call
+    // model is `think`. Read by `@parley/server`'s `handleCall`, and it needs
+    // no `policy` pairing for the same reason `dial` does not: there is
     // nothing about it for the model to be told.
     realtime: z
-      .object({ provider: z.enum(["gemini", "deepgram"]) })
+      .object({
+        provider: z.enum(["gemini", "deepgram"]),
+        /** The think (language) model behind a Deepgram voice agent. */
+        think: z.string().min(1).max(REALTIME_SETTING_MAX_LENGTH).optional(),
+        /** A voice name the chosen provider offers. */
+        voice: z.string().min(1).max(REALTIME_SETTING_MAX_LENGTH).optional(),
+        /** Speak pace multiplier — the range Deepgram accepts. */
+        speed: z.number().min(REALTIME_SPEED_MIN).max(REALTIME_SPEED_MAX).optional(),
+        /** Deepgram's speak expressivity (Beta), an integer; 0 is its default. */
+        expressivity: z
+          .number()
+          .int()
+          .min(-REALTIME_EXPRESSIVITY_MAX)
+          .max(REALTIME_EXPRESSIVITY_MAX)
+          .optional()
+      })
       .strict()
       .optional()
   })
@@ -570,6 +602,8 @@ export const callEnvelopeSchema = z
   });
 
 export type CallExecutionShape = z.infer<typeof callExecutionSchema>;
+/** `execution.realtime`: the provider a call runs on and its per-call settings. */
+export type RealtimeSettings = NonNullable<CallExecutionShape["realtime"]>;
 export type CallEnvelopeWithPolicy = z.infer<typeof callEnvelopeWithPolicySchema>;
 export type CallEnvelopeWithGuardrails = z.infer<typeof callEnvelopeWithGuardrailsSchema>;
 export type CallEnvelope = CallEnvelopeWithPolicy | CallEnvelopeWithGuardrails;

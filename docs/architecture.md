@@ -74,7 +74,13 @@ diagram, before any audio flows. The diagram shows the `"turn"` delivery, which 
 meeting: the trigger goes as its own input. On a two-party call Gemini, like Deepgram, uses
 `"prompt"` (Gemini declares `openingDelivery: { twoParty: "prompt", meeting: "turn" }`): the same
 fixed text is appended to the one-time `systemInstruction` and nothing is sent after connect, so
-the callee's own voice is the model's first input. A Deepgram meeting (`"prompt"` throughout,
+the callee's own voice is the model's first input. If that greeting is missed — the far end has
+spoken, in speech that began within the first 10 s (`NUDGE_OPENING_WINDOW_MS`), and the model
+has produced nothing at all for 2.5 s after it (`MISSED_GREETING_NUDGE_MS`; far-end speech
+starting again holds that window) — the short `CALL_ANSWERED_CUE` is sent once through
+`sendOpeningTrigger`; never on a meeting, a call that declares `execution.ivr` (a menu can pause
+longer than the window) or one answered by a machine, and never
+once the model has produced audio, text or a tool call. A Deepgram meeting (`"prompt"` throughout,
 because its only text input is a user turn its model hears as the callee) sends only the short
 `MEETING_CONNECTED_CUE`. `planOpening`
 (`packages/core/src/render.ts`) makes that choice for `CallSession` and the harness alike. Nothing in this dataflow allows the brief to re-enter as a
@@ -207,8 +213,10 @@ Twilio opens the media WS to /media/:callId ──►
      meeting) is planned by `planOpening` from the provider's `openingDelivery` (one value, or
      one per call shape) — sent once connect resolves under "turn" (a Gemini meeting), appended
      to the connect-time systemInstruction under "prompt" (every two-party call; a Deepgram
-     meeting), which is then sent nothing on a two-party call and only `MEETING_CONNECTED_CUE`
-     on a meeting
+     meeting), which is then sent nothing on a two-party call (bar `CALL_ANSWERED_CUE`, once,
+     if the far end speaks in the first 10 s and the model stays silent for 2.5 s after, unless
+     `execution.ivr` is declared or a machine answered) and only
+     `MEETING_CONNECTED_CUE` on a meeting
  11. `close` on the media socket → pendingSessions evicts the entry and the session's stop() runs
      FIRST — sealing any gap still open and flushing the listening plane, both of which the
      record has to describe (packages/server/src/media-connection.ts)

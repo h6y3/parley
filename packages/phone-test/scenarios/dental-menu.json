@@ -1,0 +1,109 @@
+{
+  "id": "dental-menu",
+  "description": "Move Jordan Rivera's Friday cleaning to Monday with a dental office reached through a phone menu before a person; the job declares an IVR, as a real job does when a menu is expected.",
+  "job": {
+    "brief": {
+      "to": "+15555550100",
+      "persona": "I am Ava, calling on behalf of Jordan Rivera, Jordan's personal assistant.",
+      "objective": "Reschedule Jordan Rivera's dental cleaning, currently Friday at 3pm with Dr. Nguyen, to a time on Monday next week.",
+      "facts": [
+        "The existing appointment is a cleaning on Friday at 3pm with Dr. Nguyen.",
+        "Jordan Rivera's dental insurance is Alta Dental, and it has not changed.",
+        "Jordan Rivera's date of birth is March 4, 1988."
+      ],
+      "preferences": [
+        "Jordan Rivera can do any time on Monday next week.",
+        "Jordan Rivera would rather keep Dr. Nguyen, but another dentist is acceptable for a cleaning."
+      ],
+      "keyterms": ["Nguyen", "Alta Dental"]
+    },
+    "policy": {
+      "principalName": "Jordan Rivera",
+      "identity": {
+        "style": "onBehalf",
+        "role": "personal assistant"
+      },
+      "disclosure": {
+        "honestIfAsked": true,
+        "volunteer": false
+      },
+      "scope": {
+        "lock": true
+      },
+      "grounding": {
+        "antiInvention": false
+      },
+      "deferral": {
+        "enabled": true
+      },
+      "authority": {
+        "authorizedCommitments": ["Move the cleaning to any time on Monday next week."]
+      },
+      "ivr": {
+        "goal": "scheduling or appointments",
+        "menuHints": ["The office menu may offer billing and appointments as separate options."]
+      },
+      "callback": {
+        "number": "+15555550142"
+      },
+      "wrapUp": {
+        "enabled": true
+      },
+      "voicemail": {
+        "onMachine": "hangUp"
+      }
+    },
+    "execution": {
+      "ivr": {
+        "maxPresses": 4,
+        "allowedDigits": "0123456789*#",
+        "onUnrecognized": "waitForHuman"
+      },
+      "closure": {
+        "requireOutcomeBeforeEnd": true
+      },
+      "outcome": {
+        "fields": [
+          {
+            "name": "newAppointment",
+            "description": "Day and time of the rescheduled cleaning, or empty if nothing was agreed"
+          },
+          {
+            "name": "confirmedBy",
+            "description": "Name of the person at the office who confirmed the change"
+          }
+        ]
+      },
+      "limits": {
+        "maxDurationSeconds": 300,
+        "maxSilenceSeconds": 30
+      }
+    }
+  },
+  "personas": [
+    {
+      "name": "menu-first",
+      "role": "Sam, the front-desk scheduler at Bayside Dental, reached through the office phone menu",
+      "facts": [
+        "Jordan Rivera has a cleaning on Friday at 3pm with Dr. Nguyen.",
+        "Dr. Nguyen has an opening on Monday at 11am."
+      ],
+      "behaviours": [
+        "Open with the recorded menu, in a flat voice: \"For billing press 1, to book or change an appointment press 2.\"",
+        "Wait for the caller to press 2. If they speak instead, repeat the menu once.",
+        "After 2 is pressed, answer in a normal voice: \"Scheduling, this is Sam.\"",
+        "If asked your name, say \"Sam\".",
+        "Offer \"Monday at 11am with Dr. Nguyen\".",
+        "When the caller accepts, confirm it: \"Done, Monday at 11.\""
+      ],
+      "endsCallWith": "Done, Monday at 11."
+    }
+  ],
+  "expect": {
+    "status": "completed",
+    "fields": {
+      "newAppointment": ["monday"],
+      "confirmedBy": ["sam"]
+    }
+  }
+}

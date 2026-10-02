@@ -7,10 +7,18 @@ import {
   type AudioCodec,
   type AudioEncoding,
   type FrameConverter,
+  type RealtimeConnectSettings,
   type TelephonyProvider,
   type TranscriptionProvider
 } from "@parley/core";
-import { parseCallEnvelope, composePolicy, type CallEnvelope } from "@parley/policy";
+import {
+  parseCallEnvelope,
+  composePolicy,
+  type CallEnvelope,
+  type RealtimeSettings
+} from "@parley/policy";
+import { DEEPGRAM_THINK_MODELS, DEEPGRAM_VOICES } from "@parley/realtime-deepgram";
+import { GEMINI_VOICES } from "@parley/realtime-gemini";
 import type { NumberAllowlist, HostAllowlist } from "./allowlist.js";
 import type { PendingSessions } from "./pending-sessions.js";
 import type { BuiltRealtime, RealtimeProviderKind, RealtimeRegistry } from "./realtime-registry.js";
@@ -219,7 +227,11 @@ async function handleCall(req: HttpRequest, deps: ServerDeps): Promise<HttpRespo
     // Dead code since V1: OriginateParams declared this field and nothing ever
     // set it, so no lifecycle event has ever reached a CallSession.
     statusCallbackUrl: `https://${deps.publicHost}/twilio/status`,
-    model: chosen.built.model,
+    // The effective model: a per-call think model when the envelope chose one
+    // (Deepgram), else the provider's own. The record reads it from here.
+    model: chosen.settings.connect?.think?.model ?? chosen.built.model,
+    ...(chosen.settings.voice !== undefined ? { voice: chosen.settings.voice } : {}),
+    ...(chosen.settings.connect !== undefined ? { realtimeSettings: chosen.settings.connect } : {}),
     // Never call content — only why a transport ended. A realtime session that
     // dies on connect hangs up the phone the moment the callee answers, and
     // writes no call record (records are written on a clean end), so without
@@ -263,15 +275,76 @@ async function handleCall(req: HttpRequest, deps: ServerDeps): Promise<HttpRespo
 function resolveRealtime(
   envelope: CallEnvelope,
   registry: RealtimeRegistry
-): { kind: RealtimeProviderKind; built: BuiltRealtime } | { refusal: HttpResponse } {
-  const kind = envelope.execution?.realtime?.provider ?? registry.default;
+):
+  | { kind: RealtimeProviderKind; built: BuiltRealtime; settings: ResolvedRealtimeSettings }
+  | { refusal: HttpResponse } {
+  const chosen = envelope.execution?.realtime;
+  const kind = chosen?.provider ?? registry.default;
+  // The envelope's settings are checked first: a model or voice the provider
+  // does not have is wrong on every daemon, so it is a 400 about the request,
+  // ahead of the 503 about this daemon's configuration.
+  const settings = chosen ? resolveRealtimeSettings(chosen) : { ok: {} };
+  if ("error" in settings) return { refusal: json(400, { error: settings.error }) };
   const built = registry.providers[kind];
   if (!built) {
     return {
       refusal: json(503, { error: `realtime provider "${kind}" is not configured on this daemon` })
     };
   }
-  return { kind, built };
+  return { kind, built, settings: settings.ok };
+}
+
+/** What a call's `execution.realtime` settings resolve to: the per-call voice
+ * and the provider settings `connect` takes. Each is present only when the
+ * envelope chose it, so a call that chose none is unchanged. */
+interface ResolvedRealtimeSettings {
+  voice?: string;
+  connect?: RealtimeConnectSettings;
+}
+
+/** Check the per-call settings against what the chosen provider offers — the
+ * lists its package exports — and resolve them for `connect`. The envelope
+ * schema checked only their shape; membership is the provider's knowledge,
+ * and an unknown name is refused here, before dialling, rather than by the
+ * vendor after the callee has answered. A setting the provider does not take
+ * at all is refused too, never silently dropped: a caller comparing two runs
+ * must not be told a setting applied that did not. */
+function resolveRealtimeSettings(
+  realtime: RealtimeSettings
+): { ok: ResolvedRealtimeSettings } | { error: string } {
+  const { provider, think, voice, speed, expressivity } = realtime;
+  if (provider === "gemini") {
+    if (think !== undefined) return { error: "think is not supported by gemini" };
+    if (speed !== undefined) return { error: "speed is not supported by gemini" };
+    if (expressivity !== undefined) return { error: "expressivity is not supported by gemini" };
+    if (voice !== undefined && !GEMINI_VOICES.includes(voice)) {
+      return { error: `unknown gemini voice "${voice}"` };
+    }
+    return { ok: voice !== undefined ? { voice } : {} };
+  }
+  let thinkProvider: string | undefined;
+  if (think !== undefined) {
+    thinkProvider = Object.hasOwn(DEEPGRAM_THINK_MODELS, think)
+      ? DEEPGRAM_THINK_MODELS[think]
+      : undefined;
+    if (thinkProvider === undefined) return { error: `unknown think model "${think}"` };
+  }
+  if (voice !== undefined && !DEEPGRAM_VOICES.includes(voice)) {
+    return { error: `unknown deepgram voice "${voice}"` };
+  }
+  const connect: RealtimeConnectSettings = {
+    ...(think !== undefined && thinkProvider !== undefined
+      ? { think: { provider: thinkProvider, model: think } }
+      : {}),
+    ...(speed !== undefined ? { speed } : {}),
+    ...(expressivity !== undefined ? { expressivity } : {})
+  };
+  return {
+    ok: {
+      ...(voice !== undefined ? { voice } : {}),
+      ...(Object.keys(connect).length > 0 ? { connect } : {})
+    }
+  };
 }
 
 /** Refuse, before dialling, a call whose speaking plane could outlive the

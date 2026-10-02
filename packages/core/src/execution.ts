@@ -348,7 +348,7 @@ const ROLE_PLACEHOLDER_WORDS: ReadonlySet<string> = new Set([
 
 /** True when a who-confirmed value is a role, not a name. Empty is never a
  * role: it is the honest answer when they would not say. */
-function isRolePlaceholder(value: string): boolean {
+export function isRolePlaceholder(value: string): boolean {
   const words = placeholderWords(value);
   return words.length > 0 && words.every((w) => ROLE_PLACEHOLDER_WORDS.has(w));
 }
