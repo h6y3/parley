@@ -133,11 +133,52 @@ export interface BridgeCounts {
  * deciding the line is dead. */
 export const MISSED_GREETING_NUDGE_MS = 2_500;
 
+/** Whether the model's output transcript for the current turn so far is the
+ * model actually responding — the test every place model TEXT cancels an
+ * answered cue uses (model AUDIO always counts). Live (2026-10-01 and
+ * 2026-10-03, Gemini): the output transcription carried "<no speech>{pause}"
+ * while the model stayed silent; read as a response, it cancelled the cue and
+ * the call sat silent to the silence cap (R26). Angle-bracket and curly-brace
+ * tokens are markup, not words: once they, punctuation and whitespace are
+ * gone, a letter or digit must remain.
+ *
+ * Pass the turn's ACCUMULATED text, not one fragment: the transcript streams,
+ * so a placeholder can arrive split ("<" then "no speech>"). A token still
+ * open at the end that looks like a tag so far — lowercase letters, spaces,
+ * `_` or `-` only, as Gemini's placeholders are — is pending, not speech,
+ * until it closes or something else appears ("<Hello" is speech). */
+export function isSpokenModelText(text: string): boolean {
+  const words = text.replace(/<[^>]*>|\{[^}]*\}/g, "").replace(/[<{][a-z _-]*$/, "");
+  return /[\p{L}\p{N}]/u.test(words);
+}
+
 /** The nudge covers the OPENING only (ruling R21): it arms only for far-end
  * speech that started within this long of the media stream starting. Speech
  * that begins later is a call already under way — a hold, a transfer, a
  * person thinking — where a cue would be an interruption, not a rescue. */
 export const NUDGE_OPENING_WINDOW_MS = 10_000;
+
+/** On a call that declares IVR navigation, each ACCEPTED keypress opens a
+ * window this long: far-end speech that starts inside it may get the answered
+ * cue. Live (0.5.1 phone test): the agent pressed 2 correctly, a person then
+ * said "Scheduling, this is Sam." (transcribed as "Faire un SMS."), and the
+ * agent sat silent to the silence cap — the opening nudge is off on an IVR
+ * call (R20), and a press is a tool call, which cancels it anyway. Long
+ * enough for a transfer to ring through; a new accepted press restarts it. */
+export const POST_MENU_WINDOW_MS = 30_000;
+
+/** How long after post-press far-end speech ends the model may stay silent
+ * before the answered cue goes out. Longer than MISSED_GREETING_NUDGE_MS: what
+ * follows a press is as often more menu as a person, and a recorded menu
+ * pauses between options — a 3 s pause must never draw the cue. Longer, too,
+ * than US ringback's 4 s gap between rings (R25): at 4 s the timer would land
+ * on the next ring of an ordinary transfer. Ringback is also rejected as a
+ * tone on the voice path (see `ToneSpectrum`); this is the second guard. */
+export const POST_MENU_NUDGE_MS = 5_000;
+
+/** The most answered cues one call ever sends — the opening nudge and every
+ * post-menu nudge together. */
+export const MAX_GREETING_CUES_PER_CALL = 2;
 
 /** Ceiling on waiting for the carrier to confirm playout. Generous next to a
  * closing sentence and short next to a call: it bounds a confirmation that
@@ -404,6 +445,28 @@ export class CallSession {
    * (media ms) and the `nowMs()` it ended at, so the window still runs from
    * the end of the speech, not from connect. */
   private pendingVoiceArm?: { startMs: number; endedAtMs: number };
+  /** `CALL_ANSWERED_CUE` on a call that declares IVR navigation and could be
+   * nudged after a press: a two-party call opened in the prompt, not a
+   * machine. Set at attach; cleared for good on a machine verdict. */
+  private postMenuCue?: string;
+  /** The window the latest accepted press opened, while its cue may still go
+   * out. Offsets are ms since the stream started. Undefined once the cue is
+   * sent or cancelled, or before any accepted press. */
+  private postMenu?: {
+    /** Wall time of the press, ms since attach — the transcript clock. */
+    pressedAtOffsetMs: number;
+    /** The press on the far-end VAD's MEDIA clock (ms of inbound audio),
+     * which is what an utterance's `startMs` is on. The two clocks differ by
+     * however late the first carrier frame arrived, so comparing an
+     * utterance's start against wall time misplaces it around the press. */
+    pressedAtMediaMs: number;
+    /** When the far end's current speech began, ms after the press. */
+    speechStartAfterPressMs?: number;
+    timer?: ReturnType<typeof setTimeout>;
+  };
+  /** Answered cues sent on this call, opening and post-menu together. See
+   * MAX_GREETING_CUES_PER_CALL. */
+  private greetingCuesSent = 0;
   /** Energy VAD over the far end's inbound frames — see `noteFarEndVoice`. */
   private farEndVoice?: FarEndVoiceDetector;
   private farEndVoiceLogged = false;
@@ -736,6 +799,7 @@ export class CallSession {
             for (const rearm of this.turnWaitRearms) rearm();
             this.firstModelAudioOffsetMs ??= this.nowMs() - this.startedAtMs;
             this.cancelMissedGreetingNudge();
+            this.cancelPostMenuNudge();
             this.media?.sendOutboundAudio(outbound.adapt(frame));
             if (this.afterEndCall) {
               this.afterEndCall.audioMs += frameDurationMs(frame);
@@ -756,6 +820,7 @@ export class CallSession {
             // turn the agent answers over the callee. Hold the window; the
             // utterance's own transcript restarts it.
             this.holdMissedGreetingNudge();
+            this.holdPostMenuNudge();
             if (this.nowMs() < this.dtmfInFlightUntilMs) return;
             this.media?.clearOutboundBuffer();
           },
@@ -790,7 +855,11 @@ export class CallSession {
               // The far end has spoken: (re)start the missed-greeting window
               // from the end of what it said. A no-op unless the cue is still
               // held — never on a meeting, never once the model has spoken.
-              if (event.text.trim() !== "") this.armMissedGreetingNudge();
+              // The same, after an accepted keypress on an IVR call.
+              if (event.text.trim() !== "") {
+                this.armMissedGreetingNudge();
+                this.armPostMenuNudge();
+              }
               this.closeModelEntry();
               this.noteTranscript(event);
               return;
@@ -800,7 +869,15 @@ export class CallSession {
               return;
             }
             this.modelTurnOpen = true;
-            this.cancelMissedGreetingNudge();
+            // Words only: a placeholder such as "<no speech>{pause}" is the
+            // model staying silent, and must leave a pending cue to fire.
+            // Judged on the turn so far (the open entry, which accumulates
+            // until the turn closes, plus this fragment), so a placeholder
+            // split across fragments reads as one.
+            if (isSpokenModelText((this.openModelEntry?.text ?? "") + event.text)) {
+              this.cancelMissedGreetingNudge();
+              this.cancelPostMenuNudge();
+            }
             this.noteTextAfterEndCall(event.text);
             if (this.openModelEntry) this.openModelEntry.text += event.text;
             else {
@@ -851,6 +928,11 @@ export class CallSession {
             // The model acting — a keypress into a menu, say — is the model
             // having responded: the missed-greeting cue must not follow it.
             this.cancelMissedGreetingNudge();
+            // Any other tool is the model acting after the menu, too. A press
+            // leaves the window alone here: an accepted one restarts it once
+            // it has gone out (see `respond` in handleToolCall), and a refused
+            // one opens nothing.
+            if (call.name !== "press_digits") this.cancelPostMenuNudge();
             // Fire-and-forget: the provider's onmessage handler is synchronous,
             // and every path inside handleToolCall answers the call itself.
             //
@@ -949,6 +1031,13 @@ export class CallSession {
     // can land during the connect, before this line.
     this.missedGreetingCue =
       execution.ivr || this.answeredByValue === "machine" ? undefined : opening.answeredCue;
+    // An IVR call gets the same cue AFTER a press instead: the menu is behind
+    // it, and a person answering a transfer is an opening the model can miss
+    // exactly as it can miss a callee's hello. Same shapes only — `planOpening`
+    // plans the cue for a two-party "prompt" opening alone, so never a
+    // meeting — and never once a machine has answered.
+    this.postMenuCue =
+      execution.ivr && this.answeredByValue !== "machine" ? opening.answeredCue : undefined;
     this.missedGreetingDecided = true;
     this.armPendingVoice();
     this.armTimers();
@@ -1750,6 +1839,9 @@ export class CallSession {
         // outcome and not the instruction after it) and the offset. Never
         // `call.args` — a record's fields are the call's content.
         this.logAt(`tool ${call.name} → ${result.split(" —")[0]}`);
+        // `routeToolCall` answers a press "ok" only after the tones went out
+        // and the gate committed it: the one point an accepted press is known.
+        if (call.name === "press_digits" && result === "ok") this.openPostMenuWindow();
         // On a vendor that goes on speaking after the answer, the answer
         // opens the turn the call's words are spoken in: the goodbye after
         // `end_call`, the acknowledgment after `begin_notetaking`. Opened
@@ -1822,6 +1914,7 @@ export class CallSession {
     clearTimeout(this.consentTimer);
     clearTimeout(this.departureTimer);
     this.cancelMissedGreetingNudge();
+    this.cancelPostMenuNudge();
     // Nothing said before consent survives a call that never got it. Not an
     // optimisation — it is the promise the announcement made.
     //
@@ -1911,8 +2004,8 @@ export class CallSession {
 
   /** Start, or restart, the missed-greeting window. Restarted on every far-end
    * fragment, so it runs from the END of the far end's speech. Does nothing
-   * once the cue is gone — sent, cancelled by the model producing anything,
-   * or never planned — or once the call has ended. */
+   * once the cue is gone — sent, cancelled by the model responding (audio,
+   * spoken text or a tool call), or never planned — or once the call has ended. */
   private armMissedGreetingNudge(delayMs: number = MISSED_GREETING_NUDGE_MS): void {
     if (this.missedGreetingCue === undefined || this.settled) return;
     const startedAt = (this.farEndSpeechStartOffsetMs ??= this.nowMs() - this.startedAtMs);
@@ -1934,9 +2027,14 @@ export class CallSession {
    * utterance starting holds the window, as `onInterrupted` does; its end arms
    * it, as a transcript does. Stops listening once the cue can never fire. */
   private noteFarEndVoice(frame: AudioFrame): void {
-    // A meeting or an IVR-declared call never carries the cue, so there is
-    // nothing to listen for — not even before connect.
-    if (this.settled || this.isMeeting || this.params.execution?.ivr) return;
+    // A meeting never carries the cue, so there is nothing to listen for —
+    // not even before connect. An IVR-declared call listens for the
+    // post-menu nudge instead of the opening one.
+    if (this.settled || this.isMeeting) return;
+    if (this.params.execution?.ivr) {
+      this.notePostMenuVoice(frame);
+      return;
+    }
     if (this.missedGreetingDecided && this.missedGreetingCue === undefined) {
       this.farEndVoice = undefined;
       return;
@@ -1996,8 +2094,9 @@ export class CallSession {
     this.farEndSpeechStartOffsetMs ??= this.nowMs() - this.startedAtMs;
   }
 
-  /** Drop the cue for good: the model produced audio, text or a tool call,
-   * a machine answered, the opening window passed, or the call ended. */
+  /** Drop the cue for good: the model produced audio, spoken text (see
+   * `isSpokenModelText`) or a tool call, a machine answered, the opening
+   * window passed, or the call ended. */
   private cancelMissedGreetingNudge(): void {
     clearTimeout(this.missedGreetingTimer);
     this.missedGreetingTimer = undefined;
@@ -2010,12 +2109,120 @@ export class CallSession {
     const cue = this.missedGreetingCue;
     this.cancelMissedGreetingNudge();
     if (cue === undefined || this.settled || this.firstModelAudioOffsetMs !== undefined) return;
+    this.greetingCuesSent += 1;
     this.logAt("missed greeting: opening re-sent");
     try {
       this.session?.sendOpeningTrigger(cue);
     } catch (err) {
       this.params.onDiagnostic?.(
         `missed greeting: cue refused: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  /** An accepted press on an IVR call: open (or restart) its window. */
+  private openPostMenuWindow(): void {
+    if (this.postMenuCue === undefined || this.settled) return;
+    if (this.greetingCuesSent >= MAX_GREETING_CUES_PER_CALL) return;
+    clearTimeout(this.postMenu?.timer);
+    this.postMenu = {
+      pressedAtOffsetMs: this.nowMs() - this.startedAtMs,
+      // No frame heard yet: the first one, at media 0, is after the press.
+      pressedAtMediaMs: this.farEndVoice?.mediaMs ?? 0
+    };
+  }
+
+  /** Wall-clock ms since the latest press (the transcript path's clock). */
+  private msSincePress(pm: { pressedAtOffsetMs: number }): number {
+    return this.nowMs() - this.startedAtMs - pm.pressedAtOffsetMs;
+  }
+
+  /** Far-end speech after the press: (re)start the timer from its end, as the
+   * opening nudge does. Speech that started more than POST_MENU_WINDOW_MS
+   * after the press drops this press's cue for good. */
+  private armPostMenuNudge(delayMs: number = POST_MENU_NUDGE_MS): void {
+    const pm = this.postMenu;
+    if (pm === undefined || this.settled) return;
+    const startedAfter = (pm.speechStartAfterPressMs ??= this.msSincePress(pm));
+    if (startedAfter > POST_MENU_WINDOW_MS) {
+      this.cancelPostMenuNudge();
+      return;
+    }
+    clearTimeout(pm.timer);
+    pm.timer = setTimeout(() => this.sendPostMenuCue(), delayMs);
+  }
+
+  /** Far-end speech started, `startedAfterPressMs` after the press (now,
+   * when undefined): hold the timer without dropping the cue. */
+  private holdPostMenuNudge(startedAfterPressMs?: number): void {
+    const pm = this.postMenu;
+    if (pm === undefined) return;
+    clearTimeout(pm.timer);
+    pm.timer = undefined;
+    const at = startedAfterPressMs ?? this.msSincePress(pm);
+    pm.speechStartAfterPressMs = Math.min(pm.speechStartAfterPressMs ?? at, at);
+  }
+
+  /** The VAD half of the post-menu nudge. Runs from attach on an IVR call, so
+   * the noise floor is learnt before any press; an utterance counts only if
+   * it STARTED after the latest accepted press — the menu still playing when
+   * the key went down is not an answer to it — measured on the VAD's own media
+   * clock. A TONE never arms or holds it (R25): US ringback is 2 s of
+   * 440 + 480 Hz every 6 s, voiced energy to the VAD, and an ordinary
+   * transfer would otherwise draw the cue into the next ring. */
+  private notePostMenuVoice(frame: AudioFrame): void {
+    if (
+      this.missedGreetingDecided &&
+      (this.postMenuCue === undefined || this.greetingCuesSent >= MAX_GREETING_CUES_PER_CALL)
+    ) {
+      this.farEndVoice = undefined;
+      return;
+    }
+    /** ms after the press the utterance began, or undefined if before it. */
+    const afterPress = (startMs: number): number | undefined => {
+      const pm = this.postMenu;
+      if (pm === undefined || startMs < pm.pressedAtMediaMs) return undefined;
+      return startMs - pm.pressedAtMediaMs;
+    };
+    this.farEndVoice ??= new FarEndVoiceDetector(
+      {
+        onUtteranceStart: (startMs, { tone }) => {
+          const after = afterPress(startMs);
+          if (after !== undefined && !tone) this.holdPostMenuNudge(after);
+        },
+        onUtteranceEnd: (startMs, { tone }) => {
+          const after = afterPress(startMs);
+          if (after === undefined || tone) return;
+          this.postMenu!.speechStartAfterPressMs ??= after;
+          this.armPostMenuNudge();
+        }
+      },
+      { classifyTones: true }
+    );
+    this.farEndVoice.accept(frame);
+  }
+
+  /** Drop this press's cue: the model produced audio, text or a non-press
+   * tool call, a machine answered, the window passed, or the call ended. */
+  private cancelPostMenuNudge(): void {
+    clearTimeout(this.postMenu?.timer);
+    this.postMenu = undefined;
+  }
+
+  /** Far-end speech after a press, then POST_MENU_NUDGE_MS of model silence:
+   * the answered cue, once for this press, through the opening path. */
+  private sendPostMenuCue(): void {
+    const cue = this.postMenuCue;
+    this.cancelPostMenuNudge();
+    if (cue === undefined || this.settled) return;
+    if (this.greetingCuesSent >= MAX_GREETING_CUES_PER_CALL) return;
+    this.greetingCuesSent += 1;
+    this.logAt("post-menu greeting: cue sent");
+    try {
+      this.session?.sendOpeningTrigger(cue);
+    } catch (err) {
+      this.params.onDiagnostic?.(
+        `post-menu greeting: cue refused: ${err instanceof Error ? err.message : String(err)}`
       );
     }
   }
@@ -2060,7 +2267,11 @@ export class CallSession {
     if (event.type === "answered" && event.answeredBy) this.answeredByValue = event.answeredBy;
     // A machine has no greeting to miss, and a cue into a voicemail greeting
     // is the agent talking over a recording (R21).
-    if (this.answeredByValue === "machine") this.cancelMissedGreetingNudge();
+    if (this.answeredByValue === "machine") {
+      this.cancelMissedGreetingNudge();
+      this.cancelPostMenuNudge();
+      this.postMenuCue = undefined;
+    }
     this.params.onDiagnostic?.(`carrier lifecycle: ${describeLifecycleEvent(event)}`);
   }
 

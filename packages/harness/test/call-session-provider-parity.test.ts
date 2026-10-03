@@ -9,6 +9,7 @@ import {
   MIXED_SOURCE,
   MULAW_8K,
   OPENING_TRIGGER,
+  POST_MENU_NUDGE_MS,
   encodingEquals,
   type AudioFrame,
   type Brief,
@@ -681,6 +682,73 @@ describe.each(["gemini", "deepgram"] as const)("CallSession invariants on %s", (
       wire.serverSays("audio", modelAudio(fake));
       await vi.advanceTimersByTimeAsync(10_000);
       expect(cues(wire.sent())).toEqual([]);
+    });
+
+    /** Live (0.5.1 phone test): on an IVR call the agent pressed 2, a person
+     * answered the transfer, and the agent stayed silent to the silence cap.
+     * An accepted press opens a post-menu window: far-end speech in it, then
+     * POST_MENU_NUDGE_MS of model silence, sends the same cue once. */
+    it("IVR call: after an accepted press, a person speaks and the model stays silent — one cue on the wire", async () => {
+      vi.useFakeTimers();
+      const { wire, diagnostics } = await placeCall({
+        execution: {
+          ivr: { maxPresses: 20, allowedDigits: "0123456789", onUnrecognized: "waitForHuman" }
+        }
+      });
+      wire.serverSays("transcript", { speaker: "caller", text: "For scheduling, press two." });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(cues(wire.sent())).toEqual([]);
+      wire.serverSays("toolCall", { id: "press-2", name: "press_digits", args: { digits: "2" } });
+      await flush();
+      expect(wire.toolResponses()).toEqual([{ id: "press-2", name: "press_digits", result: "ok" }]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      wire.serverSays("transcript", { speaker: "caller", text: "Scheduling, this is Sam." });
+      await vi.advanceTimersByTimeAsync(POST_MENU_NUDGE_MS - 1);
+      expect(cues(wire.sent())).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(cues(wire.sent())).toEqual([cueOnWire()]);
+      expect(diagnostics.filter((d) => d.startsWith("post-menu greeting: cue sent"))).toEqual([
+        `post-menu greeting: cue sent at +${12_000 + POST_MENU_NUDGE_MS}ms`
+      ]);
+      // More speech for the same press: never a second cue.
+      wire.serverSays("transcript", { speaker: "caller", text: "Hello?" });
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(cues(wire.sent())).toEqual([cueOnWire()]);
+    });
+
+    /** Live (2026-10-03, Gemini 3.8, IVR test call): after the press and
+     * "Scheduling, this is Sam.", the model's output transcription carried
+     * "<no speech>{pause}" with a turn complete and no audio. That placeholder
+     * used to cancel the cue, and the call sat silent to the silence cap. */
+    it('IVR call: model text "<no speech>{pause}" and a turn complete, no audio — the cue still goes out once', async () => {
+      vi.useFakeTimers();
+      const { wire, diagnostics } = await placeCall({
+        execution: {
+          ivr: { maxPresses: 20, allowedDigits: "0123456789", onUnrecognized: "waitForHuman" }
+        }
+      });
+      wire.serverSays("transcript", { speaker: "caller", text: "For scheduling, press two." });
+      await vi.advanceTimersByTimeAsync(2_000);
+      wire.serverSays("toolCall", { id: "press-2", name: "press_digits", args: { digits: "2" } });
+      await flush();
+      expect(wire.toolResponses()).toEqual([{ id: "press-2", name: "press_digits", result: "ok" }]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      wire.serverSays("transcript", { speaker: "caller", text: "Scheduling, this is Sam." });
+      await vi.advanceTimersByTimeAsync(500);
+      wire.serverSays("transcript", { speaker: "model", text: "<no speech>{pause}" });
+      wire.serverSays("turnComplete");
+      await vi.advanceTimersByTimeAsync(POST_MENU_NUDGE_MS - 500 - 1);
+      expect(cues(wire.sent())).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(cues(wire.sent())).toEqual([cueOnWire()]);
+      expect(diagnostics.filter((d) => d.startsWith("post-menu greeting: cue sent"))).toEqual([
+        `post-menu greeting: cue sent at +${4_000 + POST_MENU_NUDGE_MS}ms`
+      ]);
+      // The placeholder again, then nothing: never a second cue for this press.
+      wire.serverSays("transcript", { speaker: "model", text: "<no speech>{pause}" });
+      wire.serverSays("turnComplete");
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(cues(wire.sent())).toEqual([cueOnWire()]);
     });
 
     it("a meeting is never nudged", async () => {

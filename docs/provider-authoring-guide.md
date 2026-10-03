@@ -141,6 +141,11 @@ text goes, and it is required: `CallSession`, and the harness runners, pass it t
   once with `CALL_ANSWERED_CUE`, a single short
   statement of fact, so a missed greeting cannot leave the call silent — except on a call that
   declares `execution.ivr`, whose menu may pause longer than that, or one answered by a machine.
+  On an `execution.ivr` call it can instead be called after an accepted keypress: far-end speech
+  starting within 30 s of the press (`POST_MENU_WINDOW_MS`), then 5 s of model silence
+  (`POST_MENU_NUDGE_MS`; a steady tone such as ringback on the inbound audio never counts as
+  speech here), once per press and at most twice per call
+  (`MAX_GREETING_CUES_PER_CALL`). The provider sees the same single call either way.
   The window is held while the far end is speaking, read from `onInterrupted`: a provider that
   reports only whole utterances should raise it when the far end starts talking (Deepgram's
   `UserStartedSpeaking`), or a long first sentence could be cut into. A provider need do nothing

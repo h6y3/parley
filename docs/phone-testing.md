@@ -95,7 +95,8 @@ declared): `cooperative`, `insurance-and-odd-time` and `interrupter`. A fourth,
 instant the line opens. `dental-menu.json` is the same job with
 `execution.ivr` declared and one persona, `menu-first` (a phone menu before a
 person). It is a separate scenario because declaring an IVR changes the agent's
-behaviour (for one, the missed-greeting nudge is skipped), and real jobs
+behaviour (for one, the opening's missed-greeting nudge is skipped, and the
+answered cue can follow a keypress instead), and real jobs
 declare one only when a menu is expected.
 
 ### How the callee answers

@@ -64,8 +64,12 @@ export {
   CallSession,
   CONSENT_HANDOFF_MAX_MS,
   describeLifecycleEvent,
+  isSpokenModelText,
   MISSED_GREETING_NUDGE_MS,
   NUDGE_OPENING_WINDOW_MS,
+  POST_MENU_NUDGE_MS,
+  POST_MENU_WINDOW_MS,
+  MAX_GREETING_CUES_PER_CALL,
   TRANSCRIPTION_CONNECT_TIMEOUT_MS
 } from "./call-session.js";
 export type {

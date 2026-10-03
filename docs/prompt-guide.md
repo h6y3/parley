@@ -30,7 +30,10 @@ else ever reaches the model as instruction-bearing content:
    greeting spoken before the realtime session was ready — `CallSession` sends one short statement of fact, `CALL_ANSWERED_CUE` ("The other end
    has answered and spoken."), through the same path, once, so a missed greeting cannot leave the
    agent silent (never on a call that declares `execution.ivr`, whose menu may pause longer than
-   that, nor one the carrier says a machine answered); see `planOpening` (`packages/core/src/render.ts`). Either way it is Parley's
+   that, nor one the carrier says a machine answered). On a call that declares `execution.ivr`, the
+   same cue can instead follow an accepted keypress: far-end speech (not a steady tone such as ringback) starting within
+   30 s of the press and then 5 s with nothing from the model sends it once for that press, at most twice per
+   call; see `planOpening` (`packages/core/src/render.ts`). Either way it is Parley's
    constant, never brief content.
 
 `brief.keyterms` is not a third channel. It is a list of words the speech recognizer should

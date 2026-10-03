@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] — 2026-10-02
+
+### Fixed
+
+- **A person who answers after a phone menu now gets a reply.** On an IVR call in the 0.5.1 phone
+  test the agent pressed 2 correctly, a person said "Scheduling, this is Sam.", and the agent stayed
+  silent until the silence cap: the missed-greeting cue is off on calls that declare
+  `execution.ivr`, and a keypress ends it anyway. On such a call (two-party, opened in the prompt,
+  not a machine answer, never a meeting), each accepted `press_digits` now opens a 30 s window
+  (`POST_MENU_WINDOW_MS`; a new accepted press restarts it). Far-end speech that starts inside it —
+  a transcript or an utterance from the far-end voice detector — arms a 5 s timer from the end of
+  that speech (`POST_MENU_NUDGE_MS`: longer than the opening's 2.5 s so a menu's pause between
+  options never draws it, and longer than US ringback's 4 s gap between rings); far-end speech
+  starting again holds it. On the voice path a steady single or dual tone — ringback
+  (440 + 480 Hz), a beep, a dial or DTMF tone; 80 % or more of its energy within two narrow
+  frequency bands — neither arms nor holds the timer, so an ordinary transfer's ringing does not
+  draw the cue. If the model produces no audio,
+  text or other tool call by then, `CALL_ANSWERED_CUE` goes out once for that press through the
+  opening path, logged as `post-menu greeting: cue sent at +Nms`. A refused press opens no window,
+  and a call sends at most two answered cues in all (`MAX_GREETING_CUES_PER_CALL`). Calls that do
+  not declare `execution.ivr` behave exactly as before. This supersedes the 0.5.1 known issue.
+- **A word-less model transcript no longer cancels the answered cue.** Model output text now counts
+  as the model responding (cancelling the opening or post-menu cue) only if a letter or digit is
+  left once `<...>` and `{...}` tokens, punctuation and whitespace are removed (`isSpokenModelText`);
+  model audio still always counts. Live, on a Gemini 3.8 IVR test call, after the press and
+  "Scheduling, this is Sam." the model's output transcription repeatedly carried
+  `<no speech>{pause}` and a turn complete while it stayed silent, which cancelled the post-menu
+  cue and left the call silent to the silence cap; the same placeholder was the first model line
+  of a live call on the opening path.
+
+### Upgrading
+
+No action required.
+
 ## [0.5.1] — 2026-10-02
 
 ### Fixed

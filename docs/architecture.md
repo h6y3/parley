@@ -82,7 +82,17 @@ by `CallSession`'s own energy VAD on the inbound carrier frames, which runs from
 a greeting spoken before the realtime session is ready still counts) — the short `CALL_ANSWERED_CUE` is sent once through
 `sendOpeningTrigger`; never on a meeting, a call that declares `execution.ivr` (a menu can pause
 longer than the window) or one answered by a machine, and never
-once the model has produced audio, text or a tool call. A Deepgram meeting (`"prompt"` throughout,
+once the model has produced audio, text or a tool call. On a call that declares `execution.ivr`
+the same cue can follow a keypress instead: each accepted `press_digits` opens a 30 s window
+(`POST_MENU_WINDOW_MS`, restarted by the next accepted press), and far-end speech that starts in it
+followed by 5 s of model silence (`POST_MENU_NUDGE_MS`) sends the cue once for that press, logged as
+`post-menu greeting: cue sent at +Nms` — a person answering a transfer is a greeting the model can
+miss too. Model audio, text or a non-press tool call cancels it, and a call sends at most two
+answered cues in all (`MAX_GREETING_CUES_PER_CALL`). On that path the VAD also classifies each
+utterance (`ToneSpectrum`, a Hann-windowed 50 Hz-step DFT of its voiced frames): one with 80 % or
+more of its energy within two narrow bands is a tone — ringback, a beep, a dial or DTMF tone — and
+neither arms nor holds the post-menu timer. Press and utterance times are compared on the VAD's
+own media clock. A Deepgram meeting (`"prompt"` throughout,
 because its only text input is a user turn its model hears as the callee) sends only the short
 `MEETING_CONNECTED_CUE`. `planOpening`
 (`packages/core/src/render.ts`) makes that choice for `CallSession` and the harness alike. Nothing in this dataflow allows the brief to re-enter as a

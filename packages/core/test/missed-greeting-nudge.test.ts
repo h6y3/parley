@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CallSession,
   MISSED_GREETING_NUDGE_MS,
-  NUDGE_OPENING_WINDOW_MS
+  NUDGE_OPENING_WINDOW_MS,
+  isSpokenModelText
 } from "../src/call-session.js";
 import type { CallSessionParams } from "../src/call-session.js";
 import { CALL_ANSWERED_CUE, MEETING_CONNECTED_CUE, planOpening } from "../src/render.js";
@@ -74,6 +75,45 @@ describe("planOpening: the answered cue", () => {
     // Deepgram's sendOpeningTrigger refuses more than twice the meeting cue.
     expect(CALL_ANSWERED_CUE.length).toBeLessThanOrEqual(2 * MEETING_CONNECTED_CUE.length);
   });
+});
+
+/** Model output text that is not speech: what Gemini's output transcription
+ * carried, live, while the model stayed silent — plus its parts and the other
+ * shapes a word-less fragment takes. */
+const NON_SPEECH_MODEL_TEXT = ["<no speech>{pause}", "{pause}", "<no speech>", "...", "  "];
+
+describe("isSpokenModelText", () => {
+  it.each(NON_SPEECH_MODEL_TEXT)("%j is not speech", (text) => {
+    expect(isSpokenModelText(text)).toBe(false);
+  });
+
+  it.each(["Hello", "Sure, one moment.", "<no speech>Hi", "{pause} 2", "Él", "  ok  "])(
+    "%j is speech",
+    (text) => {
+      expect(isSpokenModelText(text)).toBe(true);
+    }
+  );
+
+  it("an empty string is not speech", () => {
+    expect(isSpokenModelText("")).toBe(false);
+  });
+
+  /** Fix round 1: the predicate reads a turn's ACCUMULATED text, so a token
+   * still open at its end may yet close. A tag-like one (lowercase letters,
+   * spaces, `_` or `-` so far) is pending, not speech. */
+  it.each(["<", "{", "<no spe", "{pa", "<no speech>{pa"])(
+    "%j ends in an unclosed tag-like token: not speech",
+    (text) => {
+      expect(isSpokenModelText(text)).toBe(false);
+    }
+  );
+
+  it.each(["<Hello", "{Sure, one moment", "Hi <no", "<no speech>Hi {pa"])(
+    "%j carries real words outside any pending token: speech",
+    (text) => {
+      expect(isSpokenModelText(text)).toBe(true);
+    }
+  );
 });
 
 describe("CallSession missed-greeting nudge", () => {
@@ -232,6 +272,73 @@ describe("CallSession missed-greeting nudge", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(f.openingTrigger).not.toHaveBeenCalled();
   });
+
+  /** Live (2026-10-01 and 2026-10-03, Gemini): the model's output
+   * transcription carried "<no speech>{pause}" while it stayed silent. A
+   * placeholder like that is not the model responding, so the cue still goes
+   * out on schedule. */
+  it.each(NON_SPEECH_MODEL_TEXT)(
+    "model text %j with no audio does not cancel the nudge",
+    async (text) => {
+      const { f, diagnostics, callerSays } = await twoPartyCall();
+      callerSays("Hello?");
+      await vi.advanceTimersByTimeAsync(1_000);
+      f.emitTranscript({ speaker: "model", text, isFinal: false });
+      f.emitTurnComplete();
+      await vi.advanceTimersByTimeAsync(MISSED_GREETING_NUDGE_MS - 1_000 - 1);
+      expect(f.openingTrigger).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(f.openingTrigger).toHaveBeenCalledTimes(1);
+      expect(f.openingTrigger).toHaveBeenCalledWith(CALL_ANSWERED_CUE);
+      expect(nudges(diagnostics)).toHaveLength(1);
+    }
+  );
+
+  /** Fix round 1: a placeholder split across streamed fragments. */
+  it.each([[["<", "no speech>{pause}"]], [["{pa", "use}"]], [["<no spe"]]])(
+    "model fragments %j, then the turn closes, do not cancel the nudge",
+    async (fragments) => {
+      const { f, callerSays } = await twoPartyCall();
+      callerSays("Hello?");
+      await vi.advanceTimersByTimeAsync(1_000);
+      for (const text of fragments) f.emitTranscript({ speaker: "model", text, isFinal: false });
+      f.emitTurnComplete();
+      await vi.advanceTimersByTimeAsync(MISSED_GREETING_NUDGE_MS - 1_000);
+      expect(f.openingTrigger).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('model fragments "<" then "Hello" cancel the nudge', async () => {
+    const { f, callerSays } = await twoPartyCall();
+    callerSays("Hello?");
+    await vi.advanceTimersByTimeAsync(1_000);
+    f.emitTranscript({ speaker: "model", text: "<", isFinal: false });
+    f.emitTranscript({ speaker: "model", text: "Hello", isFinal: false });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(f.openingTrigger).not.toHaveBeenCalled();
+  });
+
+  it("model audio still cancels the nudge with a placeholder already in the turn", async () => {
+    const { f, callerSays } = await twoPartyCall();
+    callerSays("Hello?");
+    await vi.advanceTimersByTimeAsync(1_000);
+    f.emitTranscript({ speaker: "model", text: "<no speech>{pause}", isFinal: false });
+    f.emitModelAudio(modelFrame());
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(f.openingTrigger).not.toHaveBeenCalled();
+  });
+
+  it.each(["Hello", "Sure, one moment."])(
+    "model text %j with no audio cancels the nudge",
+    async (text) => {
+      const { f, callerSays } = await twoPartyCall();
+      callerSays("Hello?");
+      await vi.advanceTimersByTimeAsync(1_000);
+      f.emitTranscript({ speaker: "model", text, isFinal: false });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(f.openingTrigger).not.toHaveBeenCalled();
+    }
+  );
 
   it("whitespace-only far-end text does not arm it", async () => {
     const { f, callerSays } = await twoPartyCall();

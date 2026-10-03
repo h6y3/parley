@@ -189,7 +189,11 @@ providers append the trigger to the one-time setup prompt and send nothing after
 one fixed statement of fact, `CALL_ANSWERED_CUE`, sent at most once if the far end has spoken and
 the model has produced nothing for 2.5 s (a missed greeting; "spoken" is a far-end transcript or
 voice activity on the inbound audio) — only for speech that began in the
-call's first 10 s, and never on a call that declares `execution.ivr` or that a machine answered. A Gemini
+call's first 10 s, and never on a call that declares `execution.ivr` or that a machine answered.
+On a call that declares `execution.ivr` the same fixed cue can instead follow an accepted keypress
+(far-end speech starting within 30 s of the press, then 5 s of model silence; a steady tone such as
+ringback does not count as speech), once per press and
+at most twice per call; it is still the same constant, never caller content. A Gemini
 meeting receives `MEETING_OPENING_TRIGGER` as its own input after connect (Gemini declares
 `{ twoParty: "prompt", meeting: "turn" }`). Deepgram (`"prompt"`) has only one post-connect text
 input, `InjectUserMessage`, which its model hears as the callee speaking, so its meeting trigger
