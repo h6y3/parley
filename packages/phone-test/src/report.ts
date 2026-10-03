@@ -1,9 +1,10 @@
-import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { splitStereo } from "./capture.js";
 import { DEFAULT_JUDGE_MODEL, type PairJudgement } from "./judge.js";
 import type { CallResult } from "./runner.js";
 import type { TestConfig } from "./scenario.js";
-import type { TimingReport } from "./timing.js";
+import { voicedMs, type TimingReport } from "./timing.js";
 
 /** One call as the report reads it: the runner's result, its timing analysis
  * (absent when the capture could not be analysed) and its outcome codes. */
@@ -43,6 +44,9 @@ export const REPORT_NO_JUDGE = "no judge data; ranked by timing/outcome only";
 /** The outcome code that makes a call invalid data: the callee broke its
  * persona. */
 const PERSONA_VIOLATION = "persona-violation";
+/** The simulated callee never spoke: the agent had no one to talk to, so the
+ * call says nothing about it. Named on its own, whatever else went wrong. */
+const CALLEE_SILENT = "callee-silent";
 /** The one runner error that is the agent's failure: it never ended the call,
  * though the sim accounted for it (an unaccounted timeout adds `sim-desync`). */
 const AGENT_ERROR = "call-timeout";
@@ -57,16 +61,17 @@ const CALIBRATION_MIN_REFERENCE = 3;
 
 const isPlaced = (c: ReportCall): boolean => c.callId !== undefined;
 type Exclusion = { kind: "harness" | "persona"; reason: string };
-/** Why a call is out of every rate, if it is. Harness failures (the call was
- * never placed, any runner error but a lone `call-timeout`, or no timing
- * analysis — `capture-missing`) are not the agent's; a persona violation is
- * the callee's. A missing capture fails closed: counted, it would read as a
- * clean call with no talk-over. */
+/** Why a call is out of every rate, if it is. Harness failures are not the
+ * agent's: the call was never placed, it has any runner error but a lone
+ * `call-timeout` (`callee-silent` included), or it has no timing analysis
+ * (`capture-missing`). A persona violation is the callee's. A missing capture
+ * fails closed: counted, it would read as a clean call with no talk-over. */
 const exclusion = (c: ReportCall): Exclusion | undefined => {
   if (!isPlaced(c)) {
     const why = c.errors.length ? ` (${c.errors.join(", ")})` : "";
     return { kind: "harness", reason: `not placed${why}` };
   }
+  if (c.errors.includes(CALLEE_SILENT)) return { kind: "harness", reason: CALLEE_SILENT };
   if (c.errors.some((e) => e !== AGENT_ERROR)) {
     return { kind: "harness", reason: c.errors.join(", ") };
   }
@@ -226,6 +231,26 @@ function decide(
   return { config, finalist: failures.length === 0, failures, vsReference };
 }
 
+/** A calibration call must carry at least this much agent speech: a silent
+ * agent would reveal its identity and gives a listener nothing to judge. */
+const CALIBRATION_MIN_AGENT_SPEECH_MS = 3000;
+
+/** Total voiced time on the agent channel of a stereo capture; 0 when the
+ * file cannot be read or analysed. */
+function agentSpeechMs(wavPath: string): number {
+  try {
+    return voicedMs(readFileSync(wavPath), "agent");
+  } catch {
+    return 0;
+  }
+}
+
+/** The callee cut the agent off: an agent-only file would lose the context. */
+function cutOff(c: ReportCall): boolean {
+  const t = c.timing;
+  return t !== undefined && (t.bargeInStopsMs.length > 0 || t.codes.includes("talk-over"));
+}
+
 interface CalibrationPair {
   first: ReportCall;
   second: ReportCall;
@@ -235,7 +260,8 @@ interface CalibrationPair {
 /** Up to six pairs, at least three against the reference where possible:
  * judged pairs first (so a listener's answers can be scored against the judge), then
  * one unjudged pair per cell and config pair. A call copied by name is never
- * used: its bytes would give the pair away. Order and A/B sides come from
+ * used: its bytes would give the pair away. A call whose agent has under 3 s
+ * of speech, or that the callee cut off, is never used either. Order and A/B sides come from
  * `rng`. */
 function calibrationPairs(
   counted: ReportCall[],
@@ -244,7 +270,15 @@ function calibrationPairs(
   named: Set<string>
 ): CalibrationPair[] {
   const byTag = new Map(
-    counted.filter((c) => c.wavPath && !named.has(c.tag)).map((c) => [c.tag, c])
+    counted
+      .filter(
+        (c) =>
+          c.wavPath &&
+          !named.has(c.tag) &&
+          !cutOff(c) &&
+          agentSpeechMs(c.wavPath) >= CALIBRATION_MIN_AGENT_SPEECH_MS
+      )
+      .map((c) => [c.tag, c])
   );
   const seen = new Set<string>();
   const pool: CalibrationPair[] = [];
@@ -295,12 +329,14 @@ const CALIBRATION_README = (n: number) =>
     "# Blind listening pack",
     "",
     `There are ${n} pairs here. Each pair is the same phone call scenario, placed twice:`,
-    "`pair-N-A.wav` and `pair-N-B.wav`. Each recording has two voices — the assistant",
-    "placing the call, and the person who answered.",
+    "`pair-N-A.wav` and `pair-N-B.wav`.",
     "",
-    "For each pair, listen to both and decide which recording's **assistant** sounds",
-    "more like a natural human on the phone: voice, pacing, wording and turn-taking.",
-    "Ignore the other voice, and ignore line noise or muffled phone audio.",
+    "Each file contains ONE voice: the assistant placing the call (the agent being",
+    "tested). The receptionist has been removed, so you hear only the assistant.",
+    "",
+    "For each pair, listen to both and decide which assistant sounds more like a",
+    "natural, competent human on the phone: voice, pacing, wording and turn-taking.",
+    "Ignore line quality, noise and muffled phone audio.",
     "",
     "Write A, B or tie after each pair's line in `answers.txt`, next to this file.",
     ...(n < CALIBRATION_PAIRS
@@ -322,8 +358,10 @@ function writeCalibration(
     const swap = rng() < 0.5;
     const a = swap ? p.second : p.first;
     const b = swap ? p.first : p.second;
-    copyFileSync(a.wavPath!, join(dir, `${name}-A.wav`));
-    copyFileSync(b.wavPath!, join(dir, `${name}-B.wav`));
+    // Agent channel only: the other channel is the simulated receptionist,
+    // which runs on the other provider and would confound the comparison.
+    writeFileSync(join(dir, `${name}-A.wav`), splitStereo(readFileSync(a.wavPath!)).agent);
+    writeFileSync(join(dir, `${name}-B.wav`), splitStereo(readFileSync(b.wavPath!)).agent);
     const w = p.judged?.winner;
     key[name] = {
       A: a.config,

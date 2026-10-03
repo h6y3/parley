@@ -144,6 +144,12 @@ function channels(wav: Buffer): { agent: Int16Array; callee: Int16Array } {
   return { agent, callee };
 }
 
+/** Total voiced time (ms) on one channel of a stereo capture WAV, by the
+ * same VAD as the timing analysis. Throws on a file that is not one. */
+export function voicedMs(wav: Buffer, channel: "agent" | "callee"): number {
+  return segments(channels(wav)[channel], 8000).reduce((sum, s) => sum + (s.endMs - s.startMs), 0);
+}
+
 function percentile(sortedAsc: number[], p: number): number {
   if (sortedAsc.length === 0) return 0;
   return sortedAsc[Math.max(0, Math.ceil(p * sortedAsc.length) - 1)];

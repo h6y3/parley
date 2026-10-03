@@ -19,6 +19,7 @@ import { redactCloseReason } from "./redaction.js";
 import { defaultTimeZone, planOpening, renderSystemInstruction, withOpening } from "./render.js";
 import type { TranscriptionProvider, TranscriptionSession } from "./transcription.js";
 import { encodingEquals, formatEncoding } from "./types.js";
+import { FarEndVoiceDetector } from "./voice-activity.js";
 import type {
   AudioCodec,
   AudioEncoding,
@@ -396,6 +397,16 @@ export class CallSession {
    * held, and kept while the speech continues. Every path out of an utterance
    * either sends the cue or drops it, so this is never stale. */
   private farEndSpeechStartOffsetMs?: number;
+  /** False until attach has decided `missedGreetingCue` (after connect).
+   * Far-end voice heard before then is remembered in `pendingVoiceArm`. */
+  private missedGreetingDecided = false;
+  /** A far-end utterance that ENDED before the cue was decided: its start
+   * (media ms) and the `nowMs()` it ended at, so the window still runs from
+   * the end of the speech, not from connect. */
+  private pendingVoiceArm?: { startMs: number; endedAtMs: number };
+  /** Energy VAD over the far end's inbound frames — see `noteFarEndVoice`. */
+  private farEndVoice?: FarEndVoiceDetector;
+  private farEndVoiceLogged = false;
   private readonly sinks: AudioSink[] = [];
   private readonly phaseSet = new Set<CallPhase>();
   private preConsent: { speaker: SpeakerRole; text: string; at: string }[] = [];
@@ -588,13 +599,19 @@ export class CallSession {
     // a WebSocket buffers nothing before a listener exists, so awaiting connect()
     // first would drop the carrier's one-time `start` frame (which carries the
     // streamSid every outbound frame needs) and the call would be silent
-    // outbound. Inbound audio that arrives before the session is ready is
-    // harmlessly ignored (`this.session` is still undefined — the callee hasn't
-    // been prompted to speak yet). Discovered at the M3 live gate.
+    // outbound. Inbound audio that arrives before the session is ready reaches
+    // no sink (the realtime sink is added after connect), so the model never
+    // hears it — but the far-end VAD does: a callee who answers and says hello
+    // at once speaks into exactly this window (see `noteFarEndVoice`).
+    // Discovered at the M3 live gate.
     this.media = telephony.attachMediaStream({
       callId,
       socket,
       onInboundAudio: (frame, source) => {
+        // Before any sink: frames that arrive while the realtime connect is
+        // still in flight reach no sink at all, and a greeting spoken then
+        // is exactly the one the nudge exists for.
+        this.noteFarEndVoice(frame);
         // A LIST, not a slot. Slice A swaps the realtime sink for a transcription
         // sink at the consent handoff; slice B registers both at once, because a
         // live answer that is not grounded in the running transcript is worse than
@@ -932,6 +949,8 @@ export class CallSession {
     // can land during the connect, before this line.
     this.missedGreetingCue =
       execution.ivr || this.answeredByValue === "machine" ? undefined : opening.answeredCue;
+    this.missedGreetingDecided = true;
+    this.armPendingVoice();
     this.armTimers();
 
     // An arrow captures `this` lexically, so the getter reads the LIVE value
@@ -1894,7 +1913,7 @@ export class CallSession {
    * fragment, so it runs from the END of the far end's speech. Does nothing
    * once the cue is gone — sent, cancelled by the model producing anything,
    * or never planned — or once the call has ended. */
-  private armMissedGreetingNudge(): void {
+  private armMissedGreetingNudge(delayMs: number = MISSED_GREETING_NUDGE_MS): void {
     if (this.missedGreetingCue === undefined || this.settled) return;
     const startedAt = (this.farEndSpeechStartOffsetMs ??= this.nowMs() - this.startedAtMs);
     // Opening only (R21). Later speech can only start later still, so the
@@ -1904,10 +1923,68 @@ export class CallSession {
       return;
     }
     clearTimeout(this.missedGreetingTimer);
-    this.missedGreetingTimer = setTimeout(
-      () => this.sendMissedGreetingCue(),
-      MISSED_GREETING_NUDGE_MS
+    this.missedGreetingTimer = setTimeout(() => this.sendMissedGreetingCue(), delayMs);
+  }
+
+  /** Feed one inbound carrier frame to the far-end VAD, which runs from the
+   * moment the media stream attaches — before, and independent of, the
+   * realtime provider's transcript. Live (phone-test smoke 3, Gemini): a
+   * greeting spoken ~0.2 s after pickup arrived before the session was ready,
+   * was never transcribed, and the agent sat silent to the silence cap. An
+   * utterance starting holds the window, as `onInterrupted` does; its end arms
+   * it, as a transcript does. Stops listening once the cue can never fire. */
+  private noteFarEndVoice(frame: AudioFrame): void {
+    // A meeting or an IVR-declared call never carries the cue, so there is
+    // nothing to listen for — not even before connect.
+    if (this.settled || this.isMeeting || this.params.execution?.ivr) return;
+    if (this.missedGreetingDecided && this.missedGreetingCue === undefined) {
+      this.farEndVoice = undefined;
+      return;
+    }
+    this.farEndVoice ??= new FarEndVoiceDetector({
+      onUtteranceStart: (startMs) => {
+        this.pendingVoiceArm = undefined;
+        if (this.missedGreetingCue === undefined) return;
+        this.holdMissedGreetingNudge();
+        this.farEndSpeechStartOffsetMs = Math.min(
+          this.farEndSpeechStartOffsetMs ?? startMs,
+          startMs
+        );
+      },
+      onUtteranceEnd: (startMs) => {
+        if (!this.missedGreetingDecided) {
+          this.pendingVoiceArm = { startMs, endedAtMs: this.nowMs() };
+          return;
+        }
+        this.armMissedGreetingNudgeFromVoice(startMs, MISSED_GREETING_NUDGE_MS);
+      }
+    });
+    this.farEndVoice.accept(frame);
+  }
+
+  /** At the decision point after connect: a far-end utterance that ended
+   * while connecting arms the window for what is left of it — the cue goes
+   * out MISSED_GREETING_NUDGE_MS after the speech ended, or at once if that
+   * is already past. One still in progress arms at its own end. */
+  private armPendingVoice(): void {
+    const pending = this.pendingVoiceArm;
+    this.pendingVoiceArm = undefined;
+    if (pending === undefined || this.farEndVoice?.speaking) return;
+    const elapsed = this.nowMs() - pending.endedAtMs;
+    this.armMissedGreetingNudgeFromVoice(
+      pending.startMs,
+      Math.max(0, MISSED_GREETING_NUDGE_MS - elapsed)
     );
+  }
+
+  private armMissedGreetingNudgeFromVoice(startMs: number, delayMs: number): void {
+    if (this.missedGreetingCue === undefined || this.settled) return;
+    this.farEndSpeechStartOffsetMs ??= startMs;
+    this.armMissedGreetingNudge(delayMs);
+    if (this.missedGreetingTimer !== undefined && !this.farEndVoiceLogged) {
+      this.farEndVoiceLogged = true;
+      this.logAt("missed greeting: far-end voice detected");
+    }
   }
 
   /** The far end has started speaking: stop the pending window without

@@ -77,7 +77,9 @@ fixed text is appended to the one-time `systemInstruction` and nothing is sent a
 the callee's own voice is the model's first input. If that greeting is missed — the far end has
 spoken, in speech that began within the first 10 s (`NUDGE_OPENING_WINDOW_MS`), and the model
 has produced nothing at all for 2.5 s after it (`MISSED_GREETING_NUDGE_MS`; far-end speech
-starting again holds that window) — the short `CALL_ANSWERED_CUE` is sent once through
+starting again holds that window; far-end speech is a provider transcript or an utterance found
+by `CallSession`'s own energy VAD on the inbound carrier frames, which runs from media attach, so
+a greeting spoken before the realtime session is ready still counts) — the short `CALL_ANSWERED_CUE` is sent once through
 `sendOpeningTrigger`; never on a meeting, a call that declares `execution.ivr` (a menu can pause
 longer than the window) or one answered by a machine, and never
 once the model has produced audio, text or a tool call. A Deepgram meeting (`"prompt"` throughout,

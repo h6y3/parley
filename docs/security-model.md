@@ -187,7 +187,8 @@ Where the opening goes is the provider's declaration (`RealtimeProvider.openingD
 either way it is Parley's own fixed text, never caller content. On a two-party call both shipped
 providers append the trigger to the one-time setup prompt and send nothing after connect, except
 one fixed statement of fact, `CALL_ANSWERED_CUE`, sent at most once if the far end has spoken and
-the model has produced nothing for 2.5 s (a missed greeting) — only for speech that began in the
+the model has produced nothing for 2.5 s (a missed greeting; "spoken" is a far-end transcript or
+voice activity on the inbound audio) — only for speech that began in the
 call's first 10 s, and never on a call that declares `execution.ivr` or that a machine answered. A Gemini
 meeting receives `MEETING_OPENING_TRIGGER` as its own input after connect (Gemini declares
 `{ twoParty: "prompt", meeting: "turn" }`). Deepgram (`"prompt"`) has only one post-connect text

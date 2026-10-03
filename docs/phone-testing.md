@@ -74,8 +74,10 @@ A **phone scenario** is a JSON file (examples in
   with the campaign's number.
 - `personas`: the people the callee plays. Each has a `name` (a slug), a
   `role` ("the front-desk scheduler at a dental office"), `facts` it holds
-  (slots, prices), `behaviours` in order (quoted lines are said verbatim: "ask
-  about insurance before booking", "interrupt the agent's first explanation")
+  (slots, prices), `behaviours` in order ("ask about insurance before
+  booking", "interrupt the agent's first explanation"; a line to say word for
+  word goes after a colon, `confirm it: Done, Monday at 11.`, or in quotation
+  marks, which the callee is told not to say aloud)
   and `endsCallWith`, the line after which it says goodbye. Two optional
   fields: `answerStyle` (`"realistic"`, the default, or `"instant"`; see
   [How the callee answers](#how-the-callee-answers)) and `diagnostic`
@@ -108,6 +110,19 @@ answers. The sim plays it that way by default (`answerStyle: "realistic"`):
   and the agent has not spoken at all on the call, the callee says "Hello?"
   again, at most twice. Each one is marked `callee-reprompt` in the call's
   timeline. Once the agent has spoken, the callee never reprompts.
+
+### Keypresses
+
+The agent presses keys the way a handset does: it puts the two DTMF tones into
+its audio. Twilio Media Streams does not report tones that arrive that way, so
+the sim listens for them itself, with a Goertzel detector over the agent's
+audio: one row and one column tone dominant and above an absolute level, twist
+within 8 dB, the other DTMF tones 10 dB down, at least 40 ms of tone, and at
+least 40 ms of gap before the same key counts again. Each press is marked
+`dtmf:<digit>` on the timeline and reaches the callee bot as the fixed line
+`[the caller pressed <digit>]`, which is how a menu persona hears it. If Twilio
+does send a `dtmf` event as well, an event and a detection of the same digit
+within 500 ms are one press. Only 0–9, `*` and `#` are relayed.
 
 `answerStyle: "instant"` skips both: the callee speaks as soon as the line
 opens and never repeats itself. Use it to measure the risk, not to compare
@@ -256,6 +271,17 @@ against the agent), and `sim-unreachable`, `persona-missing`,
 whose capture could not be analysed (`capture-missing`), are excluded from
 every rate and listed separately.
 
+`callee-silent` is a harness failure too: on a call that lasted at least 5 s,
+the simulated callee never spoke (no callee transcript on the timeline, and
+under 1 s of voiced audio on its channel), so the agent had no one to talk to.
+The call is excluded from every rate and listed under "Excluded (harness)" as
+`callee-silent`, even if it also timed out. A shorter call is never
+`callee-silent`: the callee first speaks 1.2 s in, so an agent that hangs up or
+drops before then still counts as failing. If Twilio ever reports the agent's
+keypad tones itself, the sim logs each press both sources reported, and any
+Twilio event that arrives too late to pair with the tones (that press reaches
+the menu twice).
+
 ### The judge
 
 With `--judge`, each non-reference call is paired with the reference
@@ -270,7 +296,13 @@ a pair only when both orders pick it, which cancels position bias.
 the contestants. The report says so, and its win rates are a ranking aid, not a
 verdict: people listening to the finalists break ties. The `calibration/` pack
 holds up to six blind pairs with an `answers.txt` for a listener, so the judge
-can be checked against human ears.
+can be checked against human ears. Each pack file is the agent channel only
+(mono, 8 kHz): the simulated receptionist runs on the other provider, so a full
+recording would let its voice colour the rating. A pair is skipped when either
+call's agent has under 3 s of speech, since a silent call gives away its
+provider and gives the listener nothing to judge. Calls the callee cut off (a
+barge-in or the `talk-over` code) are skipped too, since an agent-only file
+loses the context of the interruption.
 
 ### The report
 

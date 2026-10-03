@@ -224,7 +224,8 @@ export function personaPrompt(p: CalleePersona): string {
       "Say one thing at a time and let the caller respond.",
     p.facts.length > 0 ? `What you know:\n${list(p.facts)}` : "",
     `Follow these behaviours in order:\n${list(p.behaviours)}`,
-    "Say quoted lines exactly as written.",
+    "Say quoted lines, and lines after a colon, exactly as written. " +
+      "Say the words inside quotation marks without saying the quotation marks.",
     "If the caller asks who they are speaking with or your name, answer with your name.",
     "Never end the call or say goodbye before the caller has said goodbye or clearly finished.",
     "Do not say the booking is done (e.g. 'you're all set') until the caller has confirmed " +

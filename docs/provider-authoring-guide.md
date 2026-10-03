@@ -143,7 +143,10 @@ text goes, and it is required: `CallSession`, and the harness runners, pass it t
   declares `execution.ivr`, whose menu may pause longer than that, or one answered by a machine.
   The window is held while the far end is speaking, read from `onInterrupted`: a provider that
   reports only whole utterances should raise it when the far end starts talking (Deepgram's
-  `UserStartedSpeaking`), or a long first sentence could be cut into. On a meeting it is called
+  `UserStartedSpeaking`), or a long first sentence could be cut into. A provider need do nothing
+  for a greeting it never transcribes: `CallSession` runs its own energy VAD on the inbound
+  carrier frames from the moment the media stream attaches, and an utterance it finds starts and
+  arms the window the same way. On a meeting it is called
   once, with `MEETING_CONNECTED_CUE`, a single short line. Declare this
   when the vendor's only post-connect text input is a user turn. Deepgram's is
   `InjectUserMessage`, and sent the long trigger that way its model heard it as the callee: in

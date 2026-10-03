@@ -663,7 +663,8 @@ export async function runSimCli(args: SimServeArgs, deps: PhoneTestCliDeps): Pro
     authToken: env.TWILIO_AUTH_TOKEN!,
     callerNumber,
     callee: { provider: built.provider, model: built.model, voice: args.calleeVoice },
-    outDir
+    outDir,
+    log: deps.log ?? console.log
   });
   await sim.start();
   const log = deps.log ?? console.log;

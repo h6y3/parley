@@ -165,6 +165,13 @@ function modelAudio(fake: ProviderWireFake): Buffer {
 
 const carrierFrame = (): AudioFrame => ({ encoding: MULAW_8K, data: Buffer.alloc(160, 0xff) });
 
+/** 20 ms of a loud tone (μ-law bytes alternating ±~8000): far-end voice to
+ * the carrier-side VAD. */
+const toneFrame = (): AudioFrame => ({
+  encoding: MULAW_8K,
+  data: Buffer.from(Array.from({ length: 160 }, (_, i) => (i % 2 === 0 ? 0x9f : 0x1f)))
+});
+
 describe.each(["gemini", "deepgram"] as const)("CallSession invariants on %s", (name) => {
   let fake: ProviderWireFake;
   const open: CallSessionHandle[] = [];
@@ -622,6 +629,48 @@ describe.each(["gemini", "deepgram"] as const)("CallSession invariants on %s", (
       });
       await vi.advanceTimersByTimeAsync(MISSED_GREETING_NUDGE_MS);
       expect(cues(wire.sent())).toEqual([cueOnWire()]);
+    });
+
+    /** Live (phone-test smoke 3, Gemini): a greeting spoken ~0.2 s after
+     * pickup reached us before the realtime session was ready and was never
+     * transcribed. Far-end VOICE on the carrier frames arms the window too,
+     * including frames that arrive while the vendor handshake is in flight. */
+    it("a greeting spoken before the session is ready, never transcribed: the cue still goes out", async () => {
+      vi.useFakeTimers();
+      const carrier = makeCarrier();
+      const diagnostics: string[] = [];
+      const session = new CallSession({
+        brief,
+        guardrails: ["Rule one."],
+        telephony: carrier.telephony,
+        realtime: fake.provider,
+        codec,
+        convert,
+        canConvert,
+        from: "+15555550142",
+        answerWebhookUrl: "https://voice.example.com/twilio/answer",
+        model: "test-model",
+        onDiagnostic: (message) => diagnostics.push(message)
+      });
+      const attaching = session.attach("CA-parity", socket);
+      const play = async (ms: number, voiced: boolean): Promise<void> => {
+        for (let t = 0; t < ms; t += 20) {
+          await vi.advanceTimersByTimeAsync(20);
+          carrier.pushInbound(voiced ? toneFrame() : carrierFrame());
+        }
+      };
+      await play(200, false);
+      await play(600, true);
+      await play(300, false);
+      fake.wire.ready();
+      const handle = await attaching;
+      open.push(handle);
+      expect(cues(fake.wire.sent())).toEqual([]);
+      await play(MISSED_GREETING_NUDGE_MS, false);
+      expect(cues(fake.wire.sent())).toEqual([cueOnWire()]);
+      expect(diagnostics.filter((d) => d.startsWith("missed greeting: far-end voice"))).toEqual([
+        "missed greeting: far-end voice detected at +1100ms"
+      ]);
     });
 
     it("model audio inside the window: the cue never goes out", async () => {

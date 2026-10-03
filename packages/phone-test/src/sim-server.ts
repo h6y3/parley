@@ -23,6 +23,7 @@ import {
   verifyTwilioSignature
 } from "@parley/telephony-twilio";
 import { CaptureRecorder } from "./capture.js";
+import { DtmfDetector } from "./dtmf.js";
 import { parsePersona, personaPrompt, type CalleePersona } from "./scenario.js";
 
 /** The port `parley sim serve` listens on. */
@@ -80,6 +81,14 @@ const AGENT_VOICE_DBFS = -40;
  * Shorter bursts (clicks, a blip of line noise) are ignored entirely: they
  * neither restart the silence window nor stop the callee saying hello again. */
 const AGENT_SPOKE_MS = 100;
+
+/** A Twilio `dtmf` event and an in-band detection of the same digit this
+ * close together are one press, heard twice. */
+export const DTMF_DEDUP_MS = 500;
+
+/** A Twilio `dtmf` event this soon after unpaired in-band tones of the same
+ * digit is logged as a likely double relay. */
+const DTMF_LATE_EVENT_MS = 3000;
 
 /** μ-law 8 kHz carries 8 samples per millisecond. */
 const MULAW_SAMPLES_PER_MS = 8;
@@ -143,6 +152,8 @@ export interface SimServerOptions {
   /** The pause before a realistic callee answers (default
    * `CALLEE_PICKUP_PAUSE_MS`). */
   pickupPauseMs?: number;
+  /** Diagnostic lines (default: none). */
+  log?: (line: string) => void;
 }
 
 export type SimHandlerOptions = Omit<SimServerOptions, "port">;
@@ -213,6 +224,13 @@ interface SimCall {
   agentSpoke: boolean;
   reprompts: number;
   lastRepromptAt: number;
+  /** Listens for the agent's keypad tones in its audio. */
+  dtmf: DtmfDetector;
+  /** Presses relayed in the last `DTMF_DEDUP_MS` that the other source has
+   * not yet matched. */
+  presses: { digit: string; at: number; source: "event" | "tones" }[];
+  /** When each digit was last heard in the agent's tones. */
+  lastTones: Map<string, number>;
 }
 
 const json = (status: number, value: unknown): SimHttpResponse => ({
@@ -233,6 +251,7 @@ export function createSimHandler(opts: SimHandlerOptions): SimHandler {
   const now = opts.now ?? defaultNow;
   const maxCallMs = opts.maxCallMs ?? SIM_MAX_CALL_MS;
   const pickupPauseMs = opts.pickupPauseMs ?? CALLEE_PICKUP_PAUSE_MS;
+  const log = opts.log ?? ((): void => {});
   const { provider } = opts.callee;
   const queue: { tag: string; persona: CalleePersona }[] = [];
   const results = new Map<string, SimResult>();
@@ -367,6 +386,48 @@ export function createSimHandler(opts: SimHandlerOptions): SimHandler {
     armReprompt(call);
   }
 
+  /** One keypress, from a Twilio `dtmf` event or heard in the agent's audio.
+   * Twilio Media Streams does not raise the event for tones the agent sends
+   * in-band, so the sim listens for them too; when both arrive for the same
+   * press, within `DTMF_DEDUP_MS`, the second is dropped. */
+  function press(call: SimCall, digit: string, source: "event" | "tones"): void {
+    if (call.finished) return;
+    const at = now();
+    call.presses = call.presses.filter((p) => at - p.at <= DTMF_DEDUP_MS);
+    const twin = call.presses.findIndex((p) => p.digit === digit && p.source !== source);
+    if (twin >= 0) {
+      call.presses.splice(twin, 1);
+      // Diagnostic: a live run shows whether Twilio reports in-band tones at all.
+      log(
+        `sim ${call.tag}: dtmf ${digit} reported by both the Twilio event and the in-band tones; relayed once`
+      );
+      return;
+    }
+    if (source === "tones") {
+      call.lastTones.set(digit, at);
+    } else {
+      const tones = call.lastTones.get(digit);
+      if (tones !== undefined && at - tones <= DTMF_LATE_EVENT_MS) {
+        // Too late to pair, so the menu hears this press twice.
+        log(
+          `sim ${call.tag}: Twilio dtmf ${digit} arrived ${Math.round(at - tones)} ms after the in-band tones; relayed twice`
+        );
+      }
+    }
+    call.presses.push({ digit, at, source });
+    call.recorder?.mark(`dtmf:${digit}`);
+    // A simulated phone menu is a language model, not a tone detector, so the
+    // keypress reaches it as a short fixed line. It goes through the session's
+    // one-line opening input on purpose: the digit comes from a closed set and
+    // the template is fixed, so this stays a cue and never becomes a way to
+    // re-instruct the bot.
+    try {
+      call.session?.sendOpeningTrigger(`[the caller pressed ${digit}]`);
+    } catch (err) {
+      fail(call, `callee dtmf: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   async function hangUp(call: SimCall, tool: ToolCallRequest): Promise<void> {
     if (call.hangingUp || call.finished) return;
     call.hangingUp = true;
@@ -478,6 +539,7 @@ export function createSimHandler(opts: SimHandlerOptions): SimHandler {
       onInboundAudio: (frame) => {
         if (call.finished) return;
         recorder.agent(frame.data);
+        for (const digit of call.dtmf.push(frame.data)) press(call, digit, "tones");
         if (!call.agentSpoke) {
           if (voiced(frame.data)) {
             call.agentVoicedRunMs += frame.data.length / MULAW_SAMPLES_PER_MS;
@@ -499,18 +561,7 @@ export function createSimHandler(opts: SimHandlerOptions): SimHandler {
         if (event.type === "completed" || event.type === "removed") finish(call);
       },
       onDtmf: (digit) => {
-        if (call.finished || !KEYPAD_DIGIT.test(digit)) return;
-        recorder.mark(`dtmf:${digit}`);
-        // A simulated phone menu cannot hear tones in its audio, so the
-        // keypress reaches it as a short fixed line. It goes through the
-        // session's one-line opening input on purpose: the digit comes from a
-        // closed set and the template is fixed, so this stays a cue and never
-        // becomes a way to re-instruct the bot.
-        try {
-          call.session?.sendOpeningTrigger(`[the caller pressed ${digit}]`);
-        } catch (err) {
-          fail(call, `callee dtmf: ${err instanceof Error ? err.message : String(err)}`);
-        }
+        if (KEYPAD_DIGIT.test(digit)) press(call, digit, "event");
       }
     });
     connectCallee(call).catch((err: unknown) => {
@@ -548,7 +599,10 @@ export function createSimHandler(opts: SimHandlerOptions): SimHandler {
         agentVoicedRunMs: 0,
         agentSpoke: false,
         reprompts: 0,
-        lastRepromptAt: 0
+        lastRepromptAt: 0,
+        dtmf: new DtmfDetector(),
+        presses: [],
+        lastTones: new Map()
       };
       call.ceiling = setTimeout(() => {
         if (call.finished) return;

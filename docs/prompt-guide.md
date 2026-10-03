@@ -25,7 +25,9 @@ else ever reaches the model as instruction-bearing content:
    Gemini uses for a meeting. Under `"prompt"` — every two-party call on both shipped providers,
    and a Deepgram meeting — the same fixed text is appended to channel 1 instead, and a two-party
    call is sent no trigger at connect. If the far end then speaks within the first 10 s and the
-   model produces nothing for 2.5 s after that speech ends, `CallSession` sends one short statement of fact, `CALL_ANSWERED_CUE` ("The other end
+   model produces nothing for 2.5 s after that speech ends — speech it learns of from the
+   provider's transcript or from its own energy VAD on the inbound audio, which also hears a
+   greeting spoken before the realtime session was ready — `CallSession` sends one short statement of fact, `CALL_ANSWERED_CUE` ("The other end
    has answered and spoken."), through the same path, once, so a missed greeting cannot leave the
    agent silent (never on a call that declares `execution.ivr`, whose menu may pause longer than
    that, nor one the carrier says a machine answered); see `planOpening` (`packages/core/src/render.ts`). Either way it is Parley's

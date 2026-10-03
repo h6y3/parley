@@ -17,6 +17,7 @@ import {
   type DeepgramTier,
   type RealtimeProvider
 } from "./spend.js";
+import { voicedMs } from "./timing.js";
 
 /** Per-call ceiling: a call not done this long after dialling is hung up. */
 export const RESULT_TIMEOUT_MS = CALL_CEILING_SECONDS * 1000;
@@ -45,7 +46,11 @@ export type CallErrorCode =
    * hangup, or no CallSid ever reported for the tag. The sim's persona queue
    * is FIFO with no dequeue, so the next call could take a stale persona under
    * the wrong tag and be impossible to hang up. The run ends. */
-  | "sim-desync";
+  | "sim-desync"
+  /** The simulated callee never spoke: no transcript and under 1 s voiced on
+   * its channel. A failure of the callee's provider, not the agent's; the
+   * report excludes the call from every rate. */
+  | "callee-silent";
 
 export interface CallResult {
   tag: string;
@@ -180,6 +185,37 @@ function findRecord(path: string, callId: string): unknown {
     }
   }
   return undefined;
+}
+
+/** Below this much voiced callee audio, with no transcript, the callee never
+ * spoke. */
+export const CALLEE_SILENT_MS = 1000;
+/** A call shorter than this is never `callee-silent`. The realistic callee
+ * first speaks 1.2 s after the stream opens (instantly, for an instant one),
+ * and the capture ends when the stream does, so a call this long gave the
+ * callee its chance to speak: a shorter one may be an agent that hung up or
+ * dropped before the callee could say anything, which is the agent's failure. */
+export const CALLEE_SILENT_MIN_CALL_MS = 5000;
+
+/** Whether the simulated callee never spoke on a captured call that lasted
+ * `callMs` (`CALLEE_SILENT_MIN_CALL_MS` or more): its timeline has no
+ * transcript and its channel is voiced for under `CALLEE_SILENT_MS`. A call
+ * with no readable capture is not judged here (the report already excludes it
+ * as `capture-missing`). */
+export function calleeSilent(
+  wavPath: string | undefined,
+  timelinePath: string | undefined,
+  callMs: number
+): boolean {
+  if (!wavPath || !timelinePath || callMs < CALLEE_SILENT_MIN_CALL_MS) return false;
+  try {
+    const t = JSON.parse(readFileSync(timelinePath, "utf8")) as Partial<Timeline>;
+    if (!Array.isArray(t.calleeText)) return false;
+    if (t.calleeText.some((line) => typeof line === "string" && line.trim() !== "")) return false;
+    return voicedMs(readFileSync(wavPath), "callee") < CALLEE_SILENT_MS;
+  } catch {
+    return false;
+  }
 }
 
 const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -403,9 +439,14 @@ export async function runCampaign(opts: RunCampaignOptions): Promise<CallResult[
             ) {
               result.errors.push("persona-missing");
             }
+            // The call's length: the timeline's, else the wall clock's.
+            const callMs = timelineMs(result.timelinePath) ?? doneAt - dialAt;
+            if (calleeSilent(result.wavPath, result.timelinePath, callMs)) {
+              result.errors.push("callee-silent");
+            }
 
             // 5. Book the spend now, so a crash in the record wait cannot lose it.
-            result.minutes = toMinutes(timelineMs(result.timelinePath) ?? doneAt - dialAt);
+            result.minutes = toMinutes(callMs);
             result.usd = callCostUsd(result.minutes, agent, tier, callee);
             appendSpend(deps.spendPath, {
               at: deps.now().toISOString(),

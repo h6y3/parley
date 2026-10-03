@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } fro
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { splitStereo } from "../src/capture.js";
 import type { PairJudgement } from "../src/judge.js";
 import { REPORT_NO_JUDGE, writeReport, type ReportCall } from "../src/report.js";
 import type { TestConfig } from "../src/scenario.js";
@@ -11,7 +12,38 @@ const gemini = (name: string): TestConfig => ({ name, realtime: { provider: "gem
 const deepgram = (name: string): TestConfig =>
   ({ name, realtime: { provider: "deepgram", think: "gpt-4o-mini" } }) as TestConfig;
 
-function timing(gaps: number[], codes: TimingCode[] = []): TimingReport {
+/** A real stereo 8 kHz WAV: L is the agent (0.5 s tones every other half
+ * second, or silence), R a different, constant tone for the receptionist. */
+function stereoWav(silentAgent: boolean, tag = "", seconds = 8): Buffer {
+  let h0 = 0;
+  for (const ch of tag) h0 = (h0 * 31 + ch.charCodeAt(0)) % 1000;
+  const freq = 200 + h0; // a distinct agent tone per tag
+  const frames = 8000 * seconds;
+  const data = Buffer.alloc(frames * 4);
+  for (let i = 0; i < frames; i++) {
+    const on = Math.floor(i / 4000) % 2 === 0;
+    const l = silentAgent || !on ? 0 : Math.round(8000 * Math.sin((i * 2 * Math.PI * freq) / 8000));
+    const r = Math.round(6000 * Math.sin((i * 2 * Math.PI * 700) / 8000));
+    data.writeInt16LE(l, i * 4);
+    data.writeInt16LE(r, i * 4 + 2);
+  }
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0);
+  h.writeUInt32LE(36 + data.length, 4);
+  h.write("WAVEfmt ", 8);
+  h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20);
+  h.writeUInt16LE(2, 22);
+  h.writeUInt32LE(8000, 24);
+  h.writeUInt32LE(32000, 28);
+  h.writeUInt16LE(4, 32);
+  h.writeUInt16LE(16, 34);
+  h.write("data", 36);
+  h.writeUInt32LE(data.length, 40);
+  return Buffer.concat([h, data]);
+}
+
+function timing(gaps: number[], codes: TimingCode[] = [], bargeIn = false): TimingReport {
   const s = [...gaps].sort((a, b) => a - b);
   const pick = (p: number) => (s.length ? s[Math.ceil(p * s.length) - 1]! : 0);
   return {
@@ -19,7 +51,7 @@ function timing(gaps: number[], codes: TimingCode[] = []): TimingReport {
     p50: pick(0.5),
     p90: pick(0.9),
     overlapsMs: [],
-    bargeInStopsMs: [],
+    bargeInStopsMs: bargeIn ? [400] : [],
     backchannelsMs: [],
     spokeBeforeCallee: codes.includes("spoke-before-callee"),
     talkedAfterGoodbyeMs: 0,
@@ -37,6 +69,8 @@ interface MkOpts {
   placed?: boolean;
   noTiming?: boolean;
   diagnostic?: boolean;
+  silentAgent?: boolean;
+  bargeIn?: boolean;
 }
 
 /** One call in cell `cell` ("s1/p1"), with a WAV whose bytes name its tag. */
@@ -44,7 +78,7 @@ function mk(dir: string, config: string, cell: string, n: number, o: MkOpts = {}
   const [scenarioId, persona] = cell.split("/") as [string, string];
   const tag = `${scenarioId}.${persona}.${config}.${n}`;
   const wavPath = join(dir, `${tag}.wav`);
-  writeFileSync(wavPath, `wav:${tag}`);
+  writeFileSync(wavPath, stereoWav(o.silentAgent ?? false, tag));
   const placed = o.placed ?? true;
   return {
     tag,
@@ -57,7 +91,7 @@ function mk(dir: string, config: string, cell: string, n: number, o: MkOpts = {}
     usd: placed ? 0.1 : 0,
     errors: o.errors ?? [],
     outcomeCodes: o.outcome ?? [],
-    timing: placed && !o.noTiming ? timing(o.gaps ?? [1000], o.timingCodes) : undefined,
+    timing: placed && !o.noTiming ? timing(o.gaps ?? [1000], o.timingCodes, o.bargeIn) : undefined,
     ...(o.diagnostic ? { diagnostic: true as const } : {})
   };
 }
@@ -178,6 +212,30 @@ describe("writeReport — tables", () => {
     expect(md).toContain("0% (1)");
   });
 
+  it("excludes a callee-silent call as the harness's, even when it also timed out", () => {
+    const dir = fresh("silent");
+    const results = [
+      mk(dir, "gem", "s1/p1", 1),
+      // The simulated callee never spoke: the agent had no one to talk to.
+      mk(dir, "gem", "s1/p1", 2, { errors: ["callee-silent"], outcome: ["outcome-missing"] }),
+      mk(dir, "gem", "s1/p1", 3, { errors: ["call-timeout", "callee-silent"] })
+    ];
+    const md = read(
+      writeReport({
+        campaignId: "c",
+        results,
+        configs: [gemini("gem")],
+        outDir: dir,
+        calibration: false
+      }).reportPath
+    );
+    expect(md).toMatch(/\| gem \| gemini \| 1 \| 2 \| 0% \|/);
+    expect(md).not.toMatch(/\| config \|[^\n]*(outcome-missing|callee-silent|call-timeout)/);
+    const harness = md.split("## Excluded (harness)")[1]!.split("##")[0]!;
+    expect(harness).toContain("- s1.p1.gem.2 — callee-silent");
+    expect(harness).toContain("- s1.p1.gem.3 — callee-silent");
+  });
+
   it("notes that the judge is a Gemini model, with or without judge data", () => {
     const dir = fresh("note");
     const results = [mk(dir, "gem", "s1/p1", 1), mk(dir, "dg", "s1/p1", 1)];
@@ -265,7 +323,7 @@ describe("writeReport — the pre-registered decision rule", () => {
       "finalist-2-dg-edge.wav",
       "reference-gem.wav"
     ]);
-    expect(read(r.copied[0]!)).toMatch(/^wav:s\d\.p1\.dg-ok\.\d$/);
+    expect(readFileSync(r.copied[0]!).readUInt16LE(22)).toBe(2); // a named copy stays stereo
   });
 
   it("ranks finalists by judge rate, then fewer codes, then lower p90", () => {
@@ -328,7 +386,8 @@ describe("writeReport — the pre-registered decision rule", () => {
       outDir: dir,
       calibration: false
     });
-    expect(read(r.copied[0]!)).toBe("wav:s1.p1.gem.3");
+    expect(r.copied[0]!).toContain("rank-1-gem");
+    expect(readFileSync(r.copied[0]!).equals(readFileSync(ref[2]!.wavPath!))).toBe(true);
   });
 
   it("drops judge pairs that touch an excluded call", () => {
@@ -567,8 +626,21 @@ describe("writeReport — blind calibration pack", () => {
       expect(cb.config).toBe(k.B);
       expect(k.A).not.toBe(k.B);
       expect([ca.scenarioId, ca.persona]).toEqual([cb.scenarioId, cb.persona]);
-      expect(read(join(cal, `${name}-A.wav`))).toBe(`wav:${k.aTag}`);
-      expect(read(join(cal, `${name}-B.wav`))).toBe(`wav:${k.bTag}`);
+      for (const [side, call] of [
+        ["A", ca],
+        ["B", cb]
+      ] as const) {
+        const got = readFileSync(join(cal, `${name}-${side}.wav`));
+        const agent = splitStereo(readFileSync(call.wavPath!)).agent;
+        expect(got.equals(agent)).toBe(true);
+        // Distinct audio per call: no other call's agent channel matches.
+        for (const other of data.results) {
+          if (other.tag === call.tag || !other.wavPath) continue;
+          expect(got.equals(splitStereo(readFileSync(other.wavPath)).agent)).toBe(false);
+        }
+        expect(got.readUInt16LE(22)).toBe(1); // mono
+        expect(got.readUInt32LE(24)).toBe(8000);
+      }
       if (k.A === "gem" || k.B === "gem") withRef++;
       // The judge's verdict, in this pair's letters.
       const p = data.judge.pairs.find((x) => x.tags.includes(k.aTag) && x.tags.includes(k.bTag))!;
@@ -586,8 +658,11 @@ describe("writeReport — blind calibration pack", () => {
       expect(readme.toLowerCase()).not.toContain(word);
     }
     expect(readme).toMatch(/A, B or tie/);
-    expect(readme).toMatch(/natural human/);
+    expect(readme).toMatch(/natural, competent human/);
     expect(readme).toMatch(/answers\.txt/);
+    expect(readme).toMatch(/ONE voice: the assistant placing the call/);
+    expect(readme).toMatch(/receptionist has been removed/i);
+    expect(readme).toMatch(/Ignore line quality/);
     expect(read(join(dir, "calibration", "answers.txt"))).toBe(
       [1, 2, 3, 4, 5, 6].map((n) => `pair-${n}: `).join("\n") + "\n"
     );
@@ -639,11 +714,89 @@ describe("writeReport — blind calibration pack", () => {
         rng: cycle([0.3])
       });
       expect(r.copied.length).toBeGreaterThan(0);
-      const named = r.copied.map((p) => read(p));
+      const named = r.copied.map((p) => readFileSync(p));
+      const namedAgents = named.map((b) => splitStereo(b).agent);
       const cal = join(dir, "calibration");
       const wavs = readdirSync(cal).filter((x) => x.endsWith(".wav"));
       expect(wavs).toHaveLength(12);
-      for (const f of wavs) expect(named).not.toContain(read(join(cal, f)));
+      for (const f of wavs) {
+        const got = readFileSync(join(cal, f));
+        for (const n of [...named, ...namedAgents]) expect(got.equals(n)).toBe(false);
+      }
+    }
+  });
+
+  it("skips a pair when either call's agent is silent", () => {
+    const dir = fresh("calib-silent");
+    const results = [
+      mk(dir, "gem", "s1/p1", 1, { gaps: [500] }),
+      mk(dir, "gem", "s1/p1", 2, { silentAgent: true }),
+      mk(dir, "gem", "s1/p1", 3),
+      mk(dir, "dg", "s1/p1", 1, { gaps: [500] }),
+      mk(dir, "dg", "s1/p1", 2, { silentAgent: true }),
+      mk(dir, "dg", "s1/p1", 3)
+    ];
+    writeReport({
+      campaignId: "c",
+      results,
+      configs: [gemini("gem"), deepgram("dg")],
+      outDir: dir,
+      rng: cycle([0.3])
+    });
+    const key = JSON.parse(read(join(dir, "calibration", ".key.json"))) as Record<string, KeyEntry>;
+    for (const k of Object.values(key)) {
+      for (const t of [k.aTag, k.bTag]) {
+        expect(t).not.toBe("s1.p1.gem.2");
+        expect(t).not.toBe("s1.p1.dg.2");
+      }
+      expect([k.aTag, k.bTag].sort()).toEqual(["s1.p1.dg.3", "s1.p1.gem.3"]);
+    }
+    expect(Object.keys(key).length).toBeGreaterThan(0);
+    // Only silent calls left for one side: no pack at all.
+    const dir2 = fresh("calib-silent2");
+    const r2 = writeReport({
+      campaignId: "c",
+      results: [
+        mk(dir2, "gem", "s1/p1", 1, { gaps: [500] }),
+        mk(dir2, "gem", "s1/p1", 2),
+        mk(dir2, "dg", "s1/p1", 1, { gaps: [500] }),
+        mk(dir2, "dg", "s1/p1", 2, { silentAgent: true })
+      ],
+      configs: [gemini("gem"), deepgram("dg")],
+      outDir: dir2,
+      rng: cycle([0.3])
+    });
+    expect(r2.calibrationDir).toBeUndefined();
+  });
+
+  it("excludes calls the callee cut off (barge-in or talk-over)", () => {
+    for (const cut of ["bargeIn", "talkOver"] as const) {
+      const dir = fresh(`calib-cut-${cut}`);
+      const flag =
+        cut === "bargeIn" ? { bargeIn: true } : { timingCodes: ["talk-over"] as TimingCode[] };
+      const results = [
+        mk(dir, "gem", "s1/p1", 1, { gaps: [500] }),
+        mk(dir, "gem", "s1/p1", 2, flag),
+        mk(dir, "gem", "s1/p1", 3),
+        mk(dir, "dg", "s1/p1", 1, { gaps: [500] }),
+        mk(dir, "dg", "s1/p1", 2, flag),
+        mk(dir, "dg", "s1/p1", 3)
+      ];
+      writeReport({
+        campaignId: "c",
+        results,
+        configs: [gemini("gem"), deepgram("dg")],
+        outDir: dir,
+        rng: cycle([0.3])
+      });
+      const key = JSON.parse(read(join(dir, "calibration", ".key.json"))) as Record<
+        string,
+        KeyEntry
+      >;
+      expect(Object.keys(key).length).toBeGreaterThan(0);
+      for (const k of Object.values(key)) {
+        expect([k.aTag, k.bTag].sort()).toEqual(["s1.p1.dg.3", "s1.p1.gem.3"]);
+      }
     }
   });
 

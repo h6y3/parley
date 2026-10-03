@@ -4,6 +4,60 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-10-02
+
+### Fixed
+
+- **A greeting the realtime session never heard now triggers the missed-greeting cue.** The nudge
+  armed only on a far-end transcript, so a greeting spoken ~0.2 s after pickup, before the realtime
+  session was ready, produced no transcript and the agent stayed silent until the silence cap (a
+  phone-test smoke call on Gemini; also seen on real calls). `CallSession` now also runs a small
+  energy VAD over the inbound carrier frames from the moment the media stream attaches, before
+  connect: a frame is voiced at max(noise floor + 12 dB, −45 dBFS), an utterance is ≥ 300 ms
+  voiced, and it ends after 300 ms unvoiced. An utterance's start holds the window and its end
+  arms it, exactly like a transcript, under the same guards (opening only, once per call, never on
+  a meeting, an IVR-declared call or a machine answer, cancelled by any model output). Logged once
+  as `missed greeting: far-end voice detected at +Nms`. No operator action needed.
+  If the line is louder than −45 dBFS from the start, only the transcript can arm the cue.
+- **The blind calibration pack is agent-only and skips silent calls.** Pack files were whole
+  stereo recordings, so the receptionist (always on the other provider) was audible and a listener
+  could rate one provider while hearing the other's voice. Each `pair-N-{A,B}.wav` is now the
+  agent channel alone (mono, 8 kHz), the README says so, and a pair is skipped when either call's
+  agent has under 3 s of speech. No operator action needed; delete an old campaign's `calibration/`
+  directory before rerunning its report to rebuild the pack.
+- **The phone-test sim hears the agent's keypad tones, so menu personas advance.** On the first
+  campaign Parley pressed "2" on all 8 menu-first calls (the call record shows it), but Twilio Media
+  Streams raises no `dtmf` event for tones sent in-band on the sim's leg, so the simulated menu
+  never heard a key (the 0.5.0 known issue). The sim now runs a Goertzel DTMF detector over the
+  agent's audio (one row and one column tone dominant and above an absolute level, twist within
+  8 dB, the other tones 10 dB down, a tone of 40 ms or more, a gap of 40 ms or more between
+  presses) and relays each press exactly as a Twilio `dtmf` event (timeline `dtmf:<d>`). If Twilio
+  does send the event too, the two are one press when they name the same digit within 500 ms. No
+  operator action needed.
+- **A call whose simulated callee never spoke is excluded as the harness's (`callee-silent`).** One
+  first-campaign call failed because the callee's provider produced no speech at all, and it was
+  scored as the agent's `outcome-missing`. The runner now marks `callee-silent` when a call of 5 s
+  or more has no callee transcript on its timeline and the callee channel is voiced for under 1 s;
+  the report leaves the call out of every rate and lists it under "Excluded (harness)". A shorter
+  call is never `callee-silent`: an agent that hangs up before the callee's first chance to speak
+  (1.2 s in) still counts as failing. No operator action needed.
+- **The simulated callee no longer speaks quotation marks.** A menu persona's line arrived as
+  `"For billing press 1…`, quote marks and all. The persona prompt now says to say the words inside
+  quotation marks without the marks, and the sample scenarios write a line that ends a behaviour
+  after a colon instead of in quotes. A custom scenario needs no change, but the same rewrite is
+  worth making there.
+
+### Known issues
+
+- **After a phone menu, a missed human greeting can still leave the agent silent.** The
+  missed-greeting cue is off on calls that declare IVR navigation and ends once the agent has
+  pressed a key, so if the model misses the person who answers after the menu, the call waits
+  until the callee speaks again or the silence cap ends it (seen once in a 6-call phone test).
+
+### Upgrading
+
+No action required.
+
 ## [0.5.0] — 2026-10-01
 
 A call can now choose its own realtime settings, the callable-numbers allowlist can change without a

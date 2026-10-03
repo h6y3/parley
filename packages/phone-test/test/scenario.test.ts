@@ -52,6 +52,18 @@ describe("loadScenario", () => {
     }
   });
 
+  it("writes a line that ends a behaviour after a colon, not inside quotation marks", () => {
+    // The callee bot spoke the quote marks of a line that ended its behaviour
+    // ("\"For billing press 1…"). Quotes that run to the end are only
+    // delimiters; a colon delimits the line as well and cannot be spoken.
+    const files = ["dental-reschedule.json", "dental-menu.json"];
+    for (const f of files) {
+      for (const p of loadScenario(join(root, "scenarios", f)).personas) {
+        for (const b of p.behaviours) expect(b).not.toMatch(/"[^"]*"\.?$/);
+      }
+    }
+  });
+
   it("carries the persona lines the plan names verbatim", () => {
     const s = loadScenario(scenarioPath);
     const lines = (name: string) => s.personas.find((p) => p.name === name)!.behaviours.join("\n");
@@ -214,7 +226,10 @@ describe("personaPrompt", () => {
       expect(prompt).toMatch(/short and natural/i);
       expect(prompt).toMatch(/in order/i);
       expect(prompt).toMatch(/goodbye and stop talking/i);
-      expect(prompt).toContain("Say quoted lines exactly as written.");
+      expect(prompt).toContain(
+        "Say quoted lines, and lines after a colon, exactly as written. " +
+          "Say the words inside quotation marks without saying the quotation marks."
+      );
       expect(prompt).toContain(
         "You are the person who answered; never offer to help the caller, never place calls, never act as an assistant."
       );

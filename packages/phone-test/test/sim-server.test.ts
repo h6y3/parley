@@ -4,7 +4,7 @@ import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { muLawEncode } from "@parley/audio";
+import { dtmfMuLaw, muLawEncode } from "@parley/audio";
 import {
   PCM_16K,
   PCM_24K,
@@ -217,7 +217,14 @@ afterEach(async () => {
   handlers = [];
 });
 
-function setup(over: { maxCallMs?: number; pickupPauseMs?: number; now?: () => number } = {}) {
+function setup(
+  over: {
+    maxCallMs?: number;
+    pickupPauseMs?: number;
+    now?: () => number;
+    log?: (line: string) => void;
+  } = {}
+) {
   const outDir = mkdtempSync(join(tmpdir(), "sim-"));
   const provider = fakeProvider();
   let t = 1_000;
@@ -776,6 +783,94 @@ describe("a simulated call", () => {
       readFileSync(join(outDir, "menu.timeline.json"), "utf8")
     ) as Timeline;
     expect(events(timeline)).toEqual(["dtmf:2", "dtmf:#", "callee-hangup"]);
+  });
+
+  /** Sends `mulaw` as 20 ms inbound media frames. */
+  const sendAudio = (media: ReturnType<typeof fakeMediaSocket>, mulaw: Buffer) => {
+    for (let i = 0; i < mulaw.length; i += 160) media.media(mulaw.subarray(i, i + 160));
+  };
+  const relayed = (provider: FakeProvider) =>
+    provider.session.triggers.filter((t) => t.startsWith("[the caller pressed"));
+  async function timelineEvents(
+    s: ReturnType<typeof setup>,
+    media: ReturnType<typeof fakeMediaSocket>,
+    tag: string
+  ): Promise<string[]> {
+    media.stop();
+    await vi.waitFor(async () => expect((await s.result(tag)).body.state).toBe("done"));
+    const t = JSON.parse(readFileSync(join(s.outDir, `${tag}.timeline.json`), "utf8")) as Timeline;
+    return events(t).filter((e) => e.startsWith("dtmf:"));
+  }
+
+  it("hears the agent's in-band keypad tones and relays each press once", async () => {
+    const s = setup();
+    await s.expectPersona("inband");
+    const media = await s.connectCall("CA710");
+    sendAudio(media, dtmfMuLaw("2").data);
+    sendAudio(media, dtmfMuLaw("#").data);
+    expect(relayed(s.provider)).toEqual(["[the caller pressed 2]", "[the caller pressed #]"]);
+    expect(await timelineEvents(s, media, "inband")).toEqual(["dtmf:2", "dtmf:#"]);
+  });
+
+  it("relays a press once when Twilio's dtmf event and the tones both arrive", async () => {
+    const s = setup();
+    await s.expectPersona("both");
+    const media = await s.connectCall("CA720");
+    media.dtmf("2"); // event first, then the tones
+    sendAudio(media, dtmfMuLaw("2").data);
+    sendAudio(media, dtmfMuLaw("5").data); // tones first, then the event
+    media.dtmf("5");
+    expect(relayed(s.provider)).toEqual(["[the caller pressed 2]", "[the caller pressed 5]"]);
+    expect(await timelineEvents(s, media, "both")).toEqual(["dtmf:2", "dtmf:5"]);
+  });
+
+  it("relays two presses of the same digit as two, whichever way each arrives", async () => {
+    const s = setup();
+    await s.expectPersona("twice");
+    const media = await s.connectCall("CA730");
+    const press = dtmfMuLaw("7").data;
+    media.dtmf("7");
+    sendAudio(media, press);
+    media.dtmf("7");
+    sendAudio(media, press);
+    expect(relayed(s.provider)).toEqual(["[the caller pressed 7]", "[the caller pressed 7]"]);
+    expect(await timelineEvents(s, media, "twice")).toEqual(["dtmf:7", "dtmf:7"]);
+  });
+
+  it("does not pair a Twilio event with tones more than 500 ms apart", async () => {
+    const s = setup();
+    await s.expectPersona("apart");
+    const media = await s.connectCall("CA740");
+    media.dtmf("3");
+    s.clock.set(s.clock.get() + 600);
+    sendAudio(media, dtmfMuLaw("3").data);
+    expect(relayed(s.provider)).toEqual(["[the caller pressed 3]", "[the caller pressed 3]"]);
+    await timelineEvents(s, media, "apart");
+  });
+
+  it("logs when both sources report one press, and when an event trails the tones by > 500 ms", async () => {
+    const lines: string[] = [];
+    const s = setup({ log: (l) => lines.push(l) });
+    await s.expectPersona("diag");
+    const media = await s.connectCall("CA750");
+    sendAudio(media, dtmfMuLaw("2").data);
+    media.dtmf("2");
+    expect(lines).toEqual([
+      "sim diag: dtmf 2 reported by both the Twilio event and the in-band tones; relayed once"
+    ]);
+    sendAudio(media, dtmfMuLaw("4").data);
+    s.clock.set(s.clock.get() + 800);
+    media.dtmf("4");
+    expect(lines[1]).toBe(
+      "sim diag: Twilio dtmf 4 arrived 800 ms after the in-band tones; relayed twice"
+    );
+    expect(lines).toHaveLength(2);
+    expect(relayed(s.provider)).toEqual([
+      "[the caller pressed 2]",
+      "[the caller pressed 4]",
+      "[the caller pressed 4]"
+    ]);
+    await timelineEvents(s, media, "diag");
   });
 
   it("hangs up a call on request from the runner", async () => {

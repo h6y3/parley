@@ -55,6 +55,37 @@ interface CallScript {
   doneAfterHangupPolls?: number;
   /** The timeline is written with no numeric event times. */
   timelineNoTimes?: boolean;
+  /** Write a capture WAV whose callee channel is voiced for this long. */
+  calleeVoicedMs?: number;
+  /** The callee's transcript on the timeline (default empty). */
+  calleeText?: string[];
+}
+
+/** A 16-bit stereo 8 kHz capture: 10 s, the agent voiced for its first 3 s,
+ * the callee for its first `calleeMs`. */
+function captureWav(calleeMs: number): Buffer {
+  const n = 80_000;
+  const wav = Buffer.alloc(44 + n * 4);
+  wav.write("RIFF", 0, "ascii");
+  wav.writeUInt32LE(36 + n * 4, 4);
+  wav.write("WAVE", 8, "ascii");
+  wav.write("fmt ", 12, "ascii");
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(2, 22);
+  wav.writeUInt32LE(8000, 24);
+  wav.writeUInt32LE(32000, 28);
+  wav.writeUInt16LE(4, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36, "ascii");
+  wav.writeUInt32LE(n * 4, 40);
+  for (let i = 0; i < n; i++) {
+    const v = (on: boolean) =>
+      on ? Math.round(8000 * Math.sin((2 * Math.PI * 300 * i) / 8000)) : 0;
+    wav.writeInt16LE(v(i < 24_000), 44 + i * 4);
+    wav.writeInt16LE(v(i < calleeMs * 8), 44 + i * 4 + 2);
+  }
+  return wav;
 }
 
 interface LiveCall {
@@ -142,9 +173,12 @@ function markDone(c: LiveCall): void {
               { atMs: 0, event: "start" },
               { atMs: c.script.timelineMs, event: "callee-hangup" }
             ],
-        calleeText: []
+        calleeText: c.script.calleeText ?? []
       })
     );
+  }
+  if (c.script.calleeVoicedMs !== undefined) {
+    writeFileSync(join(dir, `${c.tag}.wav`), captureWav(c.script.calleeVoicedMs));
   }
   tick();
 }
@@ -521,6 +555,42 @@ describe("runCampaign", () => {
     expect(r!.errors).toEqual(["persona-missing"]);
     expect(r!.wavPath).toBe(join(dir, `persona-missing-${live[0]!.simSid}.wav`));
     expect(r!.minutes).toBe(0.2);
+  });
+
+  it("marks callee-silent when the callee said nothing and was voiced under 1 s", async () => {
+    scripts = [
+      { timelineMs: 20_000, calleeVoicedMs: 0 },
+      { timelineMs: 20_000, calleeVoicedMs: 800 },
+      // Voiced long enough: the callee spoke, even with no transcript.
+      { timelineMs: 20_000, calleeVoicedMs: 1500 },
+      // A transcript: the callee spoke, however little audio was captured.
+      { timelineMs: 20_000, calleeVoicedMs: 0, calleeText: ["Hello?"] },
+      // No capture to judge by: that is capture-missing, not callee-silent.
+      { timelineMs: 20_000 }
+    ];
+    const results = await run({ callsPerCell: 5 });
+    expect(results.map((r) => r.errors)).toEqual([
+      ["callee-silent"],
+      ["callee-silent"],
+      [],
+      [],
+      []
+    ]);
+    // The call still happened: it is booked like any other.
+    expect(results[0]!.minutes).toBeCloseTo(0.4, 9);
+    expect(spendLines()).toHaveLength(5);
+  });
+
+  it("never calls a short call callee-silent: an agent that drops at once is still failing", async () => {
+    scripts = [
+      // The agent hung up 1.5 s in, before the realistic callee's first chance
+      // to speak: that is the agent's failure, not a silent callee.
+      { timelineMs: 1_500, calleeVoicedMs: 0 },
+      { timelineMs: 4_900, calleeVoicedMs: 0 },
+      { timelineMs: 10_000, calleeVoicedMs: 0 }
+    ];
+    const results = await run({ callsPerCell: 3 });
+    expect(results.map((r) => r.errors)).toEqual([[], [], ["callee-silent"]]);
   });
 
   it("reruns a persona-violation call once in the same cell, keeping both, the first excluded", async () => {

@@ -80,10 +80,10 @@
         "Dr. Nguyen has an opening on Monday at 10am."
       ],
       "behaviours": [
-        "Answer with \"Bayside Dental, this is Sam.\"",
-        "If asked your name, say \"Sam\".",
-        "Look up the appointment and offer \"Monday at 10am with Dr. Nguyen\".",
-        "When the caller accepts, confirm it: \"Okay, you're all set for Monday at 10.\""
+        "Answer with: Bayside Dental, this is Sam.",
+        "If asked your name, say: Sam.",
+        "Look up the appointment and offer: Monday at 10am with Dr. Nguyen.",
+        "When the caller accepts, confirm it: Okay, you're all set for Monday at 10."
       ],
       "endsCallWith": "Okay, you're all set for Monday at 10."
     },
@@ -95,11 +95,11 @@
         "Dr. Nguyen's only Monday opening is at 9:26."
       ],
       "behaviours": [
-        "Answer with \"Bayside Dental, this is Sam.\"",
-        "If asked your name, say \"Sam\".",
-        "Before offering anything, ask: \"do you know if he's still with Alta Dental?\"",
+        "Answer with: Bayside Dental, this is Sam.",
+        "If asked your name, say: Sam.",
+        "Before offering anything, ask: do you know if he's still with Alta Dental?",
         "Then offer \"Monday at 9:26\" and nothing else.",
-        "When the caller accepts, confirm it with \"Mm-hmm, Monday 9:26\"."
+        "When the caller accepts, confirm it with: Mm-hmm, Monday 9:26."
       ],
       "endsCallWith": "Mm-hmm, Monday 9:26"
     },
@@ -111,11 +111,11 @@
         "Dr. Nguyen has an opening on Monday at 2:30pm."
       ],
       "behaviours": [
-        "Answer with \"Bayside Dental, this is Sam.\"",
-        "If asked your name, say \"Sam\".",
-        "Cut in while the caller is still giving their first explanation, before they finish, with \"Sorry — which doctor was that?\"",
-        "Once you hear the answer, offer \"Monday at 2:30 with Dr. Nguyen\".",
-        "When the caller accepts, confirm it: \"Great, Monday at 2:30 it is.\""
+        "Answer with: Bayside Dental, this is Sam.",
+        "If asked your name, say: Sam.",
+        "Cut in while the caller is still giving their first explanation, before they finish, with: Sorry — which doctor was that?",
+        "Once you hear the answer, offer: Monday at 2:30 with Dr. Nguyen.",
+        "When the caller accepts, confirm it: Great, Monday at 2:30 it is."
       ],
       "endsCallWith": "Great, Monday at 2:30 it is."
     },
@@ -127,10 +127,10 @@
         "Dr. Nguyen has an opening on Monday at 10am."
       ],
       "behaviours": [
-        "Answer with \"Bayside Dental, this is Sam.\"",
-        "If asked your name, say \"Sam\".",
-        "Look up the appointment and offer \"Monday at 10am with Dr. Nguyen\".",
-        "When the caller accepts, confirm it: \"Okay, you're all set for Monday at 10.\""
+        "Answer with: Bayside Dental, this is Sam.",
+        "If asked your name, say: Sam.",
+        "Look up the appointment and offer: Monday at 10am with Dr. Nguyen.",
+        "When the caller accepts, confirm it: Okay, you're all set for Monday at 10."
       ],
       "endsCallWith": "Okay, you're all set for Monday at 10.",
       "answerStyle": "instant",

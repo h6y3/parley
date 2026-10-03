@@ -89,12 +89,12 @@
         "Dr. Nguyen has an opening on Monday at 11am."
       ],
       "behaviours": [
-        "Open with the recorded menu, in a flat voice: \"For billing press 1, to book or change an appointment press 2.\"",
+        "Open with the recorded menu, in a flat voice: For billing press 1, to book or change an appointment press 2.",
         "Wait for the caller to press 2. If they speak instead, repeat the menu once.",
-        "After 2 is pressed, answer in a normal voice: \"Scheduling, this is Sam.\"",
-        "If asked your name, say \"Sam\".",
-        "Offer \"Monday at 11am with Dr. Nguyen\".",
-        "When the caller accepts, confirm it: \"Done, Monday at 11.\""
+        "After 2 is pressed, answer in a normal voice: Scheduling, this is Sam.",
+        "If asked your name, say: Sam.",
+        "Offer: Monday at 11am with Dr. Nguyen.",
+        "When the caller accepts, confirm it: Done, Monday at 11."
       ],
       "endsCallWith": "Done, Monday at 11."
     }
